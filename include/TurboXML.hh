@@ -374,7 +374,7 @@ class Parser {
   [[nodiscard]] auto value(std::string_view expected_name, T& out) -> bool;
 
   template <typename T>
-  [[nodiscard]] auto attr(FieldHash hash, T& out) -> bool;
+  [[nodiscard]] auto attr(FieldHash hash, T& out, size_t& pos) -> bool;
 
   [[nodiscard]] auto begin_element(std::string_view expected_name) -> bool;
   [[nodiscard]] auto end_element(std::string_view expected_name) -> bool;
@@ -501,6 +501,25 @@ class Parser {
     return make_error(token, error_msg);
   }
 
+  // Advances past the next occurrence of delim; cur_ = end_ if absent.
+  void skip_past(std::string_view delim) noexcept {
+    const char first = delim[0];
+    while (cur_ < end_) {
+      const char* hit = static_cast<const char*>(
+          std::memchr(cur_, first, static_cast<size_t>(end_ - cur_)));
+      if (!hit) {
+        break;
+      }
+      cur_ = hit;
+      if (starts_with(delim)) {
+        cur_ += delim.size();
+        return;
+      }
+      ++cur_;
+    }
+    cur_ = end_;
+  }
+
   auto parse_comment(Token& token) -> bool {
     token.type = TokenType::Comment;
     return scan_to_delimiter(token, "-->", "unterminated comment");
@@ -594,10 +613,10 @@ class Parser {
   }
 
   template <typename T, size_t I>
-  static void apply_attr(Parser& p, T& obj) {
+  static void apply_attr(Parser& p, T& obj, size_t& pos) {
     constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
     if constexpr (f.kind == FieldKind::Attr) {
-      std::ignore = p.attr(f.hash, obj.*(f.member));
+      std::ignore = p.attr(f.hash, obj.*(f.member), pos);
     }
   }
 
@@ -610,7 +629,8 @@ class Parser {
 
   template <typename T, size_t... I>
   static void dispatch_attrs(Parser& p, T& obj, std::index_sequence<I...>) {
-    (apply_attr<T, I>(p, obj), ...);
+    size_t pos = 0;  // document-order cursor over attributes_
+    (apply_attr<T, I>(p, obj, pos), ...);
   }
 
   template <typename T, size_t... I>
@@ -852,18 +872,30 @@ inline auto Parser::value(std::string_view expected_name, T& out) -> bool {
   }
 }
 
+// Document-order fast path: attribute fields are typically declared in the
+// same order the attributes appear, so try the cursor position first and
+// fall back to a full first-match scan on miss.
 template <typename T>
-inline auto Parser::attr(const FieldHash hash, T& out) -> bool {
-  const auto it = std::ranges::find_if(
-      attributes_, [hash](const Attribute& a) { return a.name_hash == hash; });
-  if (it == attributes_.end()) {
-    return false;
+inline auto Parser::attr(const FieldHash hash, T& out, size_t& pos) -> bool {
+  const Attribute* a;
+  if (pos < attributes_.size() && attributes_[pos].name_hash == hash) {
+    a = &attributes_[pos];
+    ++pos;
+  } else {
+    const auto it = std::ranges::find_if(
+        attributes_,
+        [hash](const Attribute& attr) { return attr.name_hash == hash; });
+    if (it == attributes_.end()) {
+      return false;
+    }
+    a = &*it;
+    pos = static_cast<size_t>(it - attributes_.begin()) + 1;
   }
   if constexpr (XmlStringLike<T>) {
-    out = it->value;
+    out = a->value;
     return true;
   } else {
-    return parse_numeric(it->value, out);
+    return parse_numeric(a->value, out);
   }
 }
 
@@ -924,20 +956,81 @@ inline auto Parser::end_element(std::string_view expected_name) -> bool {
   return false;
 }
 
+// Skips the remainder of the current element without tokenising: a raw scan
+// tracking nesting depth, quoted attribute values, comments, CDATA, and PIs.
+// Precondition: the opening tag has been consumed and no token is peeked.
+// On malformed or truncated content, leaves cur_ == end_ so the caller's
+// next read fails the parse.
 inline void Parser::skip_element() {
   if (last_self_closing_) {
     return;
   }
   size_t depth = 1;
   while (depth > 0) {
-    const Token* t = next();
-    if (!t) {
-      break;
+    const char* lt = static_cast<const char*>(
+        std::memchr(cur_, '<', static_cast<size_t>(end_ - cur_)));
+    if (!lt || lt + 1 >= end_) {
+      cur_ = end_;
+      return;
     }
-    if (t->type == TokenType::ElementOpen && !t->self_closing) {
-      ++depth;
-    } else if (t->type == TokenType::ElementClose) {
+    cur_ = lt + 1;
+    const char c = *cur_;
+    if (c == '/') {
+      const char* gt = static_cast<const char*>(
+          std::memchr(cur_, '>', static_cast<size_t>(end_ - cur_)));
+      if (!gt) {
+        cur_ = end_;
+        return;
+      }
+      cur_ = gt + 1;
       --depth;
+    } else if (c == '!') {
+      ++cur_;
+      if (starts_with("--")) {
+        cur_ += 2;
+        skip_past("-->");
+      } else if (starts_with("[CDATA[")) {
+        cur_ += 7;
+        skip_past("]]>");
+      } else {
+        skip_past(">");
+      }
+    } else if (c == '?') {
+      ++cur_;
+      skip_past("?>");
+    } else if (is_name_start(c)) {
+      // Open tag: find the closing '>' outside quoted attribute values.
+      bool closed = false;
+      bool self_closing = false;
+      while (cur_ < end_) {
+        const char ch = *cur_;
+        if (ch == '>') {
+          self_closing = cur_[-1] == '/';
+          ++cur_;
+          closed = true;
+          break;
+        }
+        if (ch == '"' || ch == '\'') {
+          const char* q = static_cast<const char*>(std::memchr(
+              cur_ + 1, ch, static_cast<size_t>(end_ - cur_ - 1)));
+          if (!q) {
+            cur_ = end_;
+            return;
+          }
+          cur_ = q + 1;
+          continue;
+        }
+        ++cur_;
+      }
+      if (!closed) {
+        return;  // truncated tag; cur_ == end_
+      }
+      if (!self_closing) {
+        ++depth;
+      }
+    } else {
+      cur_ = end_;  // malformed markup after '<'
+      return;
     }
   }
 }

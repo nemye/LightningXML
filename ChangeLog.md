@@ -1,9 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-06-12
+
+Performance release. No API changes.
 
 ### Changed
-- Parser: document-order field hint. The byte-compare fast path for opening tags (previously limited to single-field types) now applies to all types by tracking which field is expected next in document order. Schema-ordered XML skips tokenization, hashing, and field lookup on most elements; out-of-order documents fall back seamlessly. Measured (median of 5, back-to-back A/B): Flat +47%, Large +34%, Catalog +29%, comment-heavy +28%, Org +19%, Small +18% throughput; Deep/Tree/Attr unchanged.
+- Document-order field hint: the opening-tag byte-compare fast path now covers all types, skipping tokenization and field lookup for schema-ordered XML (+18-47% throughput on element-heavy workloads).
+- Document-order attribute cursor: attribute fields match at a running cursor instead of per-field linear scans (+8% on attribute-heavy workloads).
+- Raw skip scanner: unmapped subtrees are skipped with a quote/comment/CDATA-aware byte scan instead of full tokenization (+19% on unknown-heavy content; new benchmark added).
 
 ## 1.1.0 — 2026-06-12
 

@@ -506,6 +506,47 @@ TEST_F(XmlParserTest, SkipsDeepUnknownSubtree) {
   EXPECT_EQ(person.age, 30);
 }
 
+/// @brief Unknown subtrees containing quoted '>' and "/>" in attribute
+/// values, comments and CDATA with markup-like content, PIs, and
+/// self-closing tags must be skipped without desyncing the parse.
+TEST_F(XmlParserTest, SkipsUnknownSubtreeWithTrickyContent) {
+  constexpr std::string_view xml_src = R"(
+<person>
+  <name>Alice</name>
+  <unknown a="x > y" b='gt > inside'>
+    <!-- comment with > and "quotes" and <tags> -->
+    <![CDATA[ raw <blob/> with ]] almost-terminators ]]>
+    <?pi target with > inside ?>
+    <child attr="/>">text</child>
+    <selfclosed x="y"/>
+  </unknown>
+  <age>30</age>
+</person>)";
+  xml::Parser parser{xml_src};
+  Person person;
+  ASSERT_TRUE(xml::deserialize(parser, "person", person));
+  EXPECT_EQ(person.name, "Alice");
+  EXPECT_EQ(person.age, 30);
+}
+
+/// @brief Input truncated inside an unknown subtree must fail the parse.
+TEST_F(XmlParserTest, TruncatedUnknownSubtreeFails) {
+  constexpr std::string_view xml_src = R"(<person><unknown><a><b>deep)";
+  xml::Parser parser{xml_src};
+  Person person;
+  EXPECT_FALSE(xml::deserialize(parser, "person", person));
+}
+
+/// @brief An unterminated attribute quote inside an unknown subtree must
+/// fail the parse rather than scan past the document end.
+TEST_F(XmlParserTest, UnterminatedQuoteInUnknownSubtreeFails) {
+  constexpr std::string_view xml_src =
+      R"(<person><unknown><a attr="broken></a></unknown><name>X</name></person>)";
+  xml::Parser parser{xml_src};
+  Person person;
+  EXPECT_FALSE(xml::deserialize(parser, "person", person));
+}
+
 TEST_F(XmlParserTest, SingleQuotedAttributes) {
   constexpr std::string_view xml_src =
       R"(<Users><User id='123'></User></Users>)";
@@ -1027,6 +1068,31 @@ TEST_F(XmlParserTest, FullAttrItemAllAttributesParsed) {
 <AttrList>
   <Item a1="10" a2="20" a3="30" a4="40" a5="50"
         s1="one" s2="two" s3="three" s4="four" s5="five"/>
+</AttrList>)";
+  xml::Parser parser{xml_src};
+  AttrList list;
+  ASSERT_TRUE(xml::deserialize(parser, "AttrList", list));
+  ASSERT_EQ(list.items.size(), 1U);
+  const auto& item = list.items[0];
+  EXPECT_EQ(item.a1, 10);
+  EXPECT_EQ(item.a2, 20);
+  EXPECT_EQ(item.a3, 30);
+  EXPECT_EQ(item.a4, 40);
+  EXPECT_EQ(item.a5, 50);
+  EXPECT_EQ(item.s1, "one");
+  EXPECT_EQ(item.s2, "two");
+  EXPECT_EQ(item.s3, "three");
+  EXPECT_EQ(item.s4, "four");
+  EXPECT_EQ(item.s5, "five");
+}
+
+/// @brief Attributes arriving out of metadata order must still bind via the
+/// fallback scan (exercises the attribute document-order cursor miss path).
+TEST_F(XmlParserTest, OutOfOrderAttributesParsed) {
+  constexpr std::string_view xml_src = R"(
+<AttrList>
+  <Item s5="five" a1="10" s1="one" a5="50" a2="20"
+        s2="two" a3="30" s4="four" a4="40" s3="three"/>
 </AttrList>)";
   xml::Parser parser{xml_src};
   AttrList list;
