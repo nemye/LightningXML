@@ -30,7 +30,37 @@ enum class TokenType : uint8_t {
   Comment,                ///< XML comment.
   ProcessingInstruction,  ///< Processing instruction.
   XmlDeclaration,         ///< XML declaration (<?xml ... ?>).
-  Error,                  ///< Parse error; token name holds the message.
+  Error,                  ///< Parse error; see Parser::error_code().
+};
+
+/// @brief Specific reason the most recent parse failed.
+///
+/// Query via Parser::error_code() after deserialize() returns false. The
+/// first error encountered wins; later cascading failures do not overwrite it.
+enum class ErrorCode : uint8_t {
+  None = 0,  ///< No error.
+  // Start-tag / attribute structure
+  UnexpectedEndAfterLt,   ///< "<" with nothing after it.
+  UnexpectedCharAfterLt,  ///< Char after "<" cannot begin markup.
+  ExpectedElementName,    ///< Missing element name in a start-tag.
+  UnclosedTag,            ///< Input ended while scanning a start-tag.
+  ExpectedAttributeName,  ///< Non-name char where an attribute was expected.
+  ExpectedEquals,         ///< Missing '=' after an attribute name.
+  ExpectedQuotedValue,    ///< Attribute value not quoted.
+  UnterminatedAttributeValue,  ///< No closing quote on an attribute value.
+  ExpectedNameInCloseTag,      ///< Empty name in an end-tag ("</>").
+  ExpectedCloseTagEnd,         ///< Missing '>' in an end-tag.
+  // Unterminated constructs
+  ExpectedPiTarget,     ///< Missing PI target name.
+  UnterminatedComment,  ///< Comment with no "-->".
+  UnterminatedCData,    ///< CDATA section with no "]]>".
+  UnterminatedPi,       ///< PI with no "?>".
+  // Content / structure
+  InvalidNumericValue,  ///< Numeric/bool field text failed to parse.
+  RootElementNotFound,  ///< Requested root element not present.
+  ElementMismatch,      ///< End-tag name does not match its start-tag.
+  UnexpectedEof,        ///< Input ended mid-element.
+  DepthExceeded,        ///< Nesting deeper than kMaxDepth.
 };
 
 /// @brief A parsed XML attribute from an element's opening tag.
@@ -43,12 +73,12 @@ struct Attribute {
 
 /// @brief A single token produced by the pull parser.
 struct Token {
-  std::string_view name;   ///< Element or PI target name (local part).
-  std::string_view prefix; ///< Namespace prefix, or empty.
-  std::string_view data;   ///< Text, CDATA, comment, or PI content.
-  FieldHash name_hash{};   ///< FNV-1a hash of name.
-  TokenType type{};        ///< Token kind.
-  bool self_closing{};     ///< True for self-closing elements (<foo/>).
+  std::string_view name;    ///< Element or PI target name (local part).
+  std::string_view prefix;  ///< Namespace prefix, or empty.
+  std::string_view data;    ///< Text, CDATA, comment, or PI content.
+  FieldHash name_hash{};    ///< FNV-1a hash of name.
+  TokenType type{};         ///< Token kind.
+  bool self_closing{};      ///< True for self-closing elements (<foo/>).
 };
 
 // FNV-1a helpers
@@ -125,7 +155,8 @@ constexpr auto attr_field(std::string_view name, M C::* m) -> AttrField<C, M> {
   return detail::make_field<FieldKind::Attr>(name, m);
 }
 
-/// @brief Creates a container field descriptor for dynamic containers (e.g., std::vector).
+/// @brief Creates a container field descriptor for dynamic containers (e.g.,
+/// std::vector).
 /// @param name XML element name for each item.
 /// @param m    Pointer to the target member.
 template <typename C, typename M>
@@ -134,7 +165,8 @@ constexpr auto vec_field(std::string_view name, M C::* m)
   return detail::make_field<FieldKind::Container>(name, m);
 }
 
-/// @brief Creates a container field descriptor for fixed containers (e.g., std::array).
+/// @brief Creates a container field descriptor for fixed containers (e.g.,
+/// std::array).
 /// @param name XML element name for each item.
 /// @param m    Pointer to the target member.
 template <typename C, typename M>
@@ -152,7 +184,8 @@ constexpr auto arr_field(std::string_view name, M C::* m)
 template <typename T>
 struct XmlMetadata;
 
-/// @brief Satisfied when T has an XmlMetadata specialization with a fields tuple.
+/// @brief Satisfied when T has an XmlMetadata specialization with a fields
+/// tuple.
 template <typename T>
 concept XmlObject = requires { XmlMetadata<T>::fields; };
 
@@ -165,7 +198,8 @@ concept XmlStringLike =
 template <typename T>
 concept XmlPrimitive = std::is_arithmetic_v<T> || XmlStringLike<T>;
 
-/// @brief Adapts a container for use with ContainerField. Specialize for custom types.
+/// @brief Adapts a container for use with ContainerField. Specialize for custom
+/// types.
 /// @tparam C Container type to adapt.
 template <typename C>
 struct XmlContainerTraits;
@@ -187,7 +221,8 @@ struct XmlContainerTraits<std::array<T, N>> {
   static const T& at(const std::array<T, N>& c, size_t i) { return c[i]; }
 };
 
-/// @brief Satisfied when C supports dynamic insertion via XmlContainerTraits (e.g., std::vector).
+/// @brief Satisfied when C supports dynamic insertion via XmlContainerTraits
+/// (e.g., std::vector).
 template <typename C>
 concept XmlDynContainer = requires(C& c) {
   typename XmlContainerTraits<C>::value_type;
@@ -197,7 +232,8 @@ concept XmlDynContainer = requires(C& c) {
   XmlContainerTraits<C>::pop(c);
 };
 
-/// @brief Satisfied when C has a fixed capacity and indexed access via XmlContainerTraits (e.g., std::array).
+/// @brief Satisfied when C has a fixed capacity and indexed access via
+/// XmlContainerTraits (e.g., std::array).
 template <typename C>
 concept XmlFixedContainer = requires(C& c, size_t i) {
   typename XmlContainerTraits<C>::value_type;
@@ -332,8 +368,13 @@ class Parser {
     end_ = src_.data() + src_.size();
     has_peek_ = false;
     attributes_.clear();
-    error_ = false;
+    error_code_ = ErrorCode::None;
     last_self_closing_ = false;
+  }
+
+  /// @brief Reason the most recent parse failed, or None if it succeeded.
+  [[nodiscard]] auto error_code() const noexcept -> ErrorCode {
+    return error_code_;
   }
 
  private:
@@ -443,12 +484,23 @@ class Parser {
         s);
   }
 
-  auto make_error(Token& token, std::string_view msg) noexcept -> bool {
-    error_ = true;
-    token.type = TokenType::Error;
-    token.name = msg;
+  // Records the first error (later cascading failures don't overwrite it) and
+  // flags the parser stopped. Returns false so callers can `return fail(code)`.
+  auto fail(ErrorCode code) noexcept -> bool {
+    if (!error()) [[likely]] {
+      error_code_ = code;
+    }
     return false;
   }
+
+  auto make_error(Token& token, ErrorCode code) noexcept -> bool {
+    token.type = TokenType::Error;
+    return fail(code);
+  }
+
+  /// @brief check if the parser encountered an error
+  /// @return true if `_error_code` is not `ErrorCode::None`
+  auto error() const noexcept -> bool { return error_code_ != ErrorCode::None; }
 
   // Shared logic: record self-closing state after consuming an ElementOpen.
   void update_self_closing() noexcept {
@@ -479,8 +531,8 @@ class Parser {
 
   // Scan forward until `delim` is found. Sets token.data to the content
   // before the delimiter and advances past it.
-  auto scan_to_delimiter(Token& token, std::string_view delim,
-                         std::string_view error_msg) -> bool {
+  auto scan_to_delimiter(Token& token, std::string_view delim, ErrorCode ec)
+      -> bool {
     const char* start = cur_;
     const char first = delim[0];
     while (cur_ < end_) {
@@ -498,7 +550,7 @@ class Parser {
       }
       ++cur_;
     }
-    return make_error(token, error_msg);
+    return make_error(token, ec);
   }
 
   // Advances past the next occurrence of delim; cur_ = end_ if absent.
@@ -522,24 +574,23 @@ class Parser {
 
   auto parse_comment(Token& token) -> bool {
     token.type = TokenType::Comment;
-    return scan_to_delimiter(token, "-->", "unterminated comment");
+    return scan_to_delimiter(token, "-->", ErrorCode::UnterminatedComment);
   }
 
   auto parse_cdata(Token& token) -> bool {
     token.type = TokenType::CData;
-    return scan_to_delimiter(token, "]]>", "unterminated CDATA section");
+    return scan_to_delimiter(token, "]]>", ErrorCode::UnterminatedCData);
   }
 
   auto parse_pi(Token& token) -> bool {
     parse_name(token.prefix, token.name, token.name_hash);
     if (token.name.empty()) {
-      return make_error(token, "expected PI target");
+      return make_error(token, ErrorCode::ExpectedPiTarget);
     }
     token.type = (token.name == "xml") ? TokenType::XmlDeclaration
                                        : TokenType::ProcessingInstruction;
     skip_whitespace();
-    return scan_to_delimiter(token, "?>",
-                             "unterminated processing instruction");
+    return scan_to_delimiter(token, "?>", ErrorCode::UnterminatedPi);
   }
 
   // Fast-path: match and consume "<name>" or "<name/>" without tokenisation.
@@ -658,7 +709,7 @@ class Parser {
   std::string_view src_;
   const char* cur_;
   const char* end_;
-  bool error_{};
+  ErrorCode error_code_{ErrorCode::None};
   bool last_self_closing_{};
   bool has_peek_{false};
 };
@@ -673,7 +724,9 @@ template <typename T>
 auto deserialize(Parser& parser, std::string_view root_name, T& object)
     -> bool {
   if (!parser.begin_element(root_name)) [[unlikely]] {
-    return false;
+    // begin_element() may have hit a tokenizer error (code already set); only
+    // attribute a plain "root missing/mismatched" when nothing else did.
+    return parser.fail(ErrorCode::RootElementNotFound);
   }
   const bool is_self_closing = parser.last_self_closing_;
   if (!parser.pull(object, 1)) [[unlikely]] {
@@ -712,7 +765,7 @@ inline auto Parser::next() -> const Token* {
 }
 
 inline auto Parser::next_from_source(Token& token) -> bool {
-  if (error_ || at_end()) {
+  if (error() || at_end()) {
     return false;
   }
   if (*cur_ == '<') {
@@ -730,7 +783,7 @@ inline auto Parser::next_from_source(Token& token) -> bool {
 
 inline auto Parser::parse_markup(Token& token) -> bool {
   if (at_end()) {
-    return make_error(token, "unexpected end after '<'");
+    return make_error(token, ErrorCode::UnexpectedEndAfterLt);
   }
   const char c = *cur_;
   if (c == '/') {
@@ -759,7 +812,7 @@ inline auto Parser::parse_markup(Token& token) -> bool {
   if (is_name_start(c)) {
     return parse_element_open(token);
   }
-  return make_error(token, "unexpected character after '<'");
+  return make_error(token, ErrorCode::UnexpectedCharAfterLt);
 }
 
 inline auto Parser::parse_element_open(Token& token) -> bool {
@@ -767,14 +820,14 @@ inline auto Parser::parse_element_open(Token& token) -> bool {
   token.self_closing = false;
   parse_name(token.prefix, token.name, token.name_hash);
   if (token.name.empty()) {
-    return make_error(token, "expected element name");
+    return make_error(token, ErrorCode::ExpectedElementName);
   }
 
   attributes_.clear();
   while (true) {
     skip_whitespace();
     if (at_end()) {
-      return make_error(token, "unclosed element tag");
+      return make_error(token, ErrorCode::UnclosedTag);
     }
     const char c = *cur_;
     if (c == '>') {
@@ -787,26 +840,26 @@ inline auto Parser::parse_element_open(Token& token) -> bool {
       return true;
     }
     if (!is_name_start(c)) {
-      return make_error(token, "expected attribute name");
+      return make_error(token, ErrorCode::ExpectedAttributeName);
     }
 
     Attribute& a = attributes_.emplace_back();
     parse_name(a.prefix, a.name, a.name_hash);
     skip_whitespace();
     if (!expect('=')) {
-      return make_error(token, "expected '='");
+      return make_error(token, ErrorCode::ExpectedEquals);
     }
     skip_whitespace();
     const char quote = peek_char();
     if (quote != '"' && quote != '\'') {
-      return make_error(token, "expected quoted attribute value");
+      return make_error(token, ErrorCode::ExpectedQuotedValue);
     }
     ++cur_;
     const char* val_start = cur_;
     const char* val_end = static_cast<const char*>(
         std::memchr(cur_, quote, static_cast<size_t>(end_ - cur_)));
     if (!val_end) {
-      return make_error(token, "malformed attribute value");
+      return make_error(token, ErrorCode::UnterminatedAttributeValue);
     }
     a.value = {val_start, static_cast<size_t>(val_end - val_start)};
     cur_ = val_end + 1;
@@ -818,11 +871,11 @@ inline auto Parser::parse_element_close(Token& token) -> bool {
   FieldHash name_hash;
   parse_name(token.prefix, token.name, name_hash);
   if (token.name.empty()) {
-    return make_error(token, "expected name in close");
+    return make_error(token, ErrorCode::ExpectedNameInCloseTag);
   }
   skip_whitespace();
   if (!expect('>')) {
-    return make_error(token, "expected '>' in close tag");
+    return make_error(token, ErrorCode::ExpectedCloseTagEnd);
   }
   return true;
 }
@@ -859,16 +912,18 @@ inline auto Parser::value(std::string_view expected_name, T& out) -> bool {
         out = token->data;
       }
       if (token->type == TokenType::ElementClose) {
-        return token->name == expected_name;
+        return token->name == expected_name ? true
+                                            : fail(ErrorCode::ElementMismatch);
       }
     }
-    return false;
+    return fail(ErrorCode::UnexpectedEof);  // next() set a code, or true EOF
   } else {
     std::string_view text;
     if (!value(expected_name, text)) {
-      return false;
+      return false;  // string pass already recorded the cause
     }
-    return parse_numeric(text, out);
+    return parse_numeric(text, out) ? true
+                                    : fail(ErrorCode::InvalidNumericValue);
   }
 }
 
@@ -942,18 +997,18 @@ inline auto Parser::end_element(std::string_view expected_name) -> bool {
     switch (peeked->type) {
       case TokenType::ElementClose:
         if (peeked->name != expected_name) {
-          return false;
+          return fail(ErrorCode::ElementMismatch);
         }
         consume();
         return true;
       case TokenType::ElementOpen:
-        return false;
+        return fail(ErrorCode::ElementMismatch);
       default:
         consume();
         break;
     }
   }
-  return false;
+  return fail(ErrorCode::UnexpectedEof);  // peek() set a code, or true EOF
 }
 
 // Skips the remainder of the current element without tokenising: a raw scan
@@ -1011,8 +1066,8 @@ inline void Parser::skip_element() {
           break;
         }
         if (ch == '"' || ch == '\'') {
-          const char* q = static_cast<const char*>(std::memchr(
-              cur_ + 1, ch, static_cast<size_t>(end_ - cur_ - 1)));
+          const char* q = static_cast<const char*>(
+              std::memchr(cur_ + 1, ch, static_cast<size_t>(end_ - cur_ - 1)));
           if (!q) {
             cur_ = end_;
             return;
@@ -1041,7 +1096,7 @@ template <typename T>
 inline auto Parser::read_element(std::string_view expected_name, T& out,
                                  const uint16_t depth) -> bool {
   if (depth > kMaxDepth) {
-    return false;
+    return fail(ErrorCode::DepthExceeded);
   }
   const bool is_self_closing = last_self_closing_;
 
@@ -1050,7 +1105,7 @@ inline auto Parser::read_element(std::string_view expected_name, T& out,
       if constexpr (XmlStringLike<T>) {
         return true;
       }
-      return false;
+      return fail(ErrorCode::InvalidNumericValue);  // empty numeric/bool
     }
     // Fast path: locate closing tag directly via memchr.
     const char* found = static_cast<const char*>(
@@ -1066,7 +1121,8 @@ inline auto Parser::read_element(std::string_view expected_name, T& out,
         out = text;
         return true;
       } else {
-        return parse_numeric(text, out);
+        return parse_numeric(text, out) ? true
+                                        : fail(ErrorCode::InvalidNumericValue);
       }
     }
     return value<T>(expected_name, out);
@@ -1116,7 +1172,7 @@ inline auto Parser::pull(T& object, const uint16_t depth) -> bool {
     if (!has_peek_) {
       skip_whitespace();
       if (at_end()) {
-        return false;
+        return fail(ErrorCode::UnexpectedEof);
       }
       if (cur_[0] == '<' && cur_ + 1 < end_ && cur_[1] == '/') {
         return true;
@@ -1181,7 +1237,8 @@ class Serializer {
  public:
   explicit Serializer(std::string& out) noexcept : out_(out) {}
 
-  /// @brief Serializes obj as an XML element named tag, appending to the output string.
+  /// @brief Serializes obj as an XML element named tag, appending to the output
+  /// string.
   template <typename T>
   void write(std::string_view tag, const T& obj) {
     write_element(tag, obj, 0);

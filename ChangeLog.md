@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.0 Candidate - Unreleased
+
+XML 1.0 well-formedness conformance pass. Adds an XML 1.0 (Fifth Edition)
+conformance test suite (`test/test_Conformance.cc`).
+
+### Added
+- `xml::ErrorCode` enum and `Parser::error_code()`: a failed `deserialize()`
+  now reports a specific reason (e.g. `UnterminatedComment`, `ElementMismatch`,
+  `RootElementNotFound`). `reset()` clears it.
+
 ## 1.2.0 — 2026-06-12
 
 Performance release. No API changes.

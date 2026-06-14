@@ -49,6 +49,7 @@ if(TURBOXML_BUILD_TESTS)
 
     add_executable(turboxml_tests
         test/test_TurboXML.cc
+        test/test_Conformance.cc
     )
     target_link_libraries(turboxml_tests PRIVATE
         turboxml_helpers
