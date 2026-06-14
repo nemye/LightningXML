@@ -7,11 +7,12 @@ project(TurboXML
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 message(STATUS "TurboXML: Build Type = ${CMAKE_BUILD_TYPE}.")
 
 # ---- Options ----
 option(TURBOXML_BUILD_TESTS       "Build unit tests (requires GTest)"                      ON)
-option(TURBOXML_BUILD_BENCHMARKS  "Build benchmarks (requires Google Benchmark)"           OFF)
+option(TURBOXML_BUILD_BENCHMARKS  "Build benchmarks (requires Google Benchmark)"           ON)
 option(TURBOXML_WITH_PUGIXML      "Build pugixml comparison benchmarks"                    OFF)
 option(TURBOXML_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
