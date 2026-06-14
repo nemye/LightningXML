@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <numeric>
+#include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -265,17 +266,40 @@ concept XmlFixedContainer = requires(C& c, size_t i) {
 // Compile-time field introspection
 namespace detail {
 
-template <typename T, size_t... I>
-constexpr auto make_field_hashes_impl(std::index_sequence<I...>) noexcept {
-  return std::array<FieldHash, sizeof...(I)>{
-      {std::get<I>(XmlMetadata<T>::fields).hash...}};
+/// @brief Number of XML field descriptors declared for T.
+template <typename T>
+inline constexpr size_t field_count =
+    std::tuple_size_v<decltype(XmlMetadata<T>::fields)>;
+
+/// @brief Index sequence over T's field descriptors, in declaration order.
+template <typename T>
+inline constexpr auto field_seq = std::make_index_sequence<field_count<T>>{};
+
+/// @brief Builds a std::array<Elem, field_count<T>> by applying `proj` to each
+/// field descriptor of T in declaration order. Elem is given explicitly so the
+/// result type is well-defined even for a zero-field type.
+template <typename Elem, typename T, typename Proj>
+constexpr auto map_fields(Proj proj) noexcept {
+  return [&]<size_t... I>(std::index_sequence<I...>) {
+    return std::array<Elem, field_count<T>>{
+        {proj(std::get<I>(XmlMetadata<T>::fields))...}};
+  }(field_seq<T>);
 }
 
 template <typename T>
 constexpr auto make_field_hashes() noexcept {
-  return make_field_hashes_impl<T>(
-      std::make_index_sequence<
-          std::tuple_size_v<decltype(XmlMetadata<T>::fields)>>{});
+  return map_fields<FieldHash, T>([](const auto& f) { return f.hash; });
+}
+
+template <typename T>
+constexpr auto make_field_names() noexcept {
+  return map_fields<std::string_view, T>(
+      [](const auto& f) { return f.xml_name; });
+}
+
+template <typename T>
+constexpr auto make_field_kinds() noexcept {
+  return map_fields<FieldKind, T>([](const auto& f) { return f.kind; });
 }
 
 template <typename T>
@@ -285,52 +309,22 @@ inline size_t find_field_index(FieldHash hash) noexcept {
   return static_cast<size_t>(std::distance(hashes.begin(), it));
 }
 
-template <typename T, size_t... I>
-constexpr auto make_field_names_impl(std::index_sequence<I...>) noexcept {
-  return std::array<std::string_view, sizeof...(I)>{
-      {std::get<I>(XmlMetadata<T>::fields).xml_name...}};
-}
-
-template <typename T>
-constexpr auto make_field_names() noexcept {
-  return make_field_names_impl<T>(
-      std::make_index_sequence<
-          std::tuple_size_v<decltype(XmlMetadata<T>::fields)>>{});
-}
-
-template <typename T, size_t... I>
-constexpr auto make_field_kinds_impl(std::index_sequence<I...>) noexcept {
-  return std::array<FieldKind, sizeof...(I)>{
-      {std::get<I>(XmlMetadata<T>::fields).kind...}};
-}
-
-template <typename T>
-constexpr auto make_field_kinds() noexcept {
-  return make_field_kinds_impl<T>(
-      std::make_index_sequence<
-          std::tuple_size_v<decltype(XmlMetadata<T>::fields)>>{});
-}
-
 /// @brief Bit i is set when field i of XmlMetadata<T> is marked required.
 /// Drives the parsed-vs-required check in Parser::pull(). A zero mask (the
 /// default, since fields are optional unless opted in) lets pull() skip all
 /// presence tracking, so types without required fields pay nothing.
-template <typename T, size_t... I>
-constexpr uint64_t make_required_mask_impl(std::index_sequence<I...>) noexcept {
-  uint64_t mask = 0;
-  ((mask |= std::get<I>(XmlMetadata<T>::fields).required ? (uint64_t{1} << I)
-                                                         : uint64_t{0}),
-   ...);
-  return mask;
-}
-
 template <typename T>
 constexpr uint64_t make_required_mask() noexcept {
-  constexpr size_t N = std::tuple_size_v<decltype(XmlMetadata<T>::fields)>;
-  static_assert(N <= 64,
+  static_assert(field_count<T> <= 64,
                 "TurboXML tracks required fields in a 64-bit mask; a type may "
                 "declare at most 64 fields");
-  return make_required_mask_impl<T>(std::make_index_sequence<N>{});
+  return [&]<size_t... I>(std::index_sequence<I...>) {
+    uint64_t mask = 0;
+    ((mask |= std::get<I>(XmlMetadata<T>::fields).required ? (uint64_t{1} << I)
+                                                           : uint64_t{0}),
+     ...);
+    return mask;
+  }(field_seq<T>);
 }
 
 /// @brief True if any field of T is an attribute field.
@@ -762,8 +756,8 @@ class BasicParser {
     return fail(code);
   }
 
-  /// @brief check if the parser encountered an error
-  /// @return true if `_error_code` is not `ErrorCode::None`
+  /// @brief Whether the parser has encountered an error.
+  /// @return true if `error_code_` is not `ErrorCode::None`.
   auto error() const noexcept -> bool { return error_code_ != ErrorCode::None; }
 
   // Shared logic: record self-closing state after consuming an ElementOpen.
@@ -935,14 +929,13 @@ class BasicParser {
   // read_element. arr_fill tracks fill position for fixed containers.
   template <typename T, size_t I>
   static bool read_field(BasicParser& p, T& obj, uint16_t depth,
-                         size_t* arr_fill,
-                         uint64_t* parsed) {
+                         std::span<size_t> arr_fill, uint64_t& parsed) {
     // Reaching here means field I's element matched, so it is present. Record
     // it for the required-field check; gated so types with no required field
-    // never touch *parsed (the arg dead-codes away). Failure paths below still
+    // never touch parsed (the arg dead-codes away). Failure paths below still
     // return false and the mask is then irrelevant.
     if constexpr (detail::make_required_mask<T>() != 0) {
-      *parsed |= (uint64_t{1} << I);
+      parsed |= (uint64_t{1} << I);
     }
     constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
     if constexpr (f.kind == FieldKind::Attr) {
@@ -994,7 +987,8 @@ class BasicParser {
   template <typename T, size_t... I>
   static constexpr auto build_elem_dispatch(
       std::index_sequence<I...>) noexcept {
-    using Handler = bool (*)(BasicParser&, T&, uint16_t, size_t*, uint64_t*);
+    using Handler =
+        bool (*)(BasicParser&, T&, uint16_t, std::span<size_t>, uint64_t&);
     return std::array<Handler, sizeof...(I)>{&read_field<T, I>...};
   }
 
@@ -1287,35 +1281,35 @@ template <bool Normalize>
 template <typename T>
 inline auto BasicParser<Normalize>::attr(const FieldHash hash, T& out,
                                          size_t& pos) -> bool {
-  const Attribute* a;
+  size_t idx;
   if (pos < attributes_.size() && attributes_[pos].name_hash == hash) {
-    a = &attributes_[pos];
-    ++pos;
+    idx = pos++;
   } else {
     const auto it = std::ranges::find_if(
         attributes_,
-        [hash](const Attribute& attr) { return attr.name_hash == hash; });
+        [hash](const Attribute& at) { return at.name_hash == hash; });
     if (it == attributes_.end()) {
       return false;
     }
-    a = &*it;
-    pos = static_cast<size_t>(it - attributes_.begin()) + 1;
+    idx = static_cast<size_t>(it - attributes_.begin());
+    pos = idx + 1;
   }
+  const Attribute& a = attributes_[idx];
   if constexpr (XmlStringLike<T>) {
     if constexpr (kNormalize && std::same_as<T, std::string>) {
       out.clear();
       const ErrorCode ec =
-          detail::append_normalized(out, a->value, detail::NormMode::Attr);
+          detail::append_normalized(out, a.value, detail::NormMode::Attr);
       // On a bad reference, fail() records the code; the attribute reports
       // "not matched" and pull() converts the recorded error into a hard fail
       // right after attribute dispatch.
       return ec == ErrorCode::None ? true : fail(ec);
     } else {
-      out = a->value;
+      out = a.value;
       return true;
     }
   } else {
-    return parse_numeric(a->value, out);
+    return parse_numeric(a.value, out);
   }
 }
 
@@ -1516,8 +1510,8 @@ template <bool Normalize>
 template <typename T>
 inline auto BasicParser<Normalize>::pull(T& object, const uint16_t depth)
     -> bool {
-  constexpr size_t N = std::tuple_size_v<decltype(XmlMetadata<T>::fields)>;
-  constexpr auto kIdxSeq = std::make_index_sequence<N>{};
+  constexpr size_t N = detail::field_count<T>;
+  constexpr auto kIdxSeq = detail::field_seq<T>;
   static_assert(detail::all_unique(detail::make_field_hashes<T>()),
                 "FNV-1a hash collision among field names in XmlMetadata<T>");
 
@@ -1582,15 +1576,14 @@ inline auto BasicParser<Normalize>::pull(T& object, const uint16_t depth)
       if constexpr (kHasElems && N == 1) {
         // Single-field types: compile-time tag name and direct call.
         if (try_begin_element(kNames[0])) {
-          if (!read_field<T, 0>(*this, object, depth, arr_fill.data(),
-                                &parsed)) {
+          if (!read_field<T, 0>(*this, object, depth, arr_fill, parsed)) {
             return false;
           }
           continue;
         }
       } else if constexpr (kHasElems) {
         if (try_begin_element(kNames[hint])) {
-          if (!dispatch[hint](*this, object, depth, arr_fill.data(), &parsed)) {
+          if (!dispatch[hint](*this, object, depth, arr_fill, parsed)) {
             return false;
           }
           hint = kNextElem[hint];
@@ -1621,7 +1614,7 @@ inline auto BasicParser<Normalize>::pull(T& object, const uint16_t depth)
       continue;
     }
     consume_peeked();
-    if (!dispatch[idx](*this, object, depth, arr_fill.data(), &parsed)) {
+    if (!dispatch[idx](*this, object, depth, arr_fill, parsed)) {
       return false;
     }
     if constexpr (kHasElems && N > 1) {
@@ -1654,7 +1647,9 @@ class Serializer {
   }
 
   void do_newline() {
-    if constexpr (kPretty) out_ += '\n';
+    if constexpr (kPretty) {
+      out_ += '\n';
+    }
   }
 
   // Escapes '&' and '<' always; attribute values additionally escape '"',
@@ -1683,7 +1678,9 @@ class Serializer {
     } else {
       char buf[32];
       const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v);
-      if (ec == std::errc()) out.append(buf, static_cast<size_t>(ptr - buf));
+      if (ec == std::errc()) {
+        out.append(buf, static_cast<size_t>(ptr - buf));
+      }
     }
   }
 
@@ -1770,7 +1767,7 @@ class Serializer {
 
   template <typename T>
   void write_element(std::string_view tag, const T& obj, int depth) {
-    constexpr size_t N = std::tuple_size_v<decltype(XmlMetadata<T>::fields)>;
+    constexpr size_t N = detail::field_count<T>;
     using Seq = std::make_index_sequence<N>;
 
     do_indent(depth);
