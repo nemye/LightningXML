@@ -72,6 +72,10 @@ enum class ErrorCode : uint8_t {
                          ///< predefined entities (no DTD is processed).
   InvalidCharRef,        ///< Malformed or out-of-range character reference
                          ///< (e.g. "&#;", "&#xZZ;", or a non-XML code point).
+  // Strict well-formedness (StrictParser only)
+  CDataEndInContent,    ///< "]]>" appears in character data (Production [14]).
+  LtInAttributeValue,   ///< '<' appears in an attribute value (Production [10]).
+  DuplicateAttribute,   ///< Two attributes share a name (WFC: Unique Att Spec).
 };
 
 /// @brief A parsed XML attribute from an element's opening tag.
@@ -568,7 +572,22 @@ inline ErrorCode append_normalized(std::string& out, std::string_view raw,
 /// source must outlive both the Parser and any object populated from it.
 /// Deserialize into std::string fields when you need owned copies that outlive
 /// the buffer.
-template <bool Normalize = false>
+/// @brief Compile-time parser policy. A structural type usable as a class
+/// non-type template parameter, e.g. `BasicParser<ParserOptions{.strict =
+/// true}>`; the Parser / NormalizingParser / StrictParser aliases cover the
+/// common cases.
+struct ParserOptions {
+  /// Expand entity/character references and normalize line endings and
+  /// attribute whitespace into owning std::string fields (std::string_view
+  /// fields stay raw zero-copy regardless). See NormalizingParser.
+  bool normalize = false;
+  /// Enforce well-formedness constraints the fast path otherwise skips for
+  /// speed: reject "]]>" in character data, '<' in attribute values, and
+  /// duplicate attribute names. See StrictParser.
+  bool strict = false;
+};
+
+template <ParserOptions Opts = ParserOptions{}>
 class BasicParser {
  public:
   /// @brief Maximum element nesting depth (descent and skip) before
@@ -580,14 +599,21 @@ class BasicParser {
   /// ErrorCode::TooManyAttributes. Bounds attribute-storage amplification.
   static constexpr size_t kMaxAttributesPerElement = 1U << 16;
 
-  /// @brief When true (BasicParser<true>), owning std::string fields receive
-  /// normalized, reference-expanded text: the five predefined entities and
-  /// numeric character references are expanded, CR/CRLF are normalized to LF,
-  /// and attribute whitespace is normalized to spaces. std::string_view fields
-  /// are always raw zero-copy regardless (a view cannot hold transformed
-  /// bytes). The default (BasicParser<false>, aliased as Parser) emits raw,
-  /// byte-for-byte output and compiles the normalization paths away entirely.
-  static constexpr bool kNormalize = Normalize;
+  /// @brief Mirrors ParserOptions::normalize for this instantiation. When set
+  /// (NormalizingParser), owning std::string fields receive normalized,
+  /// reference-expanded text: the five predefined entities and numeric
+  /// character references are expanded, CR/CRLF are normalized to LF, and
+  /// attribute whitespace is normalized to spaces. std::string_view fields are
+  /// always raw zero-copy regardless. Off by default (Parser), which compiles
+  /// the normalization paths away entirely.
+  static constexpr bool kNormalize = Opts.normalize;
+
+  /// @brief Mirrors ParserOptions::strict. When set (StrictParser), the parser
+  /// enforces well-formedness constraints the fast path otherwise skips for
+  /// speed: "]]>" in character data, '<' in attribute values, and duplicate
+  /// attribute names are rejected. Off by default (Parser); the checks compile
+  /// away entirely.
+  static constexpr bool kStrict = Opts.strict;
 
   /// @brief Constructs a parser over src. src must outlive the Parser.
   explicit BasicParser(std::string_view src) noexcept
@@ -598,8 +624,8 @@ class BasicParser {
   BasicParser(BasicParser&&) noexcept = default;
   auto operator=(BasicParser&&) noexcept -> BasicParser& = default;
 
-  template <bool Nz, typename T>
-  friend auto deserialize(BasicParser<Nz>& parser, std::string_view root_name,
+  template <ParserOptions O, typename T>
+  friend auto deserialize(BasicParser<O>& parser, std::string_view root_name,
                           T& object) -> bool;
 
   /// @brief Resets the parser to the beginning of the source string.
@@ -793,6 +819,25 @@ class BasicParser {
     const char* hit = static_cast<const char*>(
         std::memchr(from, c, static_cast<size_t>(end_ - from)));
     return hit != nullptr ? hit : end_;
+  }
+
+  // Whether [p, e) contains the CDATA-close delimiter "]]>". Used only by the
+  // strict path (Production [14] forbids it in character data); memchr-driven
+  // so the scan is fast when the parser opts into the check.
+  [[nodiscard]] static auto contains_cdata_end(const char* p,
+                                               const char* e) noexcept -> bool {
+    while (p < e) {
+      const char* hit = static_cast<const char*>(
+          std::memchr(p, ']', static_cast<size_t>(e - p)));
+      if (hit == nullptr) {
+        return false;
+      }
+      if (e - hit >= 3 && hit[1] == ']' && hit[2] == '>') {
+        return true;
+      }
+      p = hit + 1;
+    }
+    return false;
   }
 
   // Scan forward until `delim` is found. Sets token.data to the content
@@ -1019,14 +1064,23 @@ class BasicParser {
   bool has_peek_{false};
 };
 
-/// @brief Default parser: raw, zero-copy output (no reference expansion or
-/// normalization). This is the common case.
-using Parser = BasicParser<false>;
+/// @brief Default parser: raw, zero-copy output, and the fast non-validating
+/// path (no reference expansion, normalization, or strict WFC checks). This is
+/// the common case.
+using Parser = BasicParser<>;
 
 /// @brief Normalizing parser: owning std::string fields receive
 /// reference-expanded, line-ending- and attribute-normalized text. See
 /// BasicParser::kNormalize.
-using NormalizingParser = BasicParser<true>;
+using NormalizingParser = BasicParser<ParserOptions{.normalize = true}>;
+
+/// @brief Fully-conforming parser: normalizes (expands entity/character
+/// references, folds line endings, normalizes attribute whitespace into owning
+/// std::string fields) AND enforces the well-formedness constraints the default
+/// fast path skips for speed ("]]>" in character data, '<' in attribute values,
+/// duplicate attribute names). Combines kNormalize and kStrict.
+using StrictParser = BasicParser<ParserOptions{.normalize = true,
+                                               .strict = true}>;
 
 /// @brief Deserializes the root element from parser into object.
 /// @tparam T        XmlObject type with an XmlMetadata specialization.
@@ -1034,8 +1088,8 @@ using NormalizingParser = BasicParser<true>;
 /// @param root_name Expected root element name.
 /// @param object    Output object to populate.
 /// @return True on success, false on any parse or structure error.
-template <bool Normalize, typename T>
-auto deserialize(BasicParser<Normalize>& parser, std::string_view root_name,
+template <ParserOptions Opts, typename T>
+auto deserialize(BasicParser<Opts>& parser, std::string_view root_name,
                  T& object) -> bool {
   if (!parser.begin_element(root_name)) [[unlikely]] {
     // begin_element() may have hit a tokenizer error (code already set); only
@@ -1053,8 +1107,8 @@ auto deserialize(BasicParser<Normalize>& parser, std::string_view root_name,
 }
 
 // Parser method implementations
-template <bool Normalize>
-inline auto BasicParser<Normalize>::peek() -> const Token* {
+template <ParserOptions Opts>
+inline auto BasicParser<Opts>::peek() -> const Token* {
   if (!has_peek_) {
     if (!next_from_source(current_token_)) {
       return nullptr;
@@ -1067,8 +1121,8 @@ inline auto BasicParser<Normalize>::peek() -> const Token* {
   return &current_token_;
 }
 
-template <bool Normalize>
-inline auto BasicParser<Normalize>::next() -> const Token* {
+template <ParserOptions Opts>
+inline auto BasicParser<Opts>::next() -> const Token* {
   if (!has_peek_ && !next_from_source(current_token_)) {
     return nullptr;
   }
@@ -1080,8 +1134,8 @@ inline auto BasicParser<Normalize>::next() -> const Token* {
   return &current_token_;
 }
 
-template <bool Normalize>
-inline auto BasicParser<Normalize>::next_from_source(Token& token) -> bool {
+template <ParserOptions Opts>
+inline auto BasicParser<Opts>::next_from_source(Token& token) -> bool {
   if (error() || at_end()) {
     return false;
   }
@@ -1091,13 +1145,18 @@ inline auto BasicParser<Normalize>::next_from_source(Token& token) -> bool {
   }
   const char* start = cur_;
   cur_ = find_byte(cur_, '<');
+  if constexpr (kStrict) {
+    if (contains_cdata_end(start, cur_)) {
+      return make_error(token, ErrorCode::CDataEndInContent);
+    }
+  }
   token.type = TokenType::Text;
   token.data = {start, static_cast<size_t>(cur_ - start)};
   return true;
 }
 
-template <bool Normalize>
-inline auto BasicParser<Normalize>::parse_markup(Token& token) -> bool {
+template <ParserOptions Opts>
+inline auto BasicParser<Opts>::parse_markup(Token& token) -> bool {
   if (at_end()) {
     return make_error(token, ErrorCode::UnexpectedEndAfterLt);
   }
@@ -1130,8 +1189,8 @@ inline auto BasicParser<Normalize>::parse_markup(Token& token) -> bool {
   return make_error(token, ErrorCode::UnexpectedCharAfterLt);
 }
 
-template <bool Normalize>
-inline auto BasicParser<Normalize>::parse_element_open(Token& token) -> bool {
+template <ParserOptions Opts>
+inline auto BasicParser<Opts>::parse_element_open(Token& token) -> bool {
   token.type = TokenType::ElementOpen;
   token.self_closing = false;
   parse_name(token.prefix, token.name, token.name_hash);
@@ -1164,6 +1223,18 @@ inline auto BasicParser<Normalize>::parse_element_open(Token& token) -> bool {
 
     Attribute& a = attributes_.emplace_back();
     parse_name(a.prefix, a.name, a.name_hash);
+    if constexpr (kStrict) {
+      // WFC: Unique Att Spec. Hash compares are the fast filter; the exact
+      // name/prefix compare only runs on the (astronomically rare) hash match,
+      // so this is O(n^2) hash comparisons over the element's attributes.
+      for (size_t i = 0; i + 1 < attributes_.size(); ++i) {
+        if (attributes_[i].name_hash == a.name_hash &&
+            attributes_[i].name == a.name &&
+            attributes_[i].prefix == a.prefix) {
+          return make_error(token, ErrorCode::DuplicateAttribute);
+        }
+      }
+    }
     skip_whitespace();
     if (!expect('=')) {
       return make_error(token, ErrorCode::ExpectedEquals);
@@ -1179,13 +1250,20 @@ inline auto BasicParser<Normalize>::parse_element_open(Token& token) -> bool {
     if (val_end == end_) {
       return make_error(token, ErrorCode::UnterminatedAttributeValue);
     }
+    if constexpr (kStrict) {
+      // WFC: No '<' in attribute values (Production [10]). One short memchr
+      // over the value; a '<' beyond val_end belongs to later markup.
+      if (find_byte(val_start, '<') < val_end) {
+        return make_error(token, ErrorCode::LtInAttributeValue);
+      }
+    }
     a.value = {val_start, static_cast<size_t>(val_end - val_start)};
     cur_ = val_end + 1;
   }
 }
 
-template <bool Normalize>
-inline auto BasicParser<Normalize>::parse_element_close(Token& token) -> bool {
+template <ParserOptions Opts>
+inline auto BasicParser<Opts>::parse_element_close(Token& token) -> bool {
   token.type = TokenType::ElementClose;
   FieldHash name_hash;
   parse_name(token.prefix, token.name, name_hash);
@@ -1199,9 +1277,9 @@ inline auto BasicParser<Normalize>::parse_element_close(Token& token) -> bool {
   return true;
 }
 
-template <bool Normalize>
+template <ParserOptions Opts>
 template <typename T>
-inline auto BasicParser<Normalize>::parse_numeric(std::string_view text,
+inline auto BasicParser<Opts>::parse_numeric(std::string_view text,
                                                   T& out) noexcept -> bool {
   if constexpr (std::same_as<T, bool>) {
     // XML Schema boolean lexical space; std::from_chars has no bool overload.
@@ -1224,9 +1302,9 @@ inline auto BasicParser<Normalize>::parse_numeric(std::string_view text,
   }
 }
 
-template <bool Normalize>
+template <ParserOptions Opts>
 template <typename T>
-inline auto BasicParser<Normalize>::value(std::string_view expected_name,
+inline auto BasicParser<Opts>::value(std::string_view expected_name,
                                           T& out) -> bool {
   if constexpr (XmlStringLike<T>) {
     if constexpr (kNormalize && std::same_as<T, std::string>) {
@@ -1276,9 +1354,9 @@ inline auto BasicParser<Normalize>::value(std::string_view expected_name,
 // Document-order fast path: attribute fields are typically declared in the
 // same order the attributes appear, so try the cursor position first and
 // fall back to a full first-match scan on miss.
-template <bool Normalize>
+template <ParserOptions Opts>
 template <typename T>
-inline auto BasicParser<Normalize>::attr(const FieldHash hash, T& out,
+inline auto BasicParser<Opts>::attr(const FieldHash hash, T& out,
                                          size_t& pos) -> bool {
   size_t idx;
   if (pos < attributes_.size() && attributes_[pos].name_hash == hash) {
@@ -1312,8 +1390,8 @@ inline auto BasicParser<Normalize>::attr(const FieldHash hash, T& out,
   }
 }
 
-template <bool Normalize>
-inline auto BasicParser<Normalize>::begin_element(
+template <ParserOptions Opts>
+inline auto BasicParser<Opts>::begin_element(
     std::string_view expected_name) -> bool {
   while (const Token* peeked = peek()) {
     if (peeked->type == TokenType::ElementOpen) {
@@ -1331,8 +1409,8 @@ inline auto BasicParser<Normalize>::begin_element(
   return false;
 }
 
-template <bool Normalize>
-inline auto BasicParser<Normalize>::end_element(std::string_view expected_name)
+template <ParserOptions Opts>
+inline auto BasicParser<Opts>::end_element(std::string_view expected_name)
     -> bool {
   if (!has_peek_) {
     skip_whitespace();
@@ -1378,8 +1456,8 @@ inline auto BasicParser<Normalize>::end_element(std::string_view expected_name)
 // Precondition: the opening tag has been consumed and no token is peeked.
 // On malformed or truncated content, leaves cur_ == end_ so the caller's
 // next read fails the parse.
-template <bool Normalize>
-inline void BasicParser<Normalize>::skip_element() {
+template <ParserOptions Opts>
+inline void BasicParser<Opts>::skip_element() {
   if (last_self_closing_) {
     return;
   }
@@ -1455,9 +1533,9 @@ inline void BasicParser<Normalize>::skip_element() {
 
 // Opening tag already consumed by caller (handle_element, try_begin_element,
 // or consume_peeked in the N==1 inline path).
-template <bool Normalize>
+template <ParserOptions Opts>
 template <typename T>
-inline auto BasicParser<Normalize>::read_element(std::string_view expected_name,
+inline auto BasicParser<Opts>::read_element(std::string_view expected_name,
                                                  T& out, const uint16_t depth)
     -> bool {
   if (depth > kMaxDepth) {
@@ -1480,6 +1558,11 @@ inline auto BasicParser<Normalize>::read_element(std::string_view expected_name,
             0 &&
         found[2 + expected_name.size()] == '>') {
       std::string_view text{cur_, static_cast<size_t>(found - cur_)};
+      if constexpr (kStrict) {
+        if (contains_cdata_end(cur_, found)) {
+          return fail(ErrorCode::CDataEndInContent);
+        }
+      }
       cur_ = found + 3 + expected_name.size();
       has_peek_ = false;
       if constexpr (XmlStringLike<T>) {
@@ -1502,9 +1585,9 @@ inline auto BasicParser<Normalize>::read_element(std::string_view expected_name,
   }
 }
 
-template <bool Normalize>
+template <ParserOptions Opts>
 template <typename T>
-inline auto BasicParser<Normalize>::pull(T& object, const uint16_t depth)
+inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth)
     -> bool {
   constexpr size_t N = detail::field_count<T>;
   constexpr auto kIdxSeq = detail::field_seq<T>;

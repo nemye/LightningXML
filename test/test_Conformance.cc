@@ -295,22 +295,19 @@ class Sec2_4_CharData : public ::testing::Test {};
 /// Production [14]: CharData must not contain "]]>" (the CDATA close
 /// delimiter appearing in ordinary text is a fatal error per spec).
 ///
-/// XFAIL: TurboXML's fast-path text scan (memchr for '<') does not
-/// check for this sequence in character data, so it will be passed
-/// through as-is rather than flagged as an error.
+/// StrictParser enforces this; the default Parser opts out of the extra text
+/// scan for speed and accepts it.
 TEST_F(Sec2_4_CharData, CDataEndDelimiterInTextShouldFail) {
   constexpr std::string_view src = R"(<r><v>bad ]]> text</v></r>)";
+
+  xml::StrictParser sp{src};
+  Leaf strict_leaf;
+  EXPECT_FALSE(xml::deserialize(sp, "r", strict_leaf));
+  EXPECT_EQ(sp.error_code(), xml::ErrorCode::CDataEndInContent);
+
   xml::Parser p{src};
   Leaf leaf;
-  // Per spec this MUST be a fatal error, but TurboXML's zero-copy fast path
-  // does not scan character data for "]]>" (documented limitation: the extra
-  // pass costs 13-28% on text-heavy input).
-  bool ok = xml::deserialize(p, "r", leaf);
-  if (ok) {
-    GTEST_SKIP() << "XFAIL sec 2.4: ]]> in text not rejected (by design)";
-  } else {
-    SUCCEED();
-  }
+  EXPECT_TRUE(xml::deserialize(p, "r", leaf));  // accepted by the fast path
 }
 
 // sec 2.5 - Comments [Production 15]
@@ -714,40 +711,37 @@ TEST_F(Sec3_1_Tags, UnquotedAttributeFails) {
 /// WFC: No < in Attribute Values.
 /// Production [10]: AttValue must not contain '<'.
 ///
-/// XFAIL: TurboXML uses memchr for the closing quote and does not
-/// scan for '<' inside attribute values.
+/// StrictParser enforces this; the default Parser accepts it.
 TEST_F(Sec3_1_Tags, WFC_NoLtInAttributeValue) {
   constexpr std::string_view src = R"(<r x="a<b"/>)";
+
+  xml::StrictParser sp{src};
+  AttrOnly strict_ao;
+  EXPECT_FALSE(xml::deserialize(sp, "r", strict_ao));
+  EXPECT_EQ(sp.error_code(), xml::ErrorCode::LtInAttributeValue);
+
   xml::Parser p{src};
   AttrOnly ao;
-  bool ok = xml::deserialize(p, "r", ao);
-  if (ok) {
-    GTEST_SKIP() << "XFAIL sec 3.1 WFC: '<' in attribute value not rejected "
-                    "(by design)";
-  } else {
-    SUCCEED();
-  }
+  EXPECT_TRUE(xml::deserialize(p, "r", ao));
 }
 
 /// WFC: Unique Att Spec - no two attributes in a start-tag may share
 /// the same name.
 ///
-/// XFAIL: TurboXML does not check for duplicate attributes. The last
-/// one wins via linear scan in attr().
+/// StrictParser enforces this; the default Parser accepts duplicates and the
+/// document-order match wins in attr().
 TEST_F(Sec3_1_Tags, WFC_UniqueAttSpec) {
   constexpr std::string_view src = R"(<r x="first" x="second"/>)";
+
+  xml::StrictParser sp{src};
+  AttrOnly strict_ao;
+  EXPECT_FALSE(xml::deserialize(sp, "r", strict_ao));
+  EXPECT_EQ(sp.error_code(), xml::ErrorCode::DuplicateAttribute);
+
   xml::Parser p{src};
   AttrOnly ao;
-  // TurboXML does not detect duplicate attributes (documented limitation: the
-  // O(n^2) check is too costly); the document-order match wins.
-  bool ok = xml::deserialize(p, "r", ao);
-  if (ok) {
-    GTEST_SKIP() << "XFAIL sec 3.1 WFC: duplicate attribute not rejected "
-                    "(by design), value is '"
-                 << ao.x << "'";
-  } else {
-    SUCCEED();
-  }
+  EXPECT_TRUE(xml::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "first");  // document-order match wins
 }
 
 /// Unclosed start tag - must fail.

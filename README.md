@@ -190,7 +190,7 @@ Use `std::string_view` for maximum performance when the source buffer outlives t
 
 By default `xml::Parser` is zero-copy and **non-normalizing**: it does not expand entities or character references, normalize line endings, or normalize attribute values.
 
-For XML-conformant text, use `xml::NormalizingParser` (an alias for `xml::BasicParser<true>`). On this parser, **owning `std::string` fields** receive normalized, reference-expanded text:
+For XML-conformant text, use `xml::NormalizingParser` (an alias for `xml::BasicParser<ParserOptions{.normalize = true}>`). On this parser, **owning `std::string` fields** receive normalized, reference-expanded text:
 
 - The five predefined entities (`&amp; &lt; &gt; &apos; &quot;`) and decimal/hex character references (`&#65;`, `&#x41;`) are expanded (UTF-8 encoded).
 - Line endings (`\r\n`, `\r`) are normalized to `\n`.
@@ -204,6 +204,21 @@ xml::deserialize(p, "root", obj);   // std::string fields are normalized
 ```
 
 `std::string_view` fields are **always** raw zero-copy and ignore this setting (a view cannot hold transformed bytes). The default `xml::Parser` compiles the normalization paths away entirely, meaning you pay nothing unless you opt in.
+
+### Strict Well-Formedness (opt-in)
+
+The default `xml::Parser` is deliberately **non-validating**: for speed it skips three scans the spec requires. `xml::StrictParser` (fully conforming — it both normalizes *and* enforces these constraints) rejects:
+
+- `]]>` appearing in character data (Production [14]) → `ErrorCode::CDataEndInContent`
+- `<` appearing in an attribute value (Production [10]) → `ErrorCode::LtInAttributeValue`
+- duplicate attribute names on one element (WFC: Unique Att Spec) → `ErrorCode::DuplicateAttribute`
+
+```cpp
+xml::StrictParser p{src};
+xml::deserialize(p, "root", obj);   // rejects ill-formed input; also normalizes
+```
+
+These checks each add a scan to the hot path, so they are **opt-in**: the default `xml::Parser` compiles them away entirely (zero cost). Parser policy is selected via the `xml::ParserOptions` flags (`normalize`, `strict`); the `Parser` / `NormalizingParser` / `StrictParser` aliases cover the common combinations, or use `xml::BasicParser<ParserOptions{...}>` directly.
 
 ## Building
 

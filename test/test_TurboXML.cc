@@ -2070,3 +2070,41 @@ TEST_F(TurboBasicTests, NormalizeForbiddenCodePointFails) {
   EXPECT_FALSE(xml::deserialize(p, "NormText", t));
   EXPECT_EQ(p.error_code(), xml::ErrorCode::InvalidCharRef);
 }
+
+// ---- Strict (fully-conforming) parser: no false positives ----
+//
+// StrictParser enforces the three WFCs (rejection cases live in the
+// conformance suite). These guard against false positives and confirm it still
+// normalizes (StrictParser = normalize + strict).
+
+/// @brief A CDATA section's terminating "]]>" must NOT be flagged as the
+/// forbidden CharData sequence (the check runs on text, not CDATA content).
+TEST_F(TurboBasicTests, StrictAcceptsCDataTerminator) {
+  constexpr std::string_view xml_src =
+      R"(<NormText><v><![CDATA[x]]></v></NormText>)";
+  xml::StrictParser p{xml_src};
+  NormText t;
+  ASSERT_TRUE(xml::deserialize(p, "NormText", t));
+  EXPECT_EQ(t.v, "x");
+}
+
+/// @brief "]]" in text without a following '>' is well-formed and accepted.
+TEST_F(TurboBasicTests, StrictAcceptsBracketsWithoutClose) {
+  constexpr std::string_view xml_src = R"(<NormText><v>a ]] b</v></NormText>)";
+  xml::StrictParser p{xml_src};
+  NormText t;
+  ASSERT_TRUE(xml::deserialize(p, "NormText", t));
+  EXPECT_EQ(t.v, "a ]] b");
+}
+
+/// @brief StrictParser is fully conforming: it still expands references and
+/// normalizes into owning std::string fields.
+TEST_F(TurboBasicTests, StrictParserNormalizes) {
+  constexpr std::string_view xml_src =
+      R"(<NormRecord a="x&#9;y"><body>m &amp; n</body><raw>r</raw></NormRecord>)";
+  xml::StrictParser p{xml_src};
+  NormRecord r;
+  ASSERT_TRUE(xml::deserialize(p, "NormRecord", r));
+  EXPECT_EQ(r.body, "m & n");  // entity expanded
+  EXPECT_EQ(r.attr, "x\ty");   // &#9; preserved as a literal tab
+}
