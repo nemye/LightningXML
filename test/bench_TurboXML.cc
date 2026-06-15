@@ -582,6 +582,19 @@ static void BM_ParseNormalizedFields(benchmark::State& state) {
                           static_cast<int64_t>(kFlatXml.size()));
 }
 
+static void BM_StrictParseNormalizedFields(benchmark::State& state) {
+  for (auto _ : state) {
+    xml::StrictParser parser{kFlatXml};
+    NormItemList list;
+    bool ok = xml::deserialize(parser, "FlatList", list);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(list);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kFlatXml.size()));
+}
+
 BENCHMARK(BM_ParseFlatXml);
 BENCHMARK(BM_ParseDeepXml);
 BENCHMARK(BM_ParseAttrXml);
@@ -596,6 +609,7 @@ BENCHMARK(BM_ParseOptionalFields);
 BENCHMARK(BM_ParseRequiredFields);
 BENCHMARK(BM_ParseOwnedRawStrings);
 BENCHMARK(BM_ParseNormalizedFields);
+BENCHMARK(BM_StrictParseNormalizedFields);
 
 #ifdef TURBOXML_HAS_PUGIXML
 #include <pugixml.hpp>
