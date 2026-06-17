@@ -3,6 +3,8 @@
 
 #include <benchmark/benchmark.h>
 
+#include <charconv>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -502,6 +504,134 @@ static void BM_ParseCatalog(benchmark::State& state) {
                           static_cast<int64_t>(kCatalogXml.size()));
 }
 
+// ---- StrictParser across the comparison workloads ----
+//
+// The same workloads and output records as the default-Parser benchmarks above,
+// but parsed with xml::StrictParser (normalize + strict well-formedness). On
+// the std::string_view records the views stay raw and zero-copy; the extra cost
+// is purely the three well-formedness scans (']]>' in content, '<' in attribute
+// values, duplicate attribute names). The std::string Catalog additionally
+// routes its owning fields through the normalization scan. This places a
+// fully-conforming TurboXML configuration next to the validating tree parsers
+// (pugixml / libxml2) on identical input.
+
+static void BM_Strict_ParseFlatXml(benchmark::State& state) {
+  for (auto _ : state) {
+    xml::StrictParser parser{kFlatXml};
+    FlatList list;
+    bool ok = xml::deserialize(parser, "FlatList", list);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(list);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kFlatXml.size()));
+}
+
+static void BM_Strict_ParseDeepXml(benchmark::State& state) {
+  for (auto _ : state) {
+    xml::StrictParser parser{kDeepXml};
+    DeepList list;
+    bool ok = xml::deserialize(parser, "DeepList", list);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(list);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kDeepXml.size()));
+}
+
+static void BM_Strict_ParseAttrXml(benchmark::State& state) {
+  for (auto _ : state) {
+    xml::StrictParser parser{kAttrXml};
+    AttrList list;
+    bool ok = xml::deserialize(parser, "AttrList", list);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(list);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kAttrXml.size()));
+}
+
+static void BM_Strict_ParseSmallXml(benchmark::State& state) {
+  for (auto _ : state) {
+    xml::StrictParser parser{kSmallXml};
+    Users users;
+    bool ok = xml::deserialize(parser, "Users", users);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(users);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kSmallXml.size()));
+}
+
+static void BM_Strict_ParseLargeXml(benchmark::State& state) {
+  for (auto _ : state) {
+    xml::StrictParser parser{kLargeXml};
+    Users users;
+    bool ok = xml::deserialize(parser, "Users", users);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(users);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kLargeXml.size()));
+}
+
+static void BM_Strict_ParseOrgXml(benchmark::State& state) {
+  for (auto _ : state) {
+    xml::StrictParser parser{kOrgXml};
+    Organization org;
+    bool ok = xml::deserialize(parser, "Organization", org);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(org);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kOrgXml.size()));
+}
+
+static void BM_Strict_ParseTreeXml(benchmark::State& state) {
+  for (auto _ : state) {
+    xml::StrictParser parser{kTreeXml};
+    TreeNode root;
+    bool ok = xml::deserialize(parser, "Node", root);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(root);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kTreeXml.size()));
+}
+
+static void BM_Strict_ParseCommentHeavyXml(benchmark::State& state) {
+  for (auto _ : state) {
+    xml::StrictParser parser{kCommentXml};
+    Users users;
+    bool ok = xml::deserialize(parser, "Users", users);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(users);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kCommentXml.size()));
+}
+
+static void BM_Strict_ParseCatalog(benchmark::State& state) {
+  for (auto _ : state) {
+    xml::StrictParser parser{kCatalogXml};
+    Catalog catalog;
+    bool ok = xml::deserialize(parser, "catalog", catalog);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(catalog);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kCatalogXml.size()));
+}
+
 // ---- Required vs optional fields ----
 //
 // Two records with identical members and the identical payload (kFlatXml, a
@@ -547,7 +677,7 @@ static void BM_ParseRequiredFields(benchmark::State& state) {
 // folding, attribute whitespace) instead of a single zero-copy view assignment.
 //
 // Comparison axis vs the two benchmarks above: those use std::string_view (raw,
-// zero-copy), so the delta here bundles two costs — the owning std::string copy
+// zero-copy), so the delta here bundles two costs - the owning std::string copy
 // AND the per-byte normalization scan. This payload is entity-free, so it
 // measures the steady-state cost of the normalization machinery on plain
 // content; documents carrying many &entities;/&#refs; would add expansion work
@@ -610,6 +740,16 @@ BENCHMARK(BM_ParseRequiredFields);
 BENCHMARK(BM_ParseOwnedRawStrings);
 BENCHMARK(BM_ParseNormalizedFields);
 BENCHMARK(BM_StrictParseNormalizedFields);
+
+BENCHMARK(BM_Strict_ParseFlatXml);
+BENCHMARK(BM_Strict_ParseDeepXml);
+BENCHMARK(BM_Strict_ParseAttrXml);
+BENCHMARK(BM_Strict_ParseSmallXml);
+BENCHMARK(BM_Strict_ParseLargeXml);
+BENCHMARK(BM_Strict_ParseOrgXml);
+BENCHMARK(BM_Strict_ParseTreeXml);
+BENCHMARK(BM_Strict_ParseCommentHeavyXml);
+BENCHMARK(BM_Strict_ParseCatalog);
 
 #ifdef TURBOXML_HAS_PUGIXML
 #include <pugixml.hpp>
@@ -833,5 +973,1013 @@ BENCHMARK(BM_Pugi_ParseTreeXml);
 BENCHMARK(BM_Pugi_ParseCommentHeavyXml);
 BENCHMARK(BM_Pugi_ParseCatalog);
 #endif  // TURBOXML_HAS_PUGIXML
+
+// ============================================================================
+// Comparison benchmarks: RapidXML and libxml2
+// ----------------------------------------------------------------------------
+// All three comparison libraries are timed on the identical payloads and emit
+// the identical output structures (the same FlatItem/Organization/etc. records,
+// or the same id/name/email vectors) as the TurboXML benchmarks above, so the
+// only thing that differs is the parsing strategy and its feature set. Read the
+// four together as a feature/performance spectrum:
+//
+//   * TurboXML (default Parser) - zero-copy, non-normalizing, non-validating.
+//     Views point straight into the source; no entity decoding, no DOM. Fewest
+//     features, no allocation for string fields.
+//   * RapidXML - in-situ DOM. Parses destructively into a *mutable* buffer and
+//     leaves zero-copy pointers into it; decodes the predefined entities. We
+//     copy the source into a fresh buffer inside the timed loop because the
+//     parse is destructive -- the analogue of pugixml's internal load_buffer
+//     copy, kept inside timing for parity.
+//   * pugixml - builds an owning DOM (load_buffer copies the source), decodes
+//     entities, normalizes. We then walk the tree to fill the structs.
+//   * libxml2 - the feature-rich end: copies every string into the tree,
+//     decodes entities, and fully validates well-formedness.
+//
+// To avoid charging the comparison parsers for work TurboXML also skips, the
+// string accessors below return pointers into each library's own tree (no extra
+// copy beyond what the parse already did), matching pugixml's child_value().
+// ============================================================================
+
+#ifdef TURBOXML_HAS_RAPIDXML
+#include <boost/property_tree/detail/rapidxml.hpp>
+
+namespace rx = boost::property_tree::detail::rapidxml;
+using RxNode = rx::xml_node<>;
+
+static auto rx_child_sv(RxNode* n, const char* name) -> std::string_view {
+  auto* c = n->first_node(name);
+  return c ? std::string_view(c->value(), c->value_size()) : std::string_view{};
+}
+
+static auto rx_attr_sv(RxNode* n, const char* name) -> std::string_view {
+  auto* a = n->first_attribute(name);
+  return a ? std::string_view(a->value(), a->value_size()) : std::string_view{};
+}
+
+static auto rx_attr_int(RxNode* n, const char* name) -> int {
+  auto* a = n->first_attribute(name);
+  int out{};
+  if (a) std::from_chars(a->value(), a->value() + a->value_size(), out);
+  return out;
+}
+
+static auto rx_child_int(RxNode* n, const char* name) -> int {
+  auto* c = n->first_node(name);
+  int out{};
+  if (c) std::from_chars(c->value(), c->value() + c->value_size(), out);
+  return out;
+}
+
+// Each workload is parameterized on the RapidXML parse flags so it can run in
+// two feature points:
+//   * parse_default (0): create data nodes and element values, decode the
+//     predefined entities, null-terminate strings -- the apples-to-apples
+//     "fully parse into a usable tree" mode aligned with pugixml/libxml2.
+//   * parse_fastest: drop data nodes, entity translation, and string
+//     terminators. The fastest mode RapidXML is known for, trading those
+//     features for speed. All accessors here read value()/value_size() (never
+//     a C-string), so they remain correct without the null terminators.
+// Both modes leave zero-copy pointers into the mutable buffer; we always read
+// through value_size() so the same extraction code serves either flag set.
+
+// RapidXML parses in place into a mutable, null-terminated buffer. This helper
+// produces that buffer; the copy is intentionally part of the timed work (the
+// analogue of pugixml's internal load_buffer copy).
+static auto rx_buffer(const std::string& src) -> std::vector<char> {
+  std::vector<char> buf(src.begin(), src.end());
+  buf.push_back('\0');
+  return buf;
+}
+
+template <int Flags>
+static void rx_run_users(benchmark::State& state, const std::string& src) {
+  for (auto _ : state) {
+    auto buf = rx_buffer(src);
+    rx::xml_document<> doc;
+    doc.parse<Flags>(buf.data());
+    std::vector<int> ids;
+    std::vector<std::string_view> names, emails;
+    auto* root = doc.first_node("Users");
+    for (auto* u = root->first_node("User"); u; u = u->next_sibling("User")) {
+      ids.push_back(rx_attr_int(u, "id"));
+      names.push_back(rx_child_sv(u, "Name"));
+      emails.push_back(rx_child_sv(u, "Email"));
+    }
+    benchmark::DoNotOptimize(ids);
+    benchmark::DoNotOptimize(names);
+    benchmark::DoNotOptimize(emails);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(src.size()));
+}
+
+template <int Flags>
+static void rx_run_flat(benchmark::State& state) {
+  for (auto _ : state) {
+    auto buf = rx_buffer(kFlatXml);
+    rx::xml_document<> doc;
+    doc.parse<Flags>(buf.data());
+    FlatList list;
+    auto* root = doc.first_node("FlatList");
+    for (auto* item = root->first_node("Item"); item;
+         item = item->next_sibling("Item")) {
+      FlatItem it;
+      it.id = rx_attr_int(item, "id");
+      it.title = rx_child_sv(item, "title");
+      it.description = rx_child_sv(item, "desc");
+      it.status = rx_child_int(item, "status");
+      list.items.push_back(it);
+    }
+    benchmark::DoNotOptimize(list);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kFlatXml.size()));
+}
+
+template <int Flags>
+static void rx_run_deep(benchmark::State& state) {
+  for (auto _ : state) {
+    auto buf = rx_buffer(kDeepXml);
+    rx::xml_document<> doc;
+    doc.parse<Flags>(buf.data());
+    std::vector<int> values;
+    auto* root = doc.first_node("DeepList");
+    for (auto* l1 = root->first_node("L1"); l1; l1 = l1->next_sibling("L1")) {
+      auto* l5 =
+          l1->first_node("L2")->first_node("L3")->first_node("L4")->first_node(
+              "L5");
+      values.push_back(rx_child_int(l5, "v"));
+    }
+    benchmark::DoNotOptimize(values);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kDeepXml.size()));
+}
+
+template <int Flags>
+static void rx_run_attr(benchmark::State& state) {
+  for (auto _ : state) {
+    auto buf = rx_buffer(kAttrXml);
+    rx::xml_document<> doc;
+    doc.parse<Flags>(buf.data());
+    std::vector<int> a1s, a2s, a3s, a4s, a5s;
+    std::vector<std::string_view> s1s, s2s, s3s, s4s, s5s;
+    auto* root = doc.first_node("AttrList");
+    for (auto* item = root->first_node("Item"); item;
+         item = item->next_sibling("Item")) {
+      a1s.push_back(rx_attr_int(item, "a1"));
+      a2s.push_back(rx_attr_int(item, "a2"));
+      a3s.push_back(rx_attr_int(item, "a3"));
+      a4s.push_back(rx_attr_int(item, "a4"));
+      a5s.push_back(rx_attr_int(item, "a5"));
+      s1s.push_back(rx_attr_sv(item, "s1"));
+      s2s.push_back(rx_attr_sv(item, "s2"));
+      s3s.push_back(rx_attr_sv(item, "s3"));
+      s4s.push_back(rx_attr_sv(item, "s4"));
+      s5s.push_back(rx_attr_sv(item, "s5"));
+    }
+    benchmark::DoNotOptimize(a1s);
+    benchmark::DoNotOptimize(s1s);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kAttrXml.size()));
+}
+
+static void rx_build_org_member(OrgMember& member, RxNode* mn) {
+  member.id = rx_attr_int(mn, "id");
+  member.role = rx_attr_sv(mn, "role");
+  member.full_name = rx_child_sv(mn, "FullName");
+  member.email = rx_child_sv(mn, "Email");
+  auto* skills = mn->first_node("Skills");
+  for (auto* sn = skills->first_node("Skill"); sn;
+       sn = sn->next_sibling("Skill")) {
+    member.skills.items.push_back(
+        std::string_view(sn->value(), sn->value_size()));
+  }
+}
+
+template <int Flags>
+static void rx_run_org(benchmark::State& state) {
+  for (auto _ : state) {
+    auto buf = rx_buffer(kOrgXml);
+    rx::xml_document<> doc;
+    doc.parse<Flags>(buf.data());
+    Organization org;
+    auto* org_node = doc.first_node("Organization");
+    org.id = rx_attr_int(org_node, "id");
+    org.name = rx_attr_sv(org_node, "name");
+    for (auto* dn = org_node->first_node("Department"); dn;
+         dn = dn->next_sibling("Department")) {
+      OrgDepartment dept;
+      dept.id = rx_attr_int(dn, "id");
+      dept.name = rx_attr_sv(dn, "name");
+      for (auto* tn = dn->first_node("Team"); tn;
+           tn = tn->next_sibling("Team")) {
+        OrgTeam team;
+        team.id = rx_attr_int(tn, "id");
+        team.name = rx_attr_sv(tn, "name");
+        for (auto* mn = tn->first_node("Member"); mn;
+             mn = mn->next_sibling("Member")) {
+          OrgMember member;
+          rx_build_org_member(member, mn);
+          team.members.push_back(member);
+        }
+        dept.teams.push_back(team);
+      }
+      org.departments.push_back(dept);
+    }
+    benchmark::DoNotOptimize(org);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kOrgXml.size()));
+}
+
+static void rx_build_tree(TreeNode& node, RxNode* xn) {
+  for (auto* child = xn->first_node("Node"); child;
+       child = child->next_sibling("Node")) {
+    node.children.emplace_back();
+    rx_build_tree(node.children.back(), child);
+  }
+}
+
+template <int Flags>
+static void rx_run_tree(benchmark::State& state) {
+  for (auto _ : state) {
+    auto buf = rx_buffer(kTreeXml);
+    rx::xml_document<> doc;
+    doc.parse<Flags>(buf.data());
+    TreeNode root;
+    rx_build_tree(root, doc.first_node("Node"));
+    benchmark::DoNotOptimize(root);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kTreeXml.size()));
+}
+
+template <int Flags>
+static void rx_run_catalog(benchmark::State& state) {
+  for (auto _ : state) {
+    auto buf = rx_buffer(kCatalogXml);
+    rx::xml_document<> doc;
+    doc.parse<Flags>(buf.data());
+    Catalog catalog;
+    auto* root = doc.first_node("catalog");
+    for (auto* node = root->first_node("book"); node;
+         node = node->next_sibling("book")) {
+      Book& b = catalog.books.emplace_back();
+      b.id = std::string(rx_attr_sv(node, "id"));
+      b.author = std::string(rx_child_sv(node, "author"));
+      b.title = std::string(rx_child_sv(node, "title"));
+      b.genre = std::string(rx_child_sv(node, "genre"));
+      b.price = std::string(rx_child_sv(node, "price"));
+      b.publish_date = std::string(rx_child_sv(node, "publish_date"));
+      b.description = std::string(rx_child_sv(node, "description"));
+    }
+    benchmark::DoNotOptimize(catalog);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kCatalogXml.size()));
+}
+
+// parse_default (full tree + entity decoding)
+static void BM_RapidXml_ParseFlatXml(benchmark::State& s) { rx_run_flat<0>(s); }
+static void BM_RapidXml_ParseDeepXml(benchmark::State& s) { rx_run_deep<0>(s); }
+static void BM_RapidXml_ParseAttrXml(benchmark::State& s) { rx_run_attr<0>(s); }
+static void BM_RapidXml_ParseSmallXml(benchmark::State& s) {
+  rx_run_users<0>(s, kSmallXml);
+}
+static void BM_RapidXml_ParseLargeXml(benchmark::State& s) {
+  rx_run_users<0>(s, kLargeXml);
+}
+static void BM_RapidXml_ParseOrgXml(benchmark::State& s) { rx_run_org<0>(s); }
+static void BM_RapidXml_ParseTreeXml(benchmark::State& s) { rx_run_tree<0>(s); }
+static void BM_RapidXml_ParseCommentHeavyXml(benchmark::State& s) {
+  rx_run_users<0>(s, kCommentXml);
+}
+static void BM_RapidXml_ParseCatalog(benchmark::State& s) {
+  rx_run_catalog<0>(s);
+}
+
+// parse_fastest (no data nodes / no entity translation / no terminators)
+static void BM_RapidXmlFast_ParseFlatXml(benchmark::State& s) {
+  rx_run_flat<rx::parse_fastest>(s);
+}
+static void BM_RapidXmlFast_ParseDeepXml(benchmark::State& s) {
+  rx_run_deep<rx::parse_fastest>(s);
+}
+static void BM_RapidXmlFast_ParseAttrXml(benchmark::State& s) {
+  rx_run_attr<rx::parse_fastest>(s);
+}
+static void BM_RapidXmlFast_ParseSmallXml(benchmark::State& s) {
+  rx_run_users<rx::parse_fastest>(s, kSmallXml);
+}
+static void BM_RapidXmlFast_ParseLargeXml(benchmark::State& s) {
+  rx_run_users<rx::parse_fastest>(s, kLargeXml);
+}
+static void BM_RapidXmlFast_ParseOrgXml(benchmark::State& s) {
+  rx_run_org<rx::parse_fastest>(s);
+}
+static void BM_RapidXmlFast_ParseTreeXml(benchmark::State& s) {
+  rx_run_tree<rx::parse_fastest>(s);
+}
+static void BM_RapidXmlFast_ParseCommentHeavyXml(benchmark::State& s) {
+  rx_run_users<rx::parse_fastest>(s, kCommentXml);
+}
+static void BM_RapidXmlFast_ParseCatalog(benchmark::State& s) {
+  rx_run_catalog<rx::parse_fastest>(s);
+}
+
+BENCHMARK(BM_RapidXml_ParseFlatXml);
+BENCHMARK(BM_RapidXml_ParseDeepXml);
+BENCHMARK(BM_RapidXml_ParseAttrXml);
+BENCHMARK(BM_RapidXml_ParseSmallXml);
+BENCHMARK(BM_RapidXml_ParseLargeXml);
+BENCHMARK(BM_RapidXml_ParseOrgXml);
+BENCHMARK(BM_RapidXml_ParseTreeXml);
+BENCHMARK(BM_RapidXml_ParseCommentHeavyXml);
+BENCHMARK(BM_RapidXml_ParseCatalog);
+
+BENCHMARK(BM_RapidXmlFast_ParseFlatXml);
+BENCHMARK(BM_RapidXmlFast_ParseDeepXml);
+BENCHMARK(BM_RapidXmlFast_ParseAttrXml);
+BENCHMARK(BM_RapidXmlFast_ParseSmallXml);
+BENCHMARK(BM_RapidXmlFast_ParseLargeXml);
+BENCHMARK(BM_RapidXmlFast_ParseOrgXml);
+BENCHMARK(BM_RapidXmlFast_ParseTreeXml);
+BENCHMARK(BM_RapidXmlFast_ParseCommentHeavyXml);
+BENCHMARK(BM_RapidXmlFast_ParseCatalog);
+#endif  // TURBOXML_HAS_RAPIDXML
+
+#ifdef TURBOXML_HAS_LIBXML2
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+#include <libxml/xmlreader.h>
+
+// Find the first element child of `parent` named `name` (nullptr if none).
+static auto x2_child(xmlNode* parent, const char* name) -> xmlNode* {
+  for (xmlNode* c = parent->children; c != nullptr; c = c->next) {
+    if (c->type == XML_ELEMENT_NODE && xmlStrcmp(c->name, BAD_CAST name) == 0) {
+      return c;
+    }
+  }
+  return nullptr;
+}
+
+// Text content of an element, as a pointer into the tree (no extra allocation),
+// matching pugixml's child_value(). Returns the first text/CDATA child.
+static auto x2_text(xmlNode* n) -> const char* {
+  if (n == nullptr) return "";
+  for (xmlNode* c = n->children; c != nullptr; c = c->next) {
+    if (c->type == XML_TEXT_NODE || c->type == XML_CDATA_SECTION_NODE) {
+      return reinterpret_cast<const char*>(c->content);
+    }
+  }
+  return "";
+}
+
+// Attribute value as a pointer into the tree (no extra allocation), unlike
+// xmlGetProp which copies and must be freed.
+static auto x2_attr(xmlNode* n, const char* name) -> const char* {
+  for (xmlAttr* a = n->properties; a != nullptr; a = a->next) {
+    if (xmlStrcmp(a->name, BAD_CAST name) == 0) {
+      return a->children != nullptr
+                 ? reinterpret_cast<const char*>(a->children->content)
+                 : "";
+    }
+  }
+  return "";
+}
+
+static auto x2_text_int(xmlNode* n) -> int {
+  const char* t = x2_text(n);
+  int out{};
+  std::from_chars(t, t + std::strlen(t), out);
+  return out;
+}
+
+static auto x2_attr_int(xmlNode* n, const char* name) -> int {
+  const char* t = x2_attr(n, name);
+  int out{};
+  std::from_chars(t, t + std::strlen(t), out);
+  return out;
+}
+
+static void BM_LibXml2_ParseSmallXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlDoc* doc =
+        xmlReadMemory(kSmallXml.data(), static_cast<int>(kSmallXml.size()),
+                      "bench.xml", nullptr, 0);
+    std::vector<int> ids;
+    std::vector<std::string_view> names, emails;
+    xmlNode* root = xmlDocGetRootElement(doc);
+    for (xmlNode* u = root->children; u != nullptr; u = u->next) {
+      if (u->type != XML_ELEMENT_NODE || xmlStrcmp(u->name, BAD_CAST "User"))
+        continue;
+      ids.push_back(x2_attr_int(u, "id"));
+      names.push_back(x2_text(x2_child(u, "Name")));
+      emails.push_back(x2_text(x2_child(u, "Email")));
+    }
+    benchmark::DoNotOptimize(ids);
+    benchmark::DoNotOptimize(names);
+    benchmark::DoNotOptimize(emails);
+    xmlFreeDoc(doc);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kSmallXml.size()));
+}
+
+static void BM_LibXml2_ParseLargeXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlDoc* doc =
+        xmlReadMemory(kLargeXml.data(), static_cast<int>(kLargeXml.size()),
+                      "bench.xml", nullptr, 0);
+    std::vector<int> ids;
+    std::vector<std::string_view> names, emails;
+    xmlNode* root = xmlDocGetRootElement(doc);
+    for (xmlNode* u = root->children; u != nullptr; u = u->next) {
+      if (u->type != XML_ELEMENT_NODE || xmlStrcmp(u->name, BAD_CAST "User"))
+        continue;
+      ids.push_back(x2_attr_int(u, "id"));
+      names.push_back(x2_text(x2_child(u, "Name")));
+      emails.push_back(x2_text(x2_child(u, "Email")));
+    }
+    benchmark::DoNotOptimize(ids);
+    benchmark::DoNotOptimize(names);
+    benchmark::DoNotOptimize(emails);
+    xmlFreeDoc(doc);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kLargeXml.size()));
+}
+
+static void BM_LibXml2_ParseFlatXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlDoc* doc =
+        xmlReadMemory(kFlatXml.data(), static_cast<int>(kFlatXml.size()),
+                      "bench.xml", nullptr, 0);
+    FlatList list;
+    xmlNode* root = xmlDocGetRootElement(doc);
+    for (xmlNode* item = root->children; item != nullptr; item = item->next) {
+      if (item->type != XML_ELEMENT_NODE ||
+          xmlStrcmp(item->name, BAD_CAST "Item"))
+        continue;
+      FlatItem it;
+      it.id = x2_attr_int(item, "id");
+      it.title = x2_text(x2_child(item, "title"));
+      it.description = x2_text(x2_child(item, "desc"));
+      it.status = x2_text_int(x2_child(item, "status"));
+      list.items.push_back(it);
+    }
+    benchmark::DoNotOptimize(list);
+    xmlFreeDoc(doc);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kFlatXml.size()));
+}
+
+static void BM_LibXml2_ParseDeepXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlDoc* doc =
+        xmlReadMemory(kDeepXml.data(), static_cast<int>(kDeepXml.size()),
+                      "bench.xml", nullptr, 0);
+    std::vector<int> values;
+    xmlNode* root = xmlDocGetRootElement(doc);
+    for (xmlNode* l1 = root->children; l1 != nullptr; l1 = l1->next) {
+      if (l1->type != XML_ELEMENT_NODE || xmlStrcmp(l1->name, BAD_CAST "L1"))
+        continue;
+      xmlNode* l5 =
+          x2_child(x2_child(x2_child(x2_child(l1, "L2"), "L3"), "L4"), "L5");
+      values.push_back(x2_text_int(x2_child(l5, "v")));
+    }
+    benchmark::DoNotOptimize(values);
+    xmlFreeDoc(doc);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kDeepXml.size()));
+}
+
+static void BM_LibXml2_ParseAttrXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlDoc* doc =
+        xmlReadMemory(kAttrXml.data(), static_cast<int>(kAttrXml.size()),
+                      "bench.xml", nullptr, 0);
+    std::vector<int> a1s, a2s, a3s, a4s, a5s;
+    std::vector<std::string_view> s1s, s2s, s3s, s4s, s5s;
+    xmlNode* root = xmlDocGetRootElement(doc);
+    for (xmlNode* item = root->children; item != nullptr; item = item->next) {
+      if (item->type != XML_ELEMENT_NODE ||
+          xmlStrcmp(item->name, BAD_CAST "Item"))
+        continue;
+      a1s.push_back(x2_attr_int(item, "a1"));
+      a2s.push_back(x2_attr_int(item, "a2"));
+      a3s.push_back(x2_attr_int(item, "a3"));
+      a4s.push_back(x2_attr_int(item, "a4"));
+      a5s.push_back(x2_attr_int(item, "a5"));
+      s1s.push_back(x2_attr(item, "s1"));
+      s2s.push_back(x2_attr(item, "s2"));
+      s3s.push_back(x2_attr(item, "s3"));
+      s4s.push_back(x2_attr(item, "s4"));
+      s5s.push_back(x2_attr(item, "s5"));
+    }
+    benchmark::DoNotOptimize(a1s);
+    benchmark::DoNotOptimize(s1s);
+    xmlFreeDoc(doc);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kAttrXml.size()));
+}
+
+static void x2_build_org_member(OrgMember& member, xmlNode* mn) {
+  member.id = x2_attr_int(mn, "id");
+  member.role = x2_attr(mn, "role");
+  member.full_name = x2_text(x2_child(mn, "FullName"));
+  member.email = x2_text(x2_child(mn, "Email"));
+  xmlNode* skills = x2_child(mn, "Skills");
+  for (xmlNode* sn = skills->children; sn != nullptr; sn = sn->next) {
+    if (sn->type == XML_ELEMENT_NODE &&
+        xmlStrcmp(sn->name, BAD_CAST "Skill") == 0)
+      member.skills.items.push_back(x2_text(sn));
+  }
+}
+
+static void BM_LibXml2_ParseOrgXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlDoc* doc =
+        xmlReadMemory(kOrgXml.data(), static_cast<int>(kOrgXml.size()),
+                      "bench.xml", nullptr, 0);
+    Organization org;
+    xmlNode* org_node = xmlDocGetRootElement(doc);
+    org.id = x2_attr_int(org_node, "id");
+    org.name = x2_attr(org_node, "name");
+    for (xmlNode* dn = org_node->children; dn != nullptr; dn = dn->next) {
+      if (dn->type != XML_ELEMENT_NODE ||
+          xmlStrcmp(dn->name, BAD_CAST "Department"))
+        continue;
+      OrgDepartment dept;
+      dept.id = x2_attr_int(dn, "id");
+      dept.name = x2_attr(dn, "name");
+      for (xmlNode* tn = dn->children; tn != nullptr; tn = tn->next) {
+        if (tn->type != XML_ELEMENT_NODE ||
+            xmlStrcmp(tn->name, BAD_CAST "Team"))
+          continue;
+        OrgTeam team;
+        team.id = x2_attr_int(tn, "id");
+        team.name = x2_attr(tn, "name");
+        for (xmlNode* mn = tn->children; mn != nullptr; mn = mn->next) {
+          if (mn->type != XML_ELEMENT_NODE ||
+              xmlStrcmp(mn->name, BAD_CAST "Member"))
+            continue;
+          OrgMember member;
+          x2_build_org_member(member, mn);
+          team.members.push_back(member);
+        }
+        dept.teams.push_back(team);
+      }
+      org.departments.push_back(dept);
+    }
+    benchmark::DoNotOptimize(org);
+    xmlFreeDoc(doc);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kOrgXml.size()));
+}
+
+static void x2_build_tree(TreeNode& node, xmlNode* xn) {
+  for (xmlNode* c = xn->children; c != nullptr; c = c->next) {
+    if (c->type == XML_ELEMENT_NODE &&
+        xmlStrcmp(c->name, BAD_CAST "Node") == 0) {
+      node.children.emplace_back();
+      x2_build_tree(node.children.back(), c);
+    }
+  }
+}
+
+static void BM_LibXml2_ParseTreeXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlDoc* doc =
+        xmlReadMemory(kTreeXml.data(), static_cast<int>(kTreeXml.size()),
+                      "bench.xml", nullptr, 0);
+    TreeNode root;
+    x2_build_tree(root, xmlDocGetRootElement(doc));
+    benchmark::DoNotOptimize(root);
+    xmlFreeDoc(doc);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kTreeXml.size()));
+}
+
+static void BM_LibXml2_ParseCommentHeavyXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlDoc* doc =
+        xmlReadMemory(kCommentXml.data(), static_cast<int>(kCommentXml.size()),
+                      "bench.xml", nullptr, 0);
+    std::vector<int> ids;
+    std::vector<std::string_view> names, emails;
+    xmlNode* root = xmlDocGetRootElement(doc);
+    for (xmlNode* u = root->children; u != nullptr; u = u->next) {
+      if (u->type != XML_ELEMENT_NODE || xmlStrcmp(u->name, BAD_CAST "User"))
+        continue;
+      ids.push_back(x2_attr_int(u, "id"));
+      names.push_back(x2_text(x2_child(u, "Name")));
+      emails.push_back(x2_text(x2_child(u, "Email")));
+    }
+    benchmark::DoNotOptimize(ids);
+    benchmark::DoNotOptimize(names);
+    benchmark::DoNotOptimize(emails);
+    xmlFreeDoc(doc);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kCommentXml.size()));
+}
+
+static void BM_LibXml2_ParseCatalog(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlDoc* doc =
+        xmlReadMemory(kCatalogXml.data(), static_cast<int>(kCatalogXml.size()),
+                      "bench.xml", nullptr, 0);
+    Catalog catalog;
+    xmlNode* root = xmlDocGetRootElement(doc);
+    for (xmlNode* node = root->children; node != nullptr; node = node->next) {
+      if (node->type != XML_ELEMENT_NODE ||
+          xmlStrcmp(node->name, BAD_CAST "book"))
+        continue;
+      Book& b = catalog.books.emplace_back();
+      b.id = x2_attr(node, "id");
+      b.author = x2_text(x2_child(node, "author"));
+      b.title = x2_text(x2_child(node, "title"));
+      b.genre = x2_text(x2_child(node, "genre"));
+      b.price = x2_text(x2_child(node, "price"));
+      b.publish_date = x2_text(x2_child(node, "publish_date"));
+      b.description = x2_text(x2_child(node, "description"));
+    }
+    benchmark::DoNotOptimize(catalog);
+    xmlFreeDoc(doc);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kCatalogXml.size()));
+}
+
+BENCHMARK(BM_LibXml2_ParseFlatXml);
+BENCHMARK(BM_LibXml2_ParseDeepXml);
+BENCHMARK(BM_LibXml2_ParseAttrXml);
+BENCHMARK(BM_LibXml2_ParseSmallXml);
+BENCHMARK(BM_LibXml2_ParseLargeXml);
+BENCHMARK(BM_LibXml2_ParseOrgXml);
+BENCHMARK(BM_LibXml2_ParseTreeXml);
+BENCHMARK(BM_LibXml2_ParseCommentHeavyXml);
+BENCHMARK(BM_LibXml2_ParseCatalog);
+
+// ---- libxml2 streaming reader (xmlTextReader) ----
+//
+// The pull/streaming counterpart to the DOM benchmarks above. A streaming
+// parser never materializes a tree, so it cannot hand back zero-copy views that
+// outlive the cursor: every field has to be copied out as it streams past.
+// These benchmarks therefore extract into owning storage (std::string / owning
+// structs), which is the honest, idiomatic way to use a streaming reader -- and
+// the copy cost is exactly the streaming-vs-DOM trade-off being measured.
+
+namespace {
+
+constexpr int kElem = XML_READER_TYPE_ELEMENT;
+constexpr int kEndElem = XML_READER_TYPE_END_ELEMENT;
+constexpr int kText = XML_READER_TYPE_TEXT;
+constexpr int kCData = XML_READER_TYPE_CDATA;
+
+auto sr_name_is(xmlTextReaderPtr r, const char* name) -> bool {
+  return xmlStrcmp(xmlTextReaderConstName(r), BAD_CAST name) == 0;
+}
+
+auto sr_attr_str(xmlTextReaderPtr r, const char* name) -> std::string {
+  xmlChar* v = xmlTextReaderGetAttribute(r, BAD_CAST name);
+  std::string out = (v != nullptr) ? reinterpret_cast<const char*>(v) : "";
+  if (v != nullptr) xmlFree(v);
+  return out;
+}
+
+auto sr_attr_int(xmlTextReaderPtr r, const char* name) -> int {
+  xmlChar* v = xmlTextReaderGetAttribute(r, BAD_CAST name);
+  int out{};
+  if (v != nullptr) {
+    const char* p = reinterpret_cast<const char*>(v);
+    std::from_chars(p, p + std::strlen(p), out);
+    xmlFree(v);
+  }
+  return out;
+}
+
+// Reader is positioned on a start element; gather its text content (copied out)
+// and leave the reader on the element's matching end tag.
+auto sr_text(xmlTextReaderPtr r) -> std::string {
+  if (xmlTextReaderIsEmptyElement(r)) return {};
+  std::string out;
+  const int depth = xmlTextReaderDepth(r);
+  while (xmlTextReaderRead(r) == 1) {
+    const int t = xmlTextReaderNodeType(r);
+    if (t == kEndElem && xmlTextReaderDepth(r) == depth) break;
+    if (t == kText || t == kCData) {
+      const xmlChar* v = xmlTextReaderConstValue(r);
+      if (v != nullptr) out += reinterpret_cast<const char*>(v);
+    }
+  }
+  return out;
+}
+
+auto sr_text_int(xmlTextReaderPtr r) -> int {
+  const std::string s = sr_text(r);
+  int out{};
+  std::from_chars(s.data(), s.data() + s.size(), out);
+  return out;
+}
+
+// Owning mirrors of the Org/Member records (streaming cannot retain views).
+struct SrMember {
+  int id{};
+  std::string role, full_name, email;
+  std::vector<std::string> skills;
+};
+struct SrTeam {
+  int id{};
+  std::string name;
+  std::vector<SrMember> members;
+};
+struct SrDept {
+  int id{};
+  std::string name;
+  std::vector<SrTeam> teams;
+};
+struct SrOrg {
+  int id{};
+  std::string name;
+  std::vector<SrDept> depts;
+};
+
+auto sr_open(const std::string& src) -> xmlTextReaderPtr {
+  return xmlReaderForMemory(src.data(), static_cast<int>(src.size()),
+                            "bench.xml", nullptr, 0);
+}
+
+}  // namespace
+
+static void sr_run_users(benchmark::State& state, const std::string& src) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlTextReaderPtr r = sr_open(src);
+    std::vector<int> ids;
+    std::vector<std::string> names, emails;
+    while (xmlTextReaderRead(r) == 1) {
+      if (xmlTextReaderNodeType(r) != kElem) continue;
+      if (sr_name_is(r, "User")) {
+        ids.push_back(sr_attr_int(r, "id"));
+      } else if (sr_name_is(r, "Name")) {
+        names.push_back(sr_text(r));
+      } else if (sr_name_is(r, "Email")) {
+        emails.push_back(sr_text(r));
+      }
+    }
+    benchmark::DoNotOptimize(ids);
+    benchmark::DoNotOptimize(names);
+    benchmark::DoNotOptimize(emails);
+    xmlFreeTextReader(r);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(src.size()));
+}
+
+static void BM_LibXml2Reader_ParseSmallXml(benchmark::State& state) {
+  sr_run_users(state, kSmallXml);
+}
+static void BM_LibXml2Reader_ParseLargeXml(benchmark::State& state) {
+  sr_run_users(state, kLargeXml);
+}
+static void BM_LibXml2Reader_ParseCommentHeavyXml(benchmark::State& state) {
+  sr_run_users(state, kCommentXml);
+}
+
+static void BM_LibXml2Reader_ParseFlatXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlTextReaderPtr r = sr_open(kFlatXml);
+    std::vector<int> ids, statuses;
+    std::vector<std::string> titles, descs;
+    while (xmlTextReaderRead(r) == 1) {
+      if (xmlTextReaderNodeType(r) != kElem) continue;
+      if (sr_name_is(r, "Item")) {
+        ids.push_back(sr_attr_int(r, "id"));
+      } else if (sr_name_is(r, "title")) {
+        titles.push_back(sr_text(r));
+      } else if (sr_name_is(r, "desc")) {
+        descs.push_back(sr_text(r));
+      } else if (sr_name_is(r, "status")) {
+        statuses.push_back(sr_text_int(r));
+      }
+    }
+    benchmark::DoNotOptimize(ids);
+    benchmark::DoNotOptimize(titles);
+    benchmark::DoNotOptimize(descs);
+    benchmark::DoNotOptimize(statuses);
+    xmlFreeTextReader(r);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kFlatXml.size()));
+}
+
+static void BM_LibXml2Reader_ParseDeepXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlTextReaderPtr r = sr_open(kDeepXml);
+    std::vector<int> values;
+    while (xmlTextReaderRead(r) == 1) {
+      if (xmlTextReaderNodeType(r) == kElem && sr_name_is(r, "v"))
+        values.push_back(sr_text_int(r));
+    }
+    benchmark::DoNotOptimize(values);
+    xmlFreeTextReader(r);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kDeepXml.size()));
+}
+
+static void BM_LibXml2Reader_ParseAttrXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlTextReaderPtr r = sr_open(kAttrXml);
+    std::vector<int> a1s, a2s, a3s, a4s, a5s;
+    std::vector<std::string> s1s, s2s, s3s, s4s, s5s;
+    while (xmlTextReaderRead(r) == 1) {
+      if (xmlTextReaderNodeType(r) != kElem || !sr_name_is(r, "Item")) continue;
+      a1s.push_back(sr_attr_int(r, "a1"));
+      a2s.push_back(sr_attr_int(r, "a2"));
+      a3s.push_back(sr_attr_int(r, "a3"));
+      a4s.push_back(sr_attr_int(r, "a4"));
+      a5s.push_back(sr_attr_int(r, "a5"));
+      s1s.push_back(sr_attr_str(r, "s1"));
+      s2s.push_back(sr_attr_str(r, "s2"));
+      s3s.push_back(sr_attr_str(r, "s3"));
+      s4s.push_back(sr_attr_str(r, "s4"));
+      s5s.push_back(sr_attr_str(r, "s5"));
+    }
+    benchmark::DoNotOptimize(a1s);
+    benchmark::DoNotOptimize(s1s);
+    xmlFreeTextReader(r);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kAttrXml.size()));
+}
+
+// Recursive-descent reconstruction of a <Member> subtree from the stream.
+static void sr_read_member(xmlTextReaderPtr r, SrMember& m) {
+  m.id = sr_attr_int(r, "id");
+  m.role = sr_attr_str(r, "role");
+  if (xmlTextReaderIsEmptyElement(r)) return;
+  const int depth = xmlTextReaderDepth(r);
+  while (xmlTextReaderRead(r) == 1) {
+    const int t = xmlTextReaderNodeType(r);
+    if (t == kEndElem && xmlTextReaderDepth(r) == depth) break;
+    if (t != kElem) continue;
+    if (sr_name_is(r, "FullName")) {
+      m.full_name = sr_text(r);
+    } else if (sr_name_is(r, "Email")) {
+      m.email = sr_text(r);
+    } else if (sr_name_is(r, "Skills")) {
+      if (xmlTextReaderIsEmptyElement(r)) continue;
+      const int sdepth = xmlTextReaderDepth(r);
+      while (xmlTextReaderRead(r) == 1) {
+        const int st = xmlTextReaderNodeType(r);
+        if (st == kEndElem && xmlTextReaderDepth(r) == sdepth) break;
+        if (st == kElem && sr_name_is(r, "Skill"))
+          m.skills.push_back(sr_text(r));
+      }
+    }
+  }
+}
+
+static void BM_LibXml2Reader_ParseOrgXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlTextReaderPtr r = sr_open(kOrgXml);
+    SrOrg org;
+    while (xmlTextReaderRead(r) == 1) {
+      if (xmlTextReaderNodeType(r) != kElem) continue;
+      if (sr_name_is(r, "Organization")) {
+        org.id = sr_attr_int(r, "id");
+        org.name = sr_attr_str(r, "name");
+      } else if (sr_name_is(r, "Department")) {
+        SrDept& d = org.depts.emplace_back();
+        d.id = sr_attr_int(r, "id");
+        d.name = sr_attr_str(r, "name");
+      } else if (sr_name_is(r, "Team")) {
+        SrTeam& t = org.depts.back().teams.emplace_back();
+        t.id = sr_attr_int(r, "id");
+        t.name = sr_attr_str(r, "name");
+      } else if (sr_name_is(r, "Member")) {
+        SrMember& m = org.depts.back().teams.back().members.emplace_back();
+        sr_read_member(r, m);
+      }
+    }
+    benchmark::DoNotOptimize(org);
+    xmlFreeTextReader(r);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kOrgXml.size()));
+}
+
+static void BM_LibXml2Reader_ParseTreeXml(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlTextReaderPtr r = sr_open(kTreeXml);
+    TreeNode root;
+    std::vector<TreeNode*> stack{&root};
+    while (xmlTextReaderRead(r) == 1) {
+      const int t = xmlTextReaderNodeType(r);
+      if (t == kElem && sr_name_is(r, "Node")) {
+        TreeNode& child = stack.back()->children.emplace_back();
+        if (!xmlTextReaderIsEmptyElement(r)) stack.push_back(&child);
+      } else if (t == kEndElem && sr_name_is(r, "Node")) {
+        stack.pop_back();
+      }
+    }
+    benchmark::DoNotOptimize(root);
+    xmlFreeTextReader(r);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kTreeXml.size()));
+}
+
+static void BM_LibXml2Reader_ParseCatalog(benchmark::State& state) {
+  xmlInitParser();
+  for (auto _ : state) {
+    xmlTextReaderPtr r = sr_open(kCatalogXml);
+    Catalog catalog;
+    Book* cur = nullptr;
+    while (xmlTextReaderRead(r) == 1) {
+      if (xmlTextReaderNodeType(r) != kElem) continue;
+      if (sr_name_is(r, "book")) {
+        cur = &catalog.books.emplace_back();
+        cur->id = sr_attr_str(r, "id");
+      } else if (cur != nullptr) {
+        if (sr_name_is(r, "author"))
+          cur->author = sr_text(r);
+        else if (sr_name_is(r, "title"))
+          cur->title = sr_text(r);
+        else if (sr_name_is(r, "genre"))
+          cur->genre = sr_text(r);
+        else if (sr_name_is(r, "price"))
+          cur->price = sr_text(r);
+        else if (sr_name_is(r, "publish_date"))
+          cur->publish_date = sr_text(r);
+        else if (sr_name_is(r, "description"))
+          cur->description = sr_text(r);
+      }
+    }
+    benchmark::DoNotOptimize(catalog);
+    xmlFreeTextReader(r);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<int64_t>(kCatalogXml.size()));
+}
+
+BENCHMARK(BM_LibXml2Reader_ParseFlatXml);
+BENCHMARK(BM_LibXml2Reader_ParseDeepXml);
+BENCHMARK(BM_LibXml2Reader_ParseAttrXml);
+BENCHMARK(BM_LibXml2Reader_ParseSmallXml);
+BENCHMARK(BM_LibXml2Reader_ParseLargeXml);
+BENCHMARK(BM_LibXml2Reader_ParseOrgXml);
+BENCHMARK(BM_LibXml2Reader_ParseTreeXml);
+BENCHMARK(BM_LibXml2Reader_ParseCommentHeavyXml);
+BENCHMARK(BM_LibXml2Reader_ParseCatalog);
+#endif  // TURBOXML_HAS_LIBXML2
 
 BENCHMARK_MAIN();

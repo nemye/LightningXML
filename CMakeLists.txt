@@ -14,6 +14,8 @@ message(STATUS "TurboXML: Build Type = ${CMAKE_BUILD_TYPE}.")
 option(TURBOXML_BUILD_TESTS       "Build unit tests (requires GTest)"                      ON)
 option(TURBOXML_BUILD_BENCHMARKS  "Build benchmarks (requires Google Benchmark)"           ON)
 option(TURBOXML_WITH_PUGIXML      "Build pugixml comparison benchmarks"                    OFF)
+option(TURBOXML_WITH_RAPIDXML     "Build RapidXML comparison benchmarks (via Boost)"       OFF)
+option(TURBOXML_WITH_LIBXML2      "Build libxml2 comparison benchmarks"                    OFF)
 option(TURBOXML_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
 if(TURBOXML_ENABLE_SANITIZERS)
@@ -110,12 +112,56 @@ if(TURBOXML_BUILD_BENCHMARKS)
         message(STATUS "TurboXML: pugixml comparison benchmarks enabled")
     endif()
 
+    # RapidXML (optional). RapidXML has no canonical upstream package, so we use
+    # the copy bundled in Boost.PropertyTree (boost::property_tree::detail::rapidxml).
+    # The official Boost "-cmake" release archive ships every header with no git
+    # submodules; BOOST_INCLUDE_LIBRARIES restricts configuration to the
+    # property_tree subtree (and its dependencies) so the first build stays quick.
+    if(TURBOXML_WITH_RAPIDXML)
+        set(BOOST_INCLUDE_LIBRARIES property_tree CACHE STRING "" FORCE)
+        set(BOOST_ENABLE_CMAKE ON CACHE BOOL "" FORCE)
+        FetchContent_Declare(
+            Boost
+            URL https://github.com/boostorg/boost/releases/download/boost-1.88.0/boost-1.88.0-cmake.tar.xz
+        )
+        FetchContent_MakeAvailable(Boost)
+        message(STATUS "TurboXML: RapidXML (Boost) comparison benchmarks enabled")
+    endif()
+
+    # libxml2 (optional). A feature-rich parser: copies all strings, decodes
+    # entities, and fully validates well-formedness. Fetched and built from
+    # source with the optional codecs/tools disabled to keep the build lean.
+    if(TURBOXML_WITH_LIBXML2)
+        set(LIBXML2_WITH_PROGRAMS OFF CACHE BOOL "" FORCE)
+        set(LIBXML2_WITH_TESTS    OFF CACHE BOOL "" FORCE)
+        set(LIBXML2_WITH_PYTHON   OFF CACHE BOOL "" FORCE)
+        set(LIBXML2_WITH_ICONV    OFF CACHE BOOL "" FORCE)
+        set(LIBXML2_WITH_ZLIB     OFF CACHE BOOL "" FORCE)
+        set(LIBXML2_WITH_LZMA     OFF CACHE BOOL "" FORCE)
+        set(LIBXML2_WITH_HTTP     OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(
+            libxml2
+            GIT_REPOSITORY https://gitlab.gnome.org/GNOME/libxml2.git
+            GIT_TAG        v2.14.6
+        )
+        FetchContent_MakeAvailable(libxml2)
+        message(STATUS "TurboXML: libxml2 comparison benchmarks enabled")
+    endif()
+
     # --- Timing benchmarks ---
     add_executable(turboxml_bench test/bench_TurboXML.cc)
     target_link_libraries(turboxml_bench PRIVATE turboxml_helpers benchmark::benchmark)
     if(TURBOXML_WITH_PUGIXML)
         target_link_libraries(turboxml_bench PRIVATE pugixml::pugixml)
         target_compile_definitions(turboxml_bench PRIVATE TURBOXML_HAS_PUGIXML)
+    endif()
+    if(TURBOXML_WITH_RAPIDXML)
+        target_link_libraries(turboxml_bench PRIVATE Boost::property_tree)
+        target_compile_definitions(turboxml_bench PRIVATE TURBOXML_HAS_RAPIDXML)
+    endif()
+    if(TURBOXML_WITH_LIBXML2)
+        target_link_libraries(turboxml_bench PRIVATE LibXml2::LibXml2)
+        target_compile_definitions(turboxml_bench PRIVATE TURBOXML_HAS_LIBXML2)
     endif()
 
     message(STATUS "TurboXML: benchmarks enabled")

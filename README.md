@@ -6,15 +6,31 @@ Define your structs, declare the field mapping, and deserialize or serialize wit
 
 ## Performance
 
-Benchmarked against [pugixml](https://pugixml.org/) on identical workloads. Both libraries populate similar outputs, attempting to be as fair as possible. Benchmarked on Ubuntu 24.04 with an AMD Ryzen 9 7950X3D 16-Core Processor, 32 GB DDR5 RAM. 
+Benchmarked against [pugixml](https://pugixml.org/), [RapidXML](https://rapidxml.sourceforge.net/) (via the copy bundled in Boost.PropertyTree), and [libxml2](https://gitlab.gnome.org/GNOME/libxml2) on identical workloads. Every parser populates the same output records from the same payloads, so the numbers reflect a **feature/performance spectrum** rather than differing work. Throughput is bytes of source per second (higher is better); measured on an AMD Ryzen 9 7950X3D, Ubuntu 24.04, Clang 19, `-O2`/Release, pinned to one core.
 
-| Workload | TurboXML | pugixml | Speedup |
-|---|---|---|---|
-| Flat (2K items, 4 fields + attr) | 1.92 GB/s | 1.47 GB/s | **1.3×** |
-| Deep (2K chains, 5 levels each) | 1.70 GB/s | 1.00 GB/s | **1.7×** |
-| Attributes (2K items, 10 attrs) | 1.06 GB/s | 418 MB/s | **2.5×** |
-| Small (1 element) | 1.28 GB/s | 660 MB/s | **1.9×** |
-| Large (10K users) | 1.87 GB/s | 375 MB/s | **5.0×** |
+| Workload | TurboXML | TurboXML Strict | pugixml | RapidXML | RapidXML fast | libxml2 DOM | libxml2 reader |
+|---|---|---|---|---|---|---|---|
+| Flat (2K items, 4 fields + attr) | **2.83 GB/s** | 2.41 GB/s | 1.53 GB/s | 202 MB/s | 1.58 GB/s | 177 MB/s | 191 MB/s |
+| Deep (2K chains, 5 levels) | **1.63 GB/s** | 1.58 GB/s | 1.07 GB/s | 777 MB/s | 1.05 GB/s | 103 MB/s | 131 MB/s |
+| Attributes (2K items, 10 attrs) | **1.13 GB/s** | 839 MB/s | 435 MB/s | 710 MB/s | 904 MB/s | 34 MB/s | 101 MB/s |
+| Small (1 element) | **1.63 GB/s** | 1.54 GB/s | 811 MB/s | 891 MB/s | 1.14 GB/s | 68 MB/s | 78 MB/s |
+| Large (10K users) | **2.67 GB/s** | 2.27 GB/s | 326 MB/s | 214 MB/s | 355 MB/s | 66 MB/s | 175 MB/s |
+| Org (nested, ~400 members) | **1.61 GB/s** | 1.46 GB/s | 818 MB/s | 842 MB/s | 1.02 GB/s | 137 MB/s | 163 MB/s |
+| Tree (depth 14, binary) | 526 MB/s | **536 MB/s** | 123 MB/s | 119 MB/s | 115 MB/s | 115 MB/s | 122 MB/s |
+| Comment-heavy (skipped bytes) | **11.16 GB/s** | 9.89 GB/s | 3.29 GB/s | 2.86 GB/s | 3.32 GB/s | 517 MB/s | 600 MB/s |
+| Catalog (12 books, owning strings) | **2.57 GB/s** | 1.67 GB/s | 1.35 GB/s | 1.16 GB/s | 1.58 GB/s | 189 MB/s | 217 MB/s |
+
+What each column does, lowest to highest feature set:
+
+- **TurboXML** - zero-copy, non-normalizing, non-validating. `string_view` fields point straight into the source; no DOM, no entity decoding, no allocation for string fields.
+- **TurboXML Strict** - `xml::StrictParser`: same extraction, but adds the three well-formedness scans (`]]>` in content, `<` in attribute values, duplicate attributes) and normalizes owning `std::string` fields. A fully-conforming configuration; the delta is the cost of validation.
+- **pugixml** - builds an owning DOM (the source is copied into it), decodes entities, normalizes; we then walk the tree to fill the records.
+- **RapidXML** - in-situ DOM with `parse_default`: parses destructively into a mutable copy of the source (copy timed, like pugixml's), decodes the predefined entities. The whitespace-heavy payloads (Flat, Large) are pathological for its default data-node creation.
+- **RapidXML fast** - the same, with `parse_fastest` (no data nodes, no entity translation, no string terminators): much faster, fewer features.
+- **libxml2 DOM** - `xmlReadMemory`: the feature-rich end - copies every string into the tree, decodes entities, fully validates.
+- **libxml2 reader** - `xmlTextReader` streaming pull parser. A streaming parser can't hand back views that outlive the cursor, so it copies each field into owning storage as it streams - the streaming-vs-DOM trade-off.
+
+TurboXML leads on every workload (1.4–8× over pugixml; the Tree case is a near-tie with its own strict mode). All comparison benchmarks are opt-in CMake options and live in [test/bench_TurboXML.cc](test/bench_TurboXML.cc); see the per-section comments there for the exact fairness choices.
 
 ## Features
 
@@ -207,7 +223,7 @@ xml::deserialize(p, "root", obj);   // std::string fields are normalized
 
 ### Strict Well-Formedness (opt-in)
 
-The default `xml::Parser` is deliberately **non-validating**: for speed it skips three scans the spec requires. `xml::StrictParser` (fully conforming — it both normalizes *and* enforces these constraints) rejects:
+The default `xml::Parser` is deliberately **non-validating**: for speed it skips three scans the spec requires. `xml::StrictParser` (fully conforming - it both normalizes *and* enforces these constraints) rejects:
 
 - `]]>` appearing in character data (Production [14]) → `ErrorCode::CDataEndInContent`
 - `<` appearing in an attribute value (Production [10]) → `ErrorCode::LtInAttributeValue`
@@ -246,6 +262,8 @@ Copy `include/TurboXML.hh` into your project. No build step required.
 | `TURBOXML_BUILD_TESTS` | `ON` | Build unit tests (fetches GTest if not found) |
 | `TURBOXML_BUILD_BENCHMARKS` | `ON` | Build benchmarks (fetches Google Benchmark if not found) |
 | `TURBOXML_WITH_PUGIXML` | `OFF` | Build pugixml comparison benchmarks (fetches pugixml if not found) |
+| `TURBOXML_WITH_RAPIDXML` | `OFF` | Build RapidXML comparison benchmarks (fetches Boost, uses its bundled RapidXML) |
+| `TURBOXML_WITH_LIBXML2` | `OFF` | Build libxml2 comparison benchmarks (fetches libxml2 if not found) |
 
 ### As a CMake Subdirectory
 
