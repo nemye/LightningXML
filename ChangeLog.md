@@ -9,6 +9,19 @@ conformance test suite (`test/test_Conformance.cc`).
 - `xml::ErrorCode` enum and `Parser::error_code()`: a failed `deserialize()`
   now reports a specific reason (e.g. `UnterminatedComment`, `ElementMismatch`,
   `RootElementNotFound`). `reset()` clears it.
+- Enum fields via `xml::XmlEnumTraits<E>`: maps XML token spellings (e.g.
+  `xs:enumeration`) to C++ enumerators for element and attribute fields, with
+  round-trip serialization. An unknown token reports `InvalidEnumValue`.
+- `xml::value_field`: captures an element's own text into a member while
+  attribute fields still apply (XSD `simpleContent`, e.g.
+  `<price currency="USD">9.99</price>`).
+- `std::unique_ptr<T>` element members: an optional, possibly recursive child;
+  null when absent, allocated when present, omitted on serialization when null.
+
+### Changed
+- Required-field presence is tracked in a multiword mask instead of a single
+  `uint64_t`, removing the 64-fields-per-type ceiling. Types of ≤64 fields use a
+  single word (no change to the hot path).
 
 ## 1.2.0 - 2026-06-12
 

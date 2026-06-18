@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <array>
+#include <memory>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "Helpers.hh"
@@ -2107,4 +2111,339 @@ TEST_F(TurboBasicTests, StrictParserNormalizes) {
   ASSERT_TRUE(xml::deserialize(p, "NormRecord", r));
   EXPECT_EQ(r.body, "m & n");  // entity expanded
   EXPECT_EQ(r.attr, "x\ty");   // &#9; preserved as a literal tab
+}
+
+// ===========================================================================
+// Library extensions: lifted field ceiling, enums, value fields, recursion.
+// ===========================================================================
+
+// ---- Enumerations via XmlEnumTraits (string tokens) ----
+enum class Priority { Low, Medium, High };
+template <>
+struct xml::XmlEnumTraits<Priority> {
+  static constexpr std::array<std::pair<std::string_view, Priority>, 3> values{
+      {{"Low", Priority::Low},
+       {"Medium", Priority::Medium},
+       {"High", Priority::High}}};
+};
+
+struct Task {
+  Priority priority{};  // attribute
+  Priority level{};     // child element
+};
+template <>
+struct xml::XmlMetadata<Task> {
+  static constexpr auto fields =
+      std::make_tuple(xml::attr_field("priority", &Task::priority),
+                      xml::field("level", &Task::level));
+};
+
+TEST_F(TurboBasicTests, EnumFieldRoundTrip) {
+  constexpr std::string_view src =
+      R"(<Task priority="High"><level>Medium</level></Task>)";
+  xml::Parser p{src};
+  Task t;
+  ASSERT_TRUE(xml::deserialize(p, "Task", t));
+  EXPECT_EQ(t.priority, Priority::High);
+  EXPECT_EQ(t.level, Priority::Medium);
+  const std::string out = xml::serialize<false>("Task", t);
+  EXPECT_EQ(out, R"(<Task priority="High"><level>Medium</level></Task>)");
+}
+
+TEST_F(TurboBasicTests, EnumUnknownTokenFails) {
+  constexpr std::string_view src =
+      R"(<Task priority="High"><level>Wizard</level></Task>)";
+  xml::Parser p{src};
+  Task t;
+  EXPECT_FALSE(xml::deserialize(p, "Task", t));
+  EXPECT_EQ(p.error_code(), xml::ErrorCode::InvalidEnumValue);
+}
+
+// ---- Value field (XSD simpleContent) ----
+struct Money {
+  std::string_view currency;  // attribute
+  double amount{};            // element's own text
+};
+template <>
+struct xml::XmlMetadata<Money> {
+  static constexpr auto fields =
+      std::make_tuple(xml::attr_field("currency", &Money::currency),
+                      xml::value_field(&Money::amount));
+};
+struct Invoice {
+  Money total;
+};
+template <>
+struct xml::XmlMetadata<Invoice> {
+  static constexpr auto fields =
+      std::make_tuple(xml::field("total", &Invoice::total));
+};
+
+TEST_F(TurboBasicTests, ValueFieldNumericRoundTrip) {
+  constexpr std::string_view src =
+      R"(<Invoice><total currency="USD">9.99</total></Invoice>)";
+  xml::Parser p{src};
+  Invoice inv;
+  ASSERT_TRUE(xml::deserialize(p, "Invoice", inv));
+  EXPECT_EQ(inv.total.currency, "USD");
+  EXPECT_DOUBLE_EQ(inv.total.amount, 9.99);
+  const std::string out = xml::serialize<false>("Invoice", inv);
+  EXPECT_EQ(out, R"(<Invoice><total currency="USD">9.99</total></Invoice>)");
+}
+
+struct Measure {
+  std::string unit;  // attribute
+  std::string text;  // required value
+};
+template <>
+struct xml::XmlMetadata<Measure> {
+  static constexpr auto fields =
+      std::make_tuple(xml::attr_field("unit", &Measure::unit),
+                      xml::value_field(&Measure::text, true));
+};
+struct MeasureDoc {
+  Measure m;
+};
+template <>
+struct xml::XmlMetadata<MeasureDoc> {
+  static constexpr auto fields =
+      std::make_tuple(xml::field("m", &MeasureDoc::m));
+};
+
+TEST_F(TurboBasicTests, ValueFieldStringNormalized) {
+  constexpr std::string_view src =
+      R"(<MeasureDoc><m unit="kg">a &amp; b</m></MeasureDoc>)";
+  xml::NormalizingParser p{src};
+  MeasureDoc d;
+  ASSERT_TRUE(xml::deserialize(p, "MeasureDoc", d));
+  EXPECT_EQ(d.m.unit, "kg");
+  EXPECT_EQ(d.m.text, "a & b");  // entity expanded into the value
+}
+
+TEST_F(TurboBasicTests, ValueFieldRequiredEmptyFails) {
+  // Self-closing and empty both lack text -> required value field is missing.
+  for (std::string_view src :
+       {std::string_view(R"(<MeasureDoc><m unit="kg"/></MeasureDoc>)"),
+        std::string_view(R"(<MeasureDoc><m unit="kg"></m></MeasureDoc>)")}) {
+    xml::Parser p{src};
+    MeasureDoc d;
+    EXPECT_FALSE(xml::deserialize(p, "MeasureDoc", d));
+    EXPECT_EQ(p.error_code(), xml::ErrorCode::MissingRequiredField);
+  }
+}
+
+// ---- Recursion via std::unique_ptr ----
+struct Section {
+  std::string_view title;
+  std::unique_ptr<Section> sub;  // optional, recursive
+};
+template <>
+struct xml::XmlMetadata<Section> {
+  static constexpr auto fields = std::make_tuple(
+      xml::field("title", &Section::title), xml::field("sub", &Section::sub));
+};
+
+TEST_F(TurboBasicTests, UniquePtrRecursionChain) {
+  constexpr std::string_view src =
+      R"(<Section><title>A</title><sub><title>B</title>)"
+      R"(<sub><title>C</title></sub></sub></Section>)";
+  xml::Parser p{src};
+  Section s;
+  ASSERT_TRUE(xml::deserialize(p, "Section", s));
+  EXPECT_EQ(s.title, "A");
+  ASSERT_TRUE(s.sub);
+  EXPECT_EQ(s.sub->title, "B");
+  ASSERT_TRUE(s.sub->sub);
+  EXPECT_EQ(s.sub->sub->title, "C");
+  EXPECT_FALSE(s.sub->sub->sub);
+  const std::string out = xml::serialize<false>("Section", s);
+  EXPECT_EQ(out, R"(<Section><title>A</title><sub><title>B</title>)"
+                 R"(<sub><title>C</title></sub></sub></Section>)");
+}
+
+TEST_F(TurboBasicTests, UniquePtrAbsentChildOmitted) {
+  constexpr std::string_view src = R"(<Section><title>solo</title></Section>)";
+  xml::Parser p{src};
+  Section s;
+  ASSERT_TRUE(xml::deserialize(p, "Section", s));
+  EXPECT_EQ(s.title, "solo");
+  EXPECT_FALSE(s.sub);
+  const std::string out = xml::serialize<false>("Section", s);
+  EXPECT_EQ(out, R"(<Section><title>solo</title></Section>)");  // no <sub>
+}
+
+// ---- More than 64 fields (multiword required mask) ----
+struct Wide72 {
+  int a0{};
+  int a1{};
+  int a2{};
+  int a3{};
+  int a4{};
+  int a5{};
+  int a6{};
+  int a7{};
+  int a8{};
+  int a9{};
+  int a10{};
+  int a11{};
+  int a12{};
+  int a13{};
+  int a14{};
+  int a15{};
+  int a16{};
+  int a17{};
+  int a18{};
+  int a19{};
+  int a20{};
+  int a21{};
+  int a22{};
+  int a23{};
+  int a24{};
+  int a25{};
+  int a26{};
+  int a27{};
+  int a28{};
+  int a29{};
+  int a30{};
+  int a31{};
+  int a32{};
+  int a33{};
+  int a34{};
+  int a35{};
+  int a36{};
+  int a37{};
+  int a38{};
+  int a39{};
+  int a40{};
+  int a41{};
+  int a42{};
+  int a43{};
+  int a44{};
+  int a45{};
+  int a46{};
+  int a47{};
+  int a48{};
+  int a49{};
+  int a50{};
+  int a51{};
+  int a52{};
+  int a53{};
+  int a54{};
+  int a55{};
+  int a56{};
+  int a57{};
+  int a58{};
+  int a59{};
+  int a60{};
+  int a61{};
+  int a62{};
+  int a63{};
+  int a64{};
+  int a65{};
+  int a66{};
+  int a67{};
+  int a68{};
+  int a69{};
+  int a70{};
+  int a71{};
+};
+template <>
+struct xml::XmlMetadata<Wide72> {
+  static constexpr auto fields = std::make_tuple(
+      xml::attr_field("a0", &Wide72::a0, true),
+      xml::attr_field("a1", &Wide72::a1), xml::attr_field("a2", &Wide72::a2),
+      xml::attr_field("a3", &Wide72::a3), xml::attr_field("a4", &Wide72::a4),
+      xml::attr_field("a5", &Wide72::a5), xml::attr_field("a6", &Wide72::a6),
+      xml::attr_field("a7", &Wide72::a7), xml::attr_field("a8", &Wide72::a8),
+      xml::attr_field("a9", &Wide72::a9), xml::attr_field("a10", &Wide72::a10),
+      xml::attr_field("a11", &Wide72::a11),
+      xml::attr_field("a12", &Wide72::a12),
+      xml::attr_field("a13", &Wide72::a13),
+      xml::attr_field("a14", &Wide72::a14),
+      xml::attr_field("a15", &Wide72::a15),
+      xml::attr_field("a16", &Wide72::a16),
+      xml::attr_field("a17", &Wide72::a17),
+      xml::attr_field("a18", &Wide72::a18),
+      xml::attr_field("a19", &Wide72::a19),
+      xml::attr_field("a20", &Wide72::a20),
+      xml::attr_field("a21", &Wide72::a21),
+      xml::attr_field("a22", &Wide72::a22),
+      xml::attr_field("a23", &Wide72::a23),
+      xml::attr_field("a24", &Wide72::a24),
+      xml::attr_field("a25", &Wide72::a25),
+      xml::attr_field("a26", &Wide72::a26),
+      xml::attr_field("a27", &Wide72::a27),
+      xml::attr_field("a28", &Wide72::a28),
+      xml::attr_field("a29", &Wide72::a29),
+      xml::attr_field("a30", &Wide72::a30),
+      xml::attr_field("a31", &Wide72::a31),
+      xml::attr_field("a32", &Wide72::a32),
+      xml::attr_field("a33", &Wide72::a33),
+      xml::attr_field("a34", &Wide72::a34),
+      xml::attr_field("a35", &Wide72::a35),
+      xml::attr_field("a36", &Wide72::a36),
+      xml::attr_field("a37", &Wide72::a37),
+      xml::attr_field("a38", &Wide72::a38),
+      xml::attr_field("a39", &Wide72::a39),
+      xml::attr_field("a40", &Wide72::a40),
+      xml::attr_field("a41", &Wide72::a41),
+      xml::attr_field("a42", &Wide72::a42),
+      xml::attr_field("a43", &Wide72::a43),
+      xml::attr_field("a44", &Wide72::a44),
+      xml::attr_field("a45", &Wide72::a45),
+      xml::attr_field("a46", &Wide72::a46),
+      xml::attr_field("a47", &Wide72::a47),
+      xml::attr_field("a48", &Wide72::a48),
+      xml::attr_field("a49", &Wide72::a49),
+      xml::attr_field("a50", &Wide72::a50),
+      xml::attr_field("a51", &Wide72::a51),
+      xml::attr_field("a52", &Wide72::a52),
+      xml::attr_field("a53", &Wide72::a53),
+      xml::attr_field("a54", &Wide72::a54),
+      xml::attr_field("a55", &Wide72::a55),
+      xml::attr_field("a56", &Wide72::a56),
+      xml::attr_field("a57", &Wide72::a57),
+      xml::attr_field("a58", &Wide72::a58),
+      xml::attr_field("a59", &Wide72::a59),
+      xml::attr_field("a60", &Wide72::a60),
+      xml::attr_field("a61", &Wide72::a61),
+      xml::attr_field("a62", &Wide72::a62),
+      xml::attr_field("a63", &Wide72::a63),
+      xml::attr_field("a64", &Wide72::a64, true),
+      xml::attr_field("a65", &Wide72::a65),
+      xml::attr_field("a66", &Wide72::a66),
+      xml::attr_field("a67", &Wide72::a67),
+      xml::attr_field("a68", &Wide72::a68),
+      xml::attr_field("a69", &Wide72::a69),
+      xml::attr_field("a70", &Wide72::a70),
+      xml::attr_field("a71", &Wide72::a71, true));
+};
+
+static std::string wide_xml(int omit) {
+  std::string s = "<Wide72";
+  for (int i = 0; i < 72; ++i) {
+    if (i == omit) continue;
+    s += " a" + std::to_string(i) + "=\"" + std::to_string(i) + "\"";
+  }
+  s += "/>";
+  return s;
+}
+
+TEST_F(TurboBasicTests, MoreThan64FieldsAllPresent) {
+  const std::string src = wide_xml(-1);
+  xml::Parser p{src};
+  Wide72 w;
+  ASSERT_TRUE(xml::deserialize(p, "Wide72", w));
+  EXPECT_EQ(w.a0, 0);
+  EXPECT_EQ(w.a64, 64);
+  EXPECT_EQ(w.a71, 71);
+}
+
+TEST_F(TurboBasicTests, MoreThan64FieldsMissingRequiredSecondWord) {
+  // a64 is required and lives in the second mask word; dropping it fails.
+  const std::string src = wide_xml(64);
+  xml::Parser p{src};
+  Wide72 w;
+  EXPECT_FALSE(xml::deserialize(p, "Wide72", w));
+  EXPECT_EQ(p.error_code(), xml::ErrorCode::MissingRequiredField);
 }

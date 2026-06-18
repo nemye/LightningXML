@@ -108,11 +108,13 @@ int main() {
 | `xml::attr_field("name", &T::member)` | Attribute: maps `name="value"` on the parent tag |
 | `xml::vec_field("name", &T::member)` | Repeated element: appends each `<name>` to a dynamic container |
 | `xml::arr_field("name", &T::member)` | Repeated element: fills a fixed-capacity container sequentially; skips overflow |
+| `xml::value_field(&T::member)` | The element's **own text** (XSD simpleContent); takes no name — see below |
 
-All four factories accept an optional trailing `required` flag (default `false`,
+All five factories accept an optional trailing `required` flag (default `false`,
 i.e. fields are optional). When `true`, `deserialize()` fails with
 `ErrorCode::MissingRequiredField` if the element/attribute is absent (for
-containers, if no item is matched):
+containers, if no item is matched; for a value field, if the element has no
+text):
 
 ```cpp
 xml::field("title", &Book::title, true)   // field must be present
@@ -120,15 +122,76 @@ xml::attr_field("id", &Book::id, false)   // optional. Note that the parameter i
 ```
 
 Types with no required fields pay nothing for the check: presence tracking
-compiles away entirely.
+compiles away entirely. There is no practical limit on the number of fields a
+type may declare.
 
 ### Supported Member Types
 - **Primitives**: `int`, `unsigned`, `long`, `float`, `double`, and other arithmetic types
 - **Booleans**: `bool`, parsed from `true`/`false`/`1`/`0`, serialized as `true`/`false`
 - **Strings**: `std::string_view` (zero-copy, must outlive source), `std::string` (owning copy)
+- **Enums**: any C++ `enum` with an `XmlEnumTraits` specialization (maps token spellings, e.g. `xs:enumeration`)
 - **Nested objects**: any type with an `XmlMetadata` specialization
+- **Optional/recursive children**: `std::unique_ptr<T>` of an `XmlObject` — null when absent, allocated when present
 - **Dynamic containers**: `std::vector<T>` via `vec_field`
 - **Fixed containers**: `std::array<T, N>` via `arr_field`
+
+### Enumerations
+
+Specialize `xml::XmlEnumTraits<E>` with a `values` table mapping each XML token
+to its enumerator. Enum members then work as element or attribute fields and
+round-trip through the serializer; an unrecognized token fails with
+`ErrorCode::InvalidEnumValue`.
+
+```cpp
+enum class Priority { Low, Medium, High };
+
+template <>
+struct xml::XmlEnumTraits<Priority> {
+  static constexpr std::array<std::pair<std::string_view, Priority>, 3> values{{
+      {"Low", Priority::Low}, {"Medium", Priority::Medium}, {"High", Priority::High}}};
+};
+
+struct Task {
+  Priority priority{};   // xml::attr_field("priority", &Task::priority)
+};
+```
+
+### Value Fields (element text + attributes)
+
+`xml::value_field` binds an element's **own character data** to a member while
+attribute fields on the same element still apply — XSD `simpleContent`, e.g.
+`<price currency="USD">9.99</price>`. It takes no XML name (the name comes from
+where the type is referenced) and the member must be a scalar
+(string/number/enum). A type with a value field must not also declare child
+element fields.
+
+```cpp
+struct Price {
+  std::string_view currency;  // attribute
+  double amount{};            // the element's text
+};
+template <>
+struct xml::XmlMetadata<Price> {
+  static constexpr auto fields = std::make_tuple(
+      xml::attr_field("currency", &Price::currency),
+      xml::value_field(&Price::amount));
+};
+// used as: xml::field("price", &Order::price)  ->  <price currency="USD">9.99</price>
+```
+
+### Recursive Types
+
+A repeating recursive child is just a `std::vector<T>` of the enclosing type. A
+single, optional recursive child uses `std::unique_ptr<T>`: it is null when the
+element is absent and heap-allocated when present (and omitted on serialization
+when null).
+
+```cpp
+struct Section {
+  std::string_view title;
+  std::unique_ptr<Section> subsection;  // xml::field("subsection", &Section::subsection)
+};
+```
 
 ### Deserializer
 
