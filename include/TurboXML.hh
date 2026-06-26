@@ -124,7 +124,14 @@ constexpr FieldHash hash_field_name(std::string_view s) noexcept {
 }  // namespace detail
 
 /// @brief Classifies a field as a child element, attribute, or container.
-enum class FieldKind : uint8_t { Element, Attr, Container, Value, Variant };
+enum class FieldKind : uint8_t {
+  Element,
+  Attr,
+  Container,
+  Value,
+  Variant,
+  List
+};
 
 /// @brief Compile-time descriptor binding an XML name to a class data member.
 /// @tparam K      Field kind.
@@ -151,6 +158,9 @@ using ContainerField = FieldBase<FieldKind::Container, C, M>;
 /// @brief Descriptor for the enclosing element's own text (XSD simpleContent).
 template <typename C, typename M>
 using ValueField = FieldBase<FieldKind::Value, C, M>;
+/// @brief Descriptor for a whitespace-separated list value (XSD xs:list).
+template <typename C, typename M>
+using ListField = FieldBase<FieldKind::List, C, M>;
 
 namespace detail {
 
@@ -206,6 +216,19 @@ template <typename C, typename M>
 constexpr auto arr_field(std::string_view name, M C::* m, bool required = false)
     -> ContainerField<C, M> {
   return detail::make_field<FieldKind::Container>(name, m, required);
+}
+
+/// @brief Creates a list field: a single element whose text is a
+/// whitespace-separated list of values (XSD xs:list), each parsed into the
+/// container member. (For a list-valued attribute, use attr_field with a
+/// container member.)
+/// @param name     XML element name.
+/// @param m        Pointer to the target container member.
+/// @param required If true, deserialize() fails unless the element is present.
+template <typename C, typename M>
+constexpr auto list_field(std::string_view name, M C::* m,
+                          bool required = false) -> ListField<C, M> {
+  return detail::make_field<FieldKind::List>(name, m, required);
 }
 
 // Metadata + concepts
@@ -750,6 +773,11 @@ concept XmlFixedContainer = requires(C& c, size_t i) {
   } -> std::same_as<typename XmlContainerTraits<C>::value_type&>;
 };
 
+/// @brief Satisfied when C is a dynamic or fixed container: the member type a
+/// whitespace-separated list value (XSD xs:list) is parsed into.
+template <typename C>
+concept XmlListContainer = XmlDynContainer<C> || XmlFixedContainer<C>;
+
 // ---- Variant fields (xs:choice -> std::variant) ----
 namespace detail {
 template <typename T>
@@ -906,11 +934,11 @@ constexpr auto make_field_kinds() noexcept {
 }
 
 /// @brief Kinds matched against a child element by their own single name/hash
-/// in find_field_index (element/attribute/container). Value and Variant fields
-/// are matched by other means and excluded here.
+/// in find_field_index (element/attribute/container/list). Value and Variant
+/// fields are matched by other means and excluded here.
 constexpr bool is_named_field(FieldKind k) noexcept {
   return k == FieldKind::Element || k == FieldKind::Attr ||
-         k == FieldKind::Container;
+         k == FieldKind::Container || k == FieldKind::List;
 }
 
 template <typename T>
@@ -975,10 +1003,11 @@ constexpr auto make_required_mask() noexcept -> RequiredMaskT<T> {
 }
 
 /// @brief True for the kinds matched against child element tags in pull()'s
-/// element loop: child elements and containers (not attributes, not the
-/// nameless value field).
+/// element loop: child elements, containers, and list elements (not attributes,
+/// not the nameless value field).
 constexpr bool is_element_kind(FieldKind k) noexcept {
-  return k == FieldKind::Element || k == FieldKind::Container;
+  return k == FieldKind::Element || k == FieldKind::Container ||
+         k == FieldKind::List;
 }
 
 /// @brief True if any field of T is an attribute field.
@@ -1565,10 +1594,13 @@ class BasicParser {
   }
 
   // Assigns a matched attribute's value to a leaf member (string normalized
-  // when applicable, otherwise a scalar/enum/custom-value parse).
+  // when applicable, otherwise a scalar/enum/custom-value parse), or splits an
+  // xs:list value into a container member.
   template <typename U>
   auto assign_attr_value(U& out, const Attribute& a) -> bool {
-    if constexpr (XmlStringLike<U>) {
+    if constexpr (XmlListContainer<U>) {
+      return split_into(out, a.value);
+    } else if constexpr (XmlStringLike<U>) {
       if constexpr (kNormalize && std::same_as<U, std::string>) {
         out.clear();
         const ErrorCode ec =
@@ -1584,6 +1616,79 @@ class BasicParser {
     } else {
       return parse_scalar(a.value, out);
     }
+  }
+
+  // Assigns one whitespace-split list token to a container slot: a string
+  // assignment for string-like items, else a scalar/enum/custom-value parse.
+  template <typename V>
+  auto assign_token(V& out, std::string_view tok) -> bool {
+    if constexpr (XmlStringLike<V>) {
+      return assign_value(out, tok);
+    } else {
+      return parse_scalar(tok, out) ? true : fail(scalar_error<V>());
+    }
+  }
+
+  // Splits an xs:list value on XML whitespace and parses each token into the
+  // container: dynamic containers grow per token; fixed containers fill
+  // sequentially and skip overflow (as arr_field does).
+  template <typename Container>
+  auto split_into(Container& out, std::string_view text) -> bool {
+    using Traits = XmlContainerTraits<Container>;
+    size_t i = 0;
+    size_t fill = 0;
+    while (i < text.size()) {
+      while (i < text.size() && is_space(text[i])) {
+        ++i;
+      }
+      const size_t start = i;
+      while (i < text.size() && !is_space(text[i])) {
+        ++i;
+      }
+      if (i == start) {
+        break;
+      }
+      const std::string_view tok = text.substr(start, i - start);
+      if constexpr (XmlFixedContainer<Container>) {
+        if (fill < Traits::capacity) {
+          if (!assign_token(Traits::at(out, fill), tok)) {
+            return false;
+          }
+          ++fill;
+        }
+      } else {
+        auto& slot = Traits::emplace(out);
+        if (!assign_token(slot, tok)) {
+          Traits::pop(out);
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  // Reads a list element's text, then splits it into the container member.
+  // Mirrors read_chardata's raw branch but tokenizes the value.
+  template <typename Container>
+  auto read_list(Container& out, std::string_view expected_name) -> bool {
+    std::string_view text;
+    while (const Token* tok = peek()) {
+      if (tok->type == TokenType::Text || tok->type == TokenType::CData) {
+        text = tok->data;
+        consume_peeked();
+      } else if (tok->type == TokenType::ElementClose) {
+        if (tok->name != expected_name) {
+          return fail(ErrorCode::ElementMismatch);
+        }
+        consume_peeked();
+        return split_into(out, text);
+      } else if (tok->type == TokenType::Error) {
+        return false;
+      } else {
+        consume_peeked();
+      }
+    }
+    return fail(ErrorCode::UnexpectedEof);
   }
 
   // Validates and consumes a read_chardata closing tag. ConsumeClose drives the
@@ -1869,6 +1974,11 @@ class BasicParser {
       // field index).
       p.skip_element();
       return true;
+    } else if constexpr (f.kind == FieldKind::List) {
+      if (p.last_self_closing_) {
+        return true;  // <name/> -> empty list
+      }
+      return p.read_list(obj.*(f.member), f.xml_name);
     } else if constexpr (f.kind == FieldKind::Container) {
       using M = std::decay_t<decltype(obj.*(f.member))>;
       if constexpr (XmlFixedContainer<M>) {
@@ -2748,12 +2858,36 @@ class Serializer {
     }
   }
 
+  // Writes the items of a list/container, space-separated (XSD xs:list form).
+  template <typename M>
+  void write_list_items(const M& container) {
+    bool first = true;
+    auto write_one = [&](const auto& v) {
+      if (!first) out_ += ' ';
+      first = false;
+      write_scalar<true>(v);
+    };
+    if constexpr (XmlFixedContainer<M>) {
+      using Traits = XmlContainerTraits<M>;
+      for (size_t i = 0; i < Traits::capacity; ++i)
+        write_one(Traits::at(container, i));
+    } else {
+      for (const auto& v : container) write_one(v);
+    }
+  }
+
   template <typename T, size_t I>
   void write_attr_if(const T& obj) {
     constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
     if constexpr (f.kind == FieldKind::Attr) {
       using M = std::remove_cvref_t<decltype(obj.*(f.member))>;
-      if constexpr (XmlOptional<M>) {
+      if constexpr (XmlListContainer<M>) {
+        out_ += ' ';
+        out_ += f.xml_name;
+        out_ += "=\"";
+        write_list_items(obj.*(f.member));
+        out_ += '"';
+      } else if constexpr (XmlOptional<M>) {
         if (const auto& m = obj.*(f.member)) {  // omit absent optional attrs
           write_attr_value(f.xml_name, *m);
         }
@@ -2785,6 +2919,16 @@ class Serializer {
       // written on opening tag
     } else if constexpr (f.kind == FieldKind::Value) {
       // emitted inline by write_element, not as a child
+    } else if constexpr (f.kind == FieldKind::List) {
+      do_indent(depth);
+      out_ += '<';
+      out_ += f.xml_name;
+      out_ += '>';
+      write_list_items(obj.*(f.member));
+      out_ += "</";
+      out_ += f.xml_name;
+      out_ += '>';
+      do_newline();
     } else if constexpr (f.kind == FieldKind::Variant) {
       using M = std::decay_t<decltype(obj.*(f.member))>;
       if constexpr (detail::is_variant<M>::value) {

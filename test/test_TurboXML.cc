@@ -2627,3 +2627,75 @@ TEST_F(TurboBasicTests, OptionalAbsentStaysEmptyAndOmitted) {
   EXPECT_FALSE(pe.addr);
   EXPECT_EQ(xml::serialize<false>("OptPerson", pe), src);  // no <nick>/<addr>
 }
+
+// xs:list fields (whitespace-separated values in one element / attribute).
+enum class Grade { A, B, C };
+template <>
+struct xml::XmlEnumTraits<Grade> {
+  static constexpr auto values = xml::enum_table<Grade>(
+      {{"A", Grade::A}, {"B", Grade::B}, {"C", Grade::C}});
+};
+
+struct ListRec {
+  std::vector<std::string> tags;  // attribute list
+  std::vector<int> dims;          // element list
+  std::array<int, 3> fixed{};     // fixed element list (overflow skipped)
+  std::vector<Grade> grades;      // enum element list
+};
+template <>
+struct xml::XmlMetadata<ListRec> {
+  static constexpr auto fields =
+      std::make_tuple(xml::attr_field("tags", &ListRec::tags),
+                      xml::list_field("dims", &ListRec::dims),
+                      xml::list_field("fixed", &ListRec::fixed),
+                      xml::list_field("grades", &ListRec::grades));
+};
+
+TEST_F(TurboBasicTests, ListElementsAndAttributesRoundTrip) {
+  constexpr std::string_view src =
+      R"(<ListRec tags="a b c"><dims>1 2 3 4</dims><fixed>10 20 30 40</fixed>)"
+      R"(<grades>A C B</grades></ListRec>)";
+  xml::Parser p{src};
+  ListRec r;
+  ASSERT_TRUE(xml::deserialize(p, "ListRec", r));
+  EXPECT_EQ(r.tags, (std::vector<std::string>{"a", "b", "c"}));
+  EXPECT_EQ(r.dims, (std::vector<int>{1, 2, 3, 4}));
+  EXPECT_EQ(r.fixed[0], 10);
+  EXPECT_EQ(r.fixed[2], 30);  // 40 overflow skipped
+  EXPECT_EQ(r.grades, (std::vector<Grade>{Grade::A, Grade::C, Grade::B}));
+  // Round-trips to canonical (single-space) list form; fixed array drops
+  // overflow.
+  EXPECT_EQ(
+      xml::serialize<false>("ListRec", r),
+      R"(<ListRec tags="a b c"><dims>1 2 3 4</dims><fixed>10 20 30</fixed>)"
+      R"(<grades>A C B</grades></ListRec>)");
+}
+
+TEST_F(TurboBasicTests, ListEmptyAndSelfClosing) {
+  constexpr std::string_view src =
+      R"(<ListRec tags=""><dims/><fixed></fixed></ListRec>)";
+  xml::Parser p{src};
+  ListRec r;
+  ASSERT_TRUE(xml::deserialize(p, "ListRec", r));
+  EXPECT_TRUE(r.tags.empty());
+  EXPECT_TRUE(r.dims.empty());
+  EXPECT_TRUE(r.grades.empty());
+}
+
+TEST_F(TurboBasicTests, ListBadTokenFails) {
+  constexpr std::string_view src = R"(<ListRec><dims>1 x 3</dims></ListRec>)";
+  xml::Parser p{src};
+  ListRec r;
+  EXPECT_FALSE(xml::deserialize(p, "ListRec", r));
+  EXPECT_EQ(p.error_code(), xml::ErrorCode::InvalidNumericValue);
+}
+
+TEST_F(TurboBasicTests, ListExtraWhitespaceIgnored) {
+  constexpr std::string_view src =
+      R"(<ListRec><dims>  1   2	3
+      4 </dims></ListRec>)";
+  xml::Parser p{src};
+  ListRec r;
+  ASSERT_TRUE(xml::deserialize(p, "ListRec", r));
+  EXPECT_EQ(r.dims, (std::vector<int>{1, 2, 3, 4}));
+}

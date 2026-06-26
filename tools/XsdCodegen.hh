@@ -30,9 +30,14 @@ struct Restriction {
   std::vector<Enumeration> enumerations;
 };
 
+struct List {
+  std::string itemType;
+};
+
 struct SimpleType {
   std::string name;
   std::optional<Restriction> restriction;
+  std::optional<List> list;
 };
 
 struct Attribute {
@@ -100,10 +105,16 @@ struct xml::XmlMetadata<xsd::Restriction> {
                       xml::vec_field("enumeration", &xsd::Restriction::enumerations));
 };
 template <>
+struct xml::XmlMetadata<xsd::List> {
+  static constexpr auto fields =
+      std::make_tuple(xml::attr_field("itemType", &xsd::List::itemType));
+};
+template <>
 struct xml::XmlMetadata<xsd::SimpleType> {
   static constexpr auto fields =
       std::make_tuple(xml::attr_field("name", &xsd::SimpleType::name),
-                      xml::field("restriction", &xsd::SimpleType::restriction));
+                      xml::field("restriction", &xsd::SimpleType::restriction),
+                      xml::field("list", &xsd::SimpleType::list));
 };
 template <>
 struct xml::XmlMetadata<xsd::Attribute> {
@@ -342,25 +353,52 @@ class Generator {
   // ---- type resolution ----
 
   // The C++ type for an element's value (resolving builtins, named refs, and
-  // inline declarations), and whether it names an emitted struct.
+  // inline declarations). `cpp` is the item type when `is_list` (the member is
+  // then std::vector<cpp>); `is_struct` marks an emitted struct type.
   struct Resolved {
     std::string cpp;
     bool is_struct{};
+    bool is_list{};
   };
+
+  // The C++ item type of an xs:list item (built-in, or a named simple/enum).
+  auto resolve_list_item(std::string_view itemType) -> std::string {
+    if (std::string b = detail::builtin_type(itemType); !b.empty()) return b;
+    const std::string key{detail::local_name(itemType)};
+    if (auto it = named_simple_.find(key); it != named_simple_.end()) {
+      if (it->second->restriction &&
+          !it->second->restriction->enumerations.empty()) {
+        return detail::capitalize(key);  // enum item
+      }
+      return base_builtin(it->second->restriction
+                              ? it->second->restriction->base
+                              : "string");
+    }
+    return "std::string";
+  }
+
+  // The predefined list-valued built-ins resolve to lists of std::string.
+  static auto builtin_list(std::string_view type) -> bool {
+    const auto n = detail::local_name(type);
+    return n == "NMTOKENS" || n == "IDREFS" || n == "ENTITIES";
+  }
 
   auto resolve_element_type(const Element& el) -> Resolved {
     if (el.complexType) {
-      return {detail::capitalize(el.name), true};
+      return {detail::capitalize(el.name), true, false};
     }
     if (el.simpleType) {
+      if (el.simpleType->list) {
+        return {resolve_list_item(el.simpleType->list->itemType), false, true};
+      }
       if (std::string e = enum_name_for_inline(el); !e.empty()) {
-        return {e, false};
+        return {e, false, false};
       }
       if (el.simpleType->restriction) {
-        return {base_builtin(el.simpleType->restriction->base), false};
+        return {base_builtin(el.simpleType->restriction->base), false, false};
       }
       note("untyped inline simpleType on '" + el.name + "' -> std::string");
-      return {"std::string", false};
+      return {"std::string", false, false};
     }
     return resolve_named_type(el.type, el.name);
   }
@@ -387,28 +425,35 @@ class Generator {
   auto resolve_named_type(std::string_view type, std::string_view ctx)
       -> Resolved {
     if (type.empty()) {
-      note("element '" + std::string{ctx} +
-           "' has no type -> std::string");
-      return {"std::string", false};
+      note("element '" + std::string{ctx} + "' has no type -> std::string");
+      return {"std::string", false, false};
+    }
+    if (builtin_list(type)) {
+      return {"std::string", false, true};  // NMTOKENS/IDREFS/ENTITIES
     }
     if (std::string b = detail::builtin_type(type); !b.empty()) {
-      return {b, false};
+      return {b, false, false};
     }
     const std::string key{detail::local_name(type)};
     if (auto it = named_complex_.find(key); it != named_complex_.end()) {
-      return {detail::capitalize(key), true};
+      return {detail::capitalize(key), true, false};
     }
     if (auto it = named_simple_.find(key); it != named_simple_.end()) {
-      if (it->second->restriction && !it->second->restriction->enumerations.empty()) {
-        return {detail::capitalize(key), false};
+      if (it->second->list) {
+        return {resolve_list_item(it->second->list->itemType), false, true};
       }
-      return {base_builtin(it->second->restriction ? it->second->restriction->base
-                                                    : "string"),
-              false};
+      if (it->second->restriction &&
+          !it->second->restriction->enumerations.empty()) {
+        return {detail::capitalize(key), false, false};
+      }
+      return {base_builtin(it->second->restriction
+                               ? it->second->restriction->base
+                               : "string"),
+              false, false};
     }
     note("unknown type '" + std::string{type} + "' on '" + std::string{ctx} +
          "' -> std::string");
-    return {"std::string", false};
+    return {"std::string", false, false};
   }
 
   // ---- cardinality ----
@@ -499,13 +544,14 @@ class Generator {
 
     auto add_attrs = [&](const std::vector<Attribute>& attrs) {
       for (const auto& a : attrs) {
-        const std::string cpp = base_builtin(a.type);
+        const Resolved r = resolve_named_type(a.type, a.name);
         const std::string mem = detail::sanitize(a.name);
-        const bool req = a.use == "required";
-        out.push_back(
-            {cpp + " " + mem + "{};",
-             "xml::attr_field(\"" + a.name + "\", &" + s.cpp_name + "::" + mem +
-                 (req ? ", true)" : ")")});
+        const std::string suffix = (a.use == "required") ? ", true)" : ")";
+        const std::string decl =
+            r.is_list ? "std::vector<" + r.cpp + "> " + mem + ";"
+                      : r.cpp + " " + mem + "{};";
+        out.push_back({decl, "xml::attr_field(\"" + a.name + "\", &" +
+                                 s.cpp_name + "::" + mem + suffix});
       }
     };
 
@@ -525,6 +571,17 @@ class Generator {
       const Resolved r = resolve_element_type(el);
       const std::string mem = detail::sanitize(el.name);
       std::string cpp = r.cpp;
+      if (r.is_list) {
+        if (is_unbounded(el)) {
+          note("repeated xs:list element '" + el.name +
+               "' (maxOccurs>1) is unsupported; treated as a single list");
+        }
+        out.push_back({"std::vector<" + cpp + "> " + mem + ";",
+                       "xml::list_field(\"" + el.name + "\", &" + s.cpp_name +
+                           "::" + mem +
+                           (min_occurs(el) >= 1 ? ", true)" : ")")});
+        return;
+      }
       if (is_unbounded(el)) {
         out.push_back({"std::vector<" + cpp + "> " + mem + ";",
                        "xml::vec_field(\"" + el.name + "\", &" + s.cpp_name +

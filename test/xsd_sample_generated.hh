@@ -43,10 +43,12 @@ struct Square {
 
 struct Order {
   int id{};
+  std::vector<std::string> labels;
   Priority priority{};
   Price total{};
   std::optional<xml::DateTime> placed;
   std::vector<std::string> note;
+  std::vector<int> quantities;
   std::unique_ptr<Order> parent;
   std::vector<std::variant<Circle, Square>> choice;
 };
@@ -77,10 +79,12 @@ template <>
 struct xml::XmlMetadata<Order> {
   static constexpr auto fields = std::make_tuple(
       xml::attr_field("id", &Order::id, true),
+      xml::attr_field("labels", &Order::labels),
       xml::field("priority", &Order::priority, true),
       xml::field("total", &Order::total, true),
       xml::field("placed", &Order::placed),
       xml::vec_field("note", &Order::note),
+      xml::list_field("quantities", &Order::quantities),
       xml::field("parent", &Order::parent),
       xml::variant_field(&Order::choice,
           xml::alt<Circle>("circle"),

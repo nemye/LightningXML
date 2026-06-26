@@ -111,6 +111,28 @@ TEST(XsdCodegen, ChoiceBecomesVariant) {
   EXPECT_TRUE(has(r.code, R"(xml::alt<B>("b"))"));
 }
 
+TEST(XsdCodegen, ListBecomesListOrAttrField) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:simpleType name="IntList"><xs:list itemType="xs:int"/></xs:simpleType>
+    <xs:complexType name="Cfg">
+      <xs:sequence>
+        <xs:element name="codes" type="IntList"/>
+      </xs:sequence>
+      <xs:attribute name="tags" type="xs:NMTOKENS"/>
+      <xs:attribute name="ids" type="IntList"/>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(r.notes.empty()) << (r.notes.empty() ? "" : r.notes[0]);
+  EXPECT_TRUE(has(r.code, "std::vector<int> codes;"));
+  EXPECT_TRUE(has(r.code, R"(xml::list_field("codes", &Cfg::codes)"));
+  EXPECT_TRUE(has(r.code, "std::vector<std::string> tags;"));  // NMTOKENS attr
+  EXPECT_TRUE(has(r.code, R"(xml::attr_field("tags", &Cfg::tags))"));
+  EXPECT_TRUE(has(r.code, "std::vector<int> ids;"));
+  EXPECT_TRUE(has(r.code, R"(xml::attr_field("ids", &Cfg::ids))"));
+}
+
 TEST(XsdCodegen, RecursionUsesUniquePtr) {
   constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Node">
@@ -148,12 +170,13 @@ TEST(XsdCodegen, UnsupportedConstructsAreNoted) {
 // Proves the committed golden header (generated from xsd_sample.xsd) compiles
 // and that its metadata parses a representative document correctly.
 TEST(XsdCodegen, EndToEndGeneratedMetadataParses) {
-  constexpr std::string_view doc = R"(<order id="7">
+  constexpr std::string_view doc = R"(<order id="7" labels="rush gift">
     <priority>High</priority>
     <total currency="USD">9.99</total>
     <placed>2026-06-18T09:30:00Z</placed>
     <note>first</note>
     <note>second</note>
+    <quantities>4 8 15</quantities>
     <parent id="1"><priority>Low</priority><total>1.00</total></parent>
     <circle radius="3"/>
     <square side="4"/>
@@ -170,6 +193,8 @@ TEST(XsdCodegen, EndToEndGeneratedMetadataParses) {
   EXPECT_EQ(o.placed->time.hour, 9u);
   ASSERT_EQ(o.note.size(), 2u);
   EXPECT_EQ(o.note[0], "first");
+  EXPECT_EQ(o.labels, (std::vector<std::string>{"rush", "gift"}));   // NMTOKENS attr list
+  EXPECT_EQ(o.quantities, (std::vector<int>{4, 8, 15}));             // xs:list element
   ASSERT_TRUE(o.parent);
   EXPECT_EQ(o.parent->id, 1);
   EXPECT_EQ(o.parent->priority, Priority::Low);
