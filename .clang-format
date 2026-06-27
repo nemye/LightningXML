@@ -1,0 +1,51 @@
+---
+BasedOnStyle: Google
+ColumnLimit: 100
+IndentWidth: 2
+ContinuationIndentWidth: 4
+AccessModifierOffset: -1
+
+# Braces
+BreakBeforeBraces: Attach
+InsertBraces: true
+
+# Trailing return types are the norm; don't break before '->'.
+AlwaysBreakAfterReturnType: None
+BreakAfterAttributes: Never
+
+# Templates
+AlwaysBreakTemplateDeclarations: Yes
+SpaceAfterTemplateKeyword: false
+
+# Includes
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+
+# Pointers and references on the type side.
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Don't reflow doxygen comment blocks.
+ReflowComments: false
+
+# Lambda formatting.
+LambdaBodyIndentation: OuterScope
+AllowShortLambdasOnASingleLine: All
+
+# Allow short one-liners for trivial getters/setters.
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# Align trailing comments.
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 0
+
+# Consistent empty-line rules.
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false
+
+# Penalty tuning: prefer breaking after the return type over other positions.
+PenaltyReturnTypeOnItsOwnLine: 200
+PenaltyBreakBeforeFirstCallParameter: 30

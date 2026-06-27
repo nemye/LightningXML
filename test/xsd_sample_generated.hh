@@ -14,9 +14,9 @@ enum class Priority {
   Medium,
   High,
 };
-template <>
+template<>
 struct xml::XmlEnumTraits<Priority> {
-  static constexpr auto values = xml::enum_table<Priority>({
+  static constexpr auto values = xml::enumTable<Priority>({
       {"Low", Priority::Low},
       {"Medium", Priority::Medium},
       {"High", Priority::High},
@@ -53,43 +53,30 @@ struct Order {
   std::vector<std::variant<Circle, Square>> choice;
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<Price> {
-  static constexpr auto fields = std::make_tuple(
-      xml::value_field(&Price::value),
-      xml::attr_field("currency", &Price::currency)
-  );
+  static constexpr auto fields =
+      std::make_tuple(xml::valueField(&Price::value), xml::attrField("currency", &Price::currency));
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<Circle> {
-  static constexpr auto fields = std::make_tuple(
-      xml::attr_field("radius", &Circle::radius, true)
-  );
+  static constexpr auto fields = std::make_tuple(xml::attrField("radius", &Circle::radius, true));
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<Square> {
-  static constexpr auto fields = std::make_tuple(
-      xml::attr_field("side", &Square::side, true)
-  );
+  static constexpr auto fields = std::make_tuple(xml::attrField("side", &Square::side, true));
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<Order> {
   static constexpr auto fields = std::make_tuple(
-      xml::attr_field("id", &Order::id, true),
-      xml::attr_field("labels", &Order::labels),
-      xml::field("priority", &Order::priority, true),
-      xml::field("total", &Order::total, true),
-      xml::field("placed", &Order::placed),
-      xml::vec_field("note", &Order::note),
-      xml::list_field("quantities", &Order::quantities),
-      xml::field("parent", &Order::parent),
-      xml::variant_field(&Order::choice,
-          xml::alt<Circle>("circle"),
-          xml::alt<Square>("square"))
-  );
+      xml::attrField("id", &Order::id, true), xml::attrField("labels", &Order::labels),
+      xml::field("priority", &Order::priority, true), xml::field("total", &Order::total, true),
+      xml::field("placed", &Order::placed), xml::vecField("note", &Order::note),
+      xml::listField("quantities", &Order::quantities), xml::field("parent", &Order::parent),
+      xml::variantField(&Order::choice, xml::alt<Circle>("circle"), xml::alt<Square>("square")));
 };
 
 // root: xml::deserialize(parser, "order", obj);  // Order

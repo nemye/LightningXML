@@ -36,24 +36,24 @@ enum class TokenType : uint8_t {
   Comment,                ///< XML comment.
   ProcessingInstruction,  ///< Processing instruction.
   XmlDeclaration,         ///< XML declaration (<?xml ... ?>).
-  Error,                  ///< Parse error; see Parser::error_code().
+  Error,                  ///< Parse error; see Parser::errorCode().
 };
 
 /// @brief Specific reason the most recent parse failed.
 ///
-/// Query via Parser::error_code() after deserialize() returns false. The
+/// Query via Parser::errorCode() after deserialize() returns false. The
 /// first error encountered wins; later cascading failures do not overwrite it.
 enum class ErrorCode : uint8_t {
   None = 0,  ///< No error.
   // Start-tag / attribute structure
-  UnexpectedEndAfterLt,   ///< "<" with nothing after it.
-  UnexpectedCharAfterLt,  ///< Char after "<" cannot begin markup.
-  ExpectedElementName,    ///< Missing element name in a start-tag.
-  UnclosedTag,            ///< Input ended while scanning a start-tag.
-  ExpectedAttributeName,  ///< Non-name char where an attribute was expected.
-  TooManyAttributes,      ///< Start-tag exceeds kMaxAttributesPerElement.
-  ExpectedEquals,         ///< Missing '=' after an attribute name.
-  ExpectedQuotedValue,    ///< Attribute value not quoted.
+  UnexpectedEndAfterLt,        ///< "<" with nothing after it.
+  UnexpectedCharAfterLt,       ///< Char after "<" cannot begin markup.
+  ExpectedElementName,         ///< Missing element name in a start-tag.
+  UnclosedTag,                 ///< Input ended while scanning a start-tag.
+  ExpectedAttributeName,       ///< Non-name char where an attribute was expected.
+  TooManyAttributes,           ///< Start-tag exceeds MAX_ATTRIBUTES_PER_ELEMENT.
+  ExpectedEquals,              ///< Missing '=' after an attribute name.
+  ExpectedQuotedValue,         ///< Attribute value not quoted.
   UnterminatedAttributeValue,  ///< No closing quote on an attribute value.
   ExpectedNameInCloseTag,      ///< Empty name in an end-tag ("</>").
   ExpectedCloseTagEnd,         ///< Missing '>' in an end-tag.
@@ -65,13 +65,13 @@ enum class ErrorCode : uint8_t {
   UnterminatedCData,    ///< CDATA section with no "]]>".
   UnterminatedPi,       ///< PI with no "?>".
   // Content / structure
-  InvalidNumericValue,  ///< Numeric/bool field text failed to parse.
-  InvalidEnumValue,     ///< Enum field text matched no XmlEnumTraits token.
-  InvalidValue,         ///< Custom-value (e.g. date/time) text failed to parse.
-  RootElementNotFound,  ///< Requested root element not present.
-  ElementMismatch,      ///< End-tag name does not match its start-tag.
-  UnexpectedEof,        ///< Input ended mid-element.
-  DepthExceeded,        ///< Nesting deeper than kMaxDepth.
+  InvalidNumericValue,   ///< Numeric/bool field text failed to parse.
+  InvalidEnumValue,      ///< Enum field text matched no XmlEnumTraits token.
+  InvalidValue,          ///< Custom-value (e.g. date/time) text failed to parse.
+  RootElementNotFound,   ///< Requested root element not present.
+  ElementMismatch,       ///< End-tag name does not match its start-tag.
+  UnexpectedEof,         ///< Input ended mid-element.
+  DepthExceeded,         ///< Nesting deeper than MAX_DEPTH.
   MissingRequiredField,  ///< A field marked required was absent from the
                          ///< element.
   UndefinedEntity,       ///< Reference to an entity that is not one of the five
@@ -112,70 +112,61 @@ struct Token {
 // FNV-1a helpers
 namespace detail {
 
-static constexpr FieldHash kFnvOffset = 14695981039346656037ULL;
-static constexpr FieldHash kFnvPrime = 1099511628211ULL;
+static constexpr FieldHash FNV_OFFSET = 14695981039346656037ULL;
+static constexpr FieldHash FNV_PRIME = 1099511628211ULL;
 
 /// @brief Accumulates one byte into a running FNV-1a hash.
-constexpr FieldHash fnv1a_step(FieldHash h, unsigned char c) noexcept {
-  return (h ^ c) * kFnvPrime;
+constexpr FieldHash fnv1aStep(FieldHash h, unsigned char c) noexcept {
+  return (h ^ c) * FNV_PRIME;
 }
 
 /// @brief Computes the FNV-1a hash of a string at compile time.
-constexpr FieldHash hash_field_name(std::string_view s) noexcept {
-  return std::accumulate(s.begin(), s.end(), kFnvOffset,
-                         [](FieldHash h, char c) {
-                           return fnv1a_step(h, static_cast<unsigned char>(c));
-                         });
+constexpr FieldHash hashFieldName(std::string_view s) noexcept {
+  return std::accumulate(s.begin(), s.end(), FNV_OFFSET, [](FieldHash h, char c) {
+    return fnv1aStep(h, static_cast<unsigned char>(c));
+  });
 }
 
 }  // namespace detail
 
 /// @brief Classifies a field as a child element, attribute, or container.
-enum class FieldKind : uint8_t {
-  Element,
-  Attr,
-  Container,
-  Value,
-  Variant,
-  List
-};
+enum class FieldKind : uint8_t { Element, Attr, Container, Value, Variant, List };
 
 /// @brief Compile-time descriptor binding an XML name to a class data member.
 /// @tparam K      Field kind.
 /// @tparam Class  Containing class type.
 /// @tparam Member Member pointer type.
-template <FieldKind K, typename Class, typename Member>
+template<FieldKind K, typename Class, typename Member>
 struct FieldBase {
   static constexpr FieldKind kind = K;
   std::string_view xml_name;
-  Member Class::* member;
+  Member Class::*member;
   FieldHash hash;
   bool required;  ///< If true, deserialize() fails when the field is absent.
 };
 
 /// @brief Descriptor for a scalar child element field.
-template <typename C, typename M>
+template<typename C, typename M>
 using Field = FieldBase<FieldKind::Element, C, M>;
 /// @brief Descriptor for an XML attribute field.
-template <typename C, typename M>
+template<typename C, typename M>
 using AttrField = FieldBase<FieldKind::Attr, C, M>;
 /// @brief Descriptor for a repeating child element stored in a container.
-template <typename C, typename M>
+template<typename C, typename M>
 using ContainerField = FieldBase<FieldKind::Container, C, M>;
 /// @brief Descriptor for the enclosing element's own text (XSD simpleContent).
-template <typename C, typename M>
+template<typename C, typename M>
 using ValueField = FieldBase<FieldKind::Value, C, M>;
 /// @brief Descriptor for a whitespace-separated list value (XSD xs:list).
-template <typename C, typename M>
+template<typename C, typename M>
 using ListField = FieldBase<FieldKind::List, C, M>;
 
 namespace detail {
 
-/// @brief Shared factory behind field/attr_field/vec_field/arr_field.
-template <FieldKind K, typename C, typename M>
-constexpr auto make_field(std::string_view name, M C::* m, bool required)
-    -> FieldBase<K, C, M> {
-  return {name, m, hash_field_name(name), required};
+/// @brief Shared factory behind field/attrField/vecField/arrField.
+template<FieldKind K, typename C, typename M>
+constexpr auto makeField(std::string_view name, M C::*m, bool required) -> FieldBase<K, C, M> {
+  return {name, m, hashFieldName(name), required};
 }
 
 }  // namespace detail
@@ -184,10 +175,9 @@ constexpr auto make_field(std::string_view name, M C::* m, bool required)
 /// @param name     XML element name.
 /// @param m        Pointer to the target member.
 /// @param required If true, deserialize() fails unless the element is present.
-template <typename C, typename M>
-constexpr auto field(std::string_view name, M C::* m, bool required = false)
-    -> Field<C, M> {
-  return detail::make_field<FieldKind::Element>(name, m, required);
+template<typename C, typename M>
+constexpr auto field(std::string_view name, M C::*m, bool required = false) -> Field<C, M> {
+  return detail::makeField<FieldKind::Element>(name, m, required);
 }
 
 /// @brief Creates an attribute field descriptor.
@@ -195,10 +185,9 @@ constexpr auto field(std::string_view name, M C::* m, bool required = false)
 /// @param m        Pointer to the target member.
 /// @param required If true, deserialize() fails unless the attribute is
 /// present.
-template <typename C, typename M>
-constexpr auto attr_field(std::string_view name, M C::* m,
-                          bool required = false) -> AttrField<C, M> {
-  return detail::make_field<FieldKind::Attr>(name, m, required);
+template<typename C, typename M>
+constexpr auto attrField(std::string_view name, M C::*m, bool required = false) -> AttrField<C, M> {
+  return detail::makeField<FieldKind::Attr>(name, m, required);
 }
 
 /// @brief Creates a container field descriptor for dynamic containers (e.g.,
@@ -207,10 +196,10 @@ constexpr auto attr_field(std::string_view name, M C::* m,
 /// @param m        Pointer to the target member.
 /// @param required If true, deserialize() fails unless at least one item is
 ///                 present.
-template <typename C, typename M>
-constexpr auto vec_field(std::string_view name, M C::* m, bool required = false)
-    -> ContainerField<C, M> {
-  return detail::make_field<FieldKind::Container>(name, m, required);
+template<typename C, typename M>
+constexpr auto vecField(std::string_view name, M C::*m,
+                        bool required = false) -> ContainerField<C, M> {
+  return detail::makeField<FieldKind::Container>(name, m, required);
 }
 
 /// @brief Creates a container field descriptor for fixed containers (e.g.,
@@ -219,23 +208,22 @@ constexpr auto vec_field(std::string_view name, M C::* m, bool required = false)
 /// @param m        Pointer to the target member.
 /// @param required If true, deserialize() fails unless at least one item is
 ///                 present.
-template <typename C, typename M>
-constexpr auto arr_field(std::string_view name, M C::* m, bool required = false)
-    -> ContainerField<C, M> {
-  return detail::make_field<FieldKind::Container>(name, m, required);
+template<typename C, typename M>
+constexpr auto arrField(std::string_view name, M C::*m,
+                        bool required = false) -> ContainerField<C, M> {
+  return detail::makeField<FieldKind::Container>(name, m, required);
 }
 
 /// @brief Creates a list field: a single element whose text is a
 /// whitespace-separated list of values (XSD xs:list), each parsed into the
-/// container member. (For a list-valued attribute, use attr_field with a
+/// container member. (For a list-valued attribute, use attrField with a
 /// container member.)
 /// @param name     XML element name.
 /// @param m        Pointer to the target container member.
 /// @param required If true, deserialize() fails unless the element is present.
-template <typename C, typename M>
-constexpr auto list_field(std::string_view name, M C::* m,
-                          bool required = false) -> ListField<C, M> {
-  return detail::make_field<FieldKind::List>(name, m, required);
+template<typename C, typename M>
+constexpr auto listField(std::string_view name, M C::*m, bool required = false) -> ListField<C, M> {
+  return detail::makeField<FieldKind::List>(name, m, required);
 }
 
 // Metadata + concepts
@@ -244,104 +232,100 @@ constexpr auto list_field(std::string_view name, M C::* m,
 /// The specialization must provide `static constexpr auto fields` as a tuple
 /// of Field, AttrField, or ContainerField descriptors.
 /// @tparam T User-defined struct to describe.
-template <typename T>
+template<typename T>
 struct XmlMetadata;
 
 /// @brief Satisfied when T has an XmlMetadata specialization with a fields
 /// tuple.
-template <typename T>
+template<typename T>
 concept XmlObject = requires { XmlMetadata<T>::fields; };
 
 namespace detail {
-template <typename T>
+template<typename T>
 struct is_unique_ptr : std::false_type {};
-template <typename U, typename D>
+template<typename U, typename D>
 struct is_unique_ptr<std::unique_ptr<U, D>> : std::true_type {};
 
-template <typename T>
+template<typename T>
 struct is_optional : std::false_type {};
-template <typename U>
+template<typename U>
 struct is_optional<std::optional<U>> : std::true_type {};
 }  // namespace detail
 
 /// @brief Satisfied when T is a std::unique_ptr to an XmlObject. Such members
 /// hold an optional (possibly recursive) child element: null when the element
 /// is absent, heap-allocated and populated when present.
-template <typename T>
-concept XmlUniquePtr =
-    detail::is_unique_ptr<T>::value && XmlObject<typename T::element_type>;
+template<typename T>
+concept XmlUniquePtr = detail::is_unique_ptr<T>::value && XmlObject<typename T::element_type>;
 
 /// @brief Satisfied when T is a std::optional. Such members hold an optional
 /// leaf value or child element: empty when absent, engaged (in place) when
 /// present. An optional field can never be marked required.
-template <typename T>
+template<typename T>
 concept XmlOptional = detail::is_optional<T>::value;
 
 /// @brief Satisfied when T is std::string or std::string_view.
-template <typename T>
-concept XmlStringLike =
-    std::same_as<T, std::string_view> || std::same_as<T, std::string>;
+template<typename T>
+concept XmlStringLike = std::same_as<T, std::string_view> || std::same_as<T, std::string>;
 
 /// @brief Satisfied when T is a numeric type or a string-like type.
-template <typename T>
+template<typename T>
 concept XmlPrimitive = std::is_arithmetic_v<T> || XmlStringLike<T>;
 
 /// @brief One token-to-enumerator mapping entry for an XmlEnumTraits table.
-template <typename E>
+template<typename E>
 using EnumEntry = std::pair<std::string_view, E>;
 
 /// @brief Adapts a C++ enum to/from its XML token spelling. Specialize with a
 /// `values` member: a constexpr range of EnumEntry<E> pairs mapping each token
 /// to its enumerator (e.g. one entry per xs:enumeration facet). Use
-/// enum_table() to build it without spelling the element type or count:
+/// enumTable() to build it without spelling the element type or count:
 /// @code
 /// template <> struct xml::XmlEnumTraits<Priority> {
-///   static constexpr auto values = xml::enum_table<Priority>(
+///   static constexpr auto values = xml::enumTable<Priority>(
 ///       {{"Low", Priority::Low}, {"High", Priority::High}});
 /// };
 /// @endcode
 /// @tparam E Enum type to map.
-template <typename E>
+template<typename E>
 struct XmlEnumTraits;
 
 /// @brief Builds an XmlEnumTraits `values` table from a braced list of entries,
 /// deducing the entry count. The enum type E is given explicitly; each entry is
 /// a `{"token", E::value}` pair.
-template <typename E, size_t N>
-constexpr auto enum_table(const EnumEntry<E> (&entries)[N])
-    -> std::array<EnumEntry<E>, N> {
+template<typename E, size_t N>
+constexpr auto enumTable(const EnumEntry<E> (&entries)[N]) -> std::array<EnumEntry<E>, N> {
   return std::to_array(entries);
 }
 
 /// @brief Satisfied when E is an enum with an XmlEnumTraits specialization.
-template <typename E>
+template<typename E>
 concept XmlEnum = std::is_enum_v<E> && requires { XmlEnumTraits<E>::values; };
 
 /// @brief Adapts an arbitrary leaf type to/from its XML text form. Specialize
 /// with two static members:
 ///   `static bool parse(std::string_view, T&);`     // false on bad input
-///   `static void format(std::string& out, const T&);`  // append XML-safe text
+///   `static auto format(std::string& out, const T&) -> void;`  // append XML-safe text
 /// The built-in xml::Date / xml::Time / xml::DateTime types specialize this;
 /// the same hook lets the codegen map any simple type with a known lexical
 /// form.
 /// @tparam T Leaf value type to map.
-template <typename T>
+template<typename T>
 struct XmlValueTraits;
 
 /// @brief Satisfied when T has an XmlValueTraits specialization (a custom leaf
 /// value type with text parse/format, e.g. a date).
-template <typename T>
-concept XmlCustomValue =
-    requires(std::string_view s, T& v, const T& cv, std::string& out) {
-      { XmlValueTraits<T>::parse(s, v) } -> std::same_as<bool>;
-      XmlValueTraits<T>::format(out, cv);
-    };
+template<typename T>
+concept XmlCustomValue = requires(std::string_view s, T& v, const T& cv, std::string& out) {
+  { XmlValueTraits<T>::parse(s, v) } -> std::same_as<bool>;
+  XmlValueTraits<T>::format(out, cv);
+};
 
 /// @brief Satisfied when T is a leaf value type: a primitive (arithmetic or
 /// string-like), a mapped enum, or a custom value (XmlValueTraits). These map
 /// to an element's text or an attribute value, as opposed to a nested
 /// XmlObject.
-template <typename T>
+template<typename T>
 concept XmlScalar = XmlPrimitive<T> || XmlEnum<T> || XmlCustomValue<T>;
 
 // ---- Built-in date/time value types (XSD date / dateTime / time) ----
@@ -356,10 +340,8 @@ struct Date {
   bool has_tz{};        ///< True if an explicit timezone was present.
   int tz_offset_min{};  ///< Minutes east of UTC (0 for 'Z').
 
-  [[nodiscard]] constexpr auto to_year_month_day() const
-      -> std::chrono::year_month_day {
-    return std::chrono::year{year} / std::chrono::month{month} /
-           std::chrono::day{day};
+  [[nodiscard]] constexpr auto to_year_month_day() const -> std::chrono::year_month_day {
+    return std::chrono::year{year} / std::chrono::month{month} / std::chrono::day{day};
   }
   [[nodiscard]] constexpr auto to_sys_days() const -> std::chrono::sys_days {
     return std::chrono::sys_days{to_year_month_day()};
@@ -370,19 +352,17 @@ struct Date {
 /// @brief An XSD `time`: time of day with optional fractional seconds and an
 /// optional timezone.
 struct Time {
-  unsigned hour{};    ///< 0-24 (24 only with zero minute/second/fraction).
-  unsigned minute{};  ///< 0-59.
-  unsigned second{};  ///< 0-59.
+  unsigned hour{};             ///< 0-24 (24 only with zero minute/second/fraction).
+  unsigned minute{};           ///< 0-59.
+  unsigned second{};           ///< 0-59.
   std::uint32_t nanosecond{};  ///< Fractional second, in nanoseconds.
   bool has_tz{};
   int tz_offset_min{};
 
   /// @brief Time elapsed since midnight (ignores any timezone).
-  [[nodiscard]] constexpr auto since_midnight() const
-      -> std::chrono::nanoseconds {
+  [[nodiscard]] constexpr auto since_midnight() const -> std::chrono::nanoseconds {
     using namespace std::chrono;
-    return hours{hour} + minutes{minute} + seconds{second} +
-           nanoseconds{nanosecond};
+    return hours{hour} + minutes{minute} + seconds{second} + nanoseconds{nanosecond};
   }
   auto operator==(const Time&) const -> bool = default;
 };
@@ -395,8 +375,7 @@ struct DateTime {
 
   /// @brief The instant as a UTC `sys_time` (applies the timezone offset if one
   /// was present; otherwise treats the value as UTC).
-  [[nodiscard]] auto to_sys_time() const
-      -> std::chrono::sys_time<std::chrono::nanoseconds> {
+  [[nodiscard]] auto to_sys_time() const -> std::chrono::sys_time<std::chrono::nanoseconds> {
     using namespace std::chrono;
     sys_time<nanoseconds> t = date.to_sys_days() + time.since_midnight();
     if (time.has_tz) {
@@ -412,8 +391,7 @@ namespace detail {
 // ---- Lexical scanners for the date/time types (allocation-free) ----
 
 // Reads exactly `n` decimal digits into `out`, advancing `i`. False if fewer.
-constexpr auto dt_digits(std::string_view s, size_t& i, int n, unsigned& out)
-    -> bool {
+constexpr auto dtDigits(std::string_view s, size_t& i, int n, unsigned& out) -> bool {
   if (i + static_cast<size_t>(n) > s.size()) {
     return false;
   }
@@ -431,7 +409,7 @@ constexpr auto dt_digits(std::string_view s, size_t& i, int n, unsigned& out)
 }
 
 // Year: optional '-' then at least four digits.
-constexpr auto dt_year(std::string_view s, size_t& i, int& year) -> bool {
+constexpr auto dtYear(std::string_view s, size_t& i, int& year) -> bool {
   int sign = 1;
   if (i < s.size() && s[i] == '-') {
     sign = -1;
@@ -451,8 +429,7 @@ constexpr auto dt_year(std::string_view s, size_t& i, int& year) -> bool {
 }
 
 // Optional timezone suffix: 'Z' or (+|-)hh:mm. Absent (i at end) is allowed.
-constexpr auto dt_tz(std::string_view s, size_t& i, bool& has_tz, int& off)
-    -> bool {
+constexpr auto dtTz(std::string_view s, size_t& i, bool& has_tz, int& off) -> bool {
   has_tz = false;
   off = 0;
   if (i >= s.size()) {
@@ -469,11 +446,11 @@ constexpr auto dt_tz(std::string_view s, size_t& i, bool& has_tz, int& off)
     ++i;
     unsigned hh = 0;
     unsigned mm = 0;
-    if (!dt_digits(s, i, 2, hh) || i >= s.size() || s[i] != ':') {
+    if (!dtDigits(s, i, 2, hh) || i >= s.size() || s[i] != ':') {
       return false;
     }
     ++i;
-    if (!dt_digits(s, i, 2, mm) || hh > 14 || mm > 59) {
+    if (!dtDigits(s, i, 2, mm) || hh > 14 || mm > 59) {
       return false;
     }
     has_tz = true;
@@ -483,18 +460,18 @@ constexpr auto dt_tz(std::string_view s, size_t& i, bool& has_tz, int& off)
   return false;
 }
 
-constexpr auto dt_date(std::string_view s, size_t& i, Date& d) -> bool {
+constexpr auto dtDate(std::string_view s, size_t& i, Date& d) -> bool {
   unsigned mo = 0;
   unsigned da = 0;
-  if (!dt_year(s, i, d.year) || i >= s.size() || s[i] != '-') {
+  if (!dtYear(s, i, d.year) || i >= s.size() || s[i] != '-') {
     return false;
   }
   ++i;
-  if (!dt_digits(s, i, 2, mo) || i >= s.size() || s[i] != '-') {
+  if (!dtDigits(s, i, 2, mo) || i >= s.size() || s[i] != '-') {
     return false;
   }
   ++i;
-  if (!dt_digits(s, i, 2, da) || mo < 1 || mo > 12 || da < 1 || da > 31) {
+  if (!dtDigits(s, i, 2, da) || mo < 1 || mo > 12 || da < 1 || da > 31) {
     return false;
   }
   d.month = mo;
@@ -502,19 +479,19 @@ constexpr auto dt_date(std::string_view s, size_t& i, Date& d) -> bool {
   return true;
 }
 
-constexpr auto dt_time(std::string_view s, size_t& i, Time& t) -> bool {
+constexpr auto dtTime(std::string_view s, size_t& i, Time& t) -> bool {
   unsigned hh = 0;
   unsigned mm = 0;
   unsigned ss = 0;
-  if (!dt_digits(s, i, 2, hh) || i >= s.size() || s[i] != ':') {
+  if (!dtDigits(s, i, 2, hh) || i >= s.size() || s[i] != ':') {
     return false;
   }
   ++i;
-  if (!dt_digits(s, i, 2, mm) || i >= s.size() || s[i] != ':') {
+  if (!dtDigits(s, i, 2, mm) || i >= s.size() || s[i] != ':') {
     return false;
   }
   ++i;
-  if (!dt_digits(s, i, 2, ss)) {
+  if (!dtDigits(s, i, 2, ss)) {
     return false;
   }
   std::uint32_t nano = 0;
@@ -549,37 +526,35 @@ constexpr auto dt_time(std::string_view s, size_t& i, Time& t) -> bool {
   return true;
 }
 
-constexpr auto parse_date(std::string_view s, Date& d) -> bool {
+constexpr auto parseDate(std::string_view s, Date& d) -> bool {
   size_t i = 0;
   Date out{};
-  if (!dt_date(s, i, out) || !dt_tz(s, i, out.has_tz, out.tz_offset_min) ||
-      i != s.size()) {
+  if (!dtDate(s, i, out) || !dtTz(s, i, out.has_tz, out.tz_offset_min) || i != s.size()) {
     return false;
   }
   d = out;
   return true;
 }
 
-constexpr auto parse_time(std::string_view s, Time& t) -> bool {
+constexpr auto parseTime(std::string_view s, Time& t) -> bool {
   size_t i = 0;
   Time out{};
-  if (!dt_time(s, i, out) || !dt_tz(s, i, out.has_tz, out.tz_offset_min) ||
-      i != s.size()) {
+  if (!dtTime(s, i, out) || !dtTz(s, i, out.has_tz, out.tz_offset_min) || i != s.size()) {
     return false;
   }
   t = out;
   return true;
 }
 
-constexpr auto parse_datetime(std::string_view s, DateTime& dt) -> bool {
+constexpr auto parseDatetime(std::string_view s, DateTime& dt) -> bool {
   size_t i = 0;
   DateTime out{};
-  if (!dt_date(s, i, out.date) || i >= s.size() || s[i] != 'T') {
+  if (!dtDate(s, i, out.date) || i >= s.size() || s[i] != 'T') {
     return false;
   }
   ++i;
-  if (!dt_time(s, i, out.time) ||
-      !dt_tz(s, i, out.time.has_tz, out.time.tz_offset_min) || i != s.size()) {
+  if (!dtTime(s, i, out.time) || !dtTz(s, i, out.time.has_tz, out.time.tz_offset_min) ||
+      i != s.size()) {
     return false;
   }
   dt = out;
@@ -588,7 +563,7 @@ constexpr auto parse_datetime(std::string_view s, DateTime& dt) -> bool {
 
 // ---- Canonical-form formatters ----
 
-inline void dt_pad(std::string& o, unsigned v, int width) {
+inline auto dtPad(std::string& o, unsigned v, int width) -> void {
   char tmp[10];
   int n = 0;
   do {
@@ -603,7 +578,7 @@ inline void dt_pad(std::string& o, unsigned v, int width) {
   }
 }
 
-inline void dt_fmt_tz(std::string& o, bool has_tz, int off) {
+inline auto dtFmtTz(std::string& o, bool has_tz, int off) -> void {
   if (!has_tz) {
     return;
   }
@@ -613,30 +588,30 @@ inline void dt_fmt_tz(std::string& o, bool has_tz, int off) {
   }
   o.push_back(off < 0 ? '-' : '+');
   const unsigned a = static_cast<unsigned>(off < 0 ? -off : off);
-  dt_pad(o, a / 60, 2);
+  dtPad(o, a / 60, 2);
   o.push_back(':');
-  dt_pad(o, a % 60, 2);
+  dtPad(o, a % 60, 2);
 }
 
-inline void dt_fmt_date(std::string& o, const Date& d) {
+inline auto dtFmtDate(std::string& o, const Date& d) -> void {
   if (d.year < 0) {
     o.push_back('-');
-    dt_pad(o, static_cast<unsigned>(-d.year), 4);
+    dtPad(o, static_cast<unsigned>(-d.year), 4);
   } else {
-    dt_pad(o, static_cast<unsigned>(d.year), 4);
+    dtPad(o, static_cast<unsigned>(d.year), 4);
   }
   o.push_back('-');
-  dt_pad(o, d.month, 2);
+  dtPad(o, d.month, 2);
   o.push_back('-');
-  dt_pad(o, d.day, 2);
+  dtPad(o, d.day, 2);
 }
 
-inline void dt_fmt_time(std::string& o, const Time& t) {
-  dt_pad(o, t.hour, 2);
+inline auto dtFmtTime(std::string& o, const Time& t) -> void {
+  dtPad(o, t.hour, 2);
   o.push_back(':');
-  dt_pad(o, t.minute, 2);
+  dtPad(o, t.minute, 2);
   o.push_back(':');
-  dt_pad(o, t.second, 2);
+  dtPad(o, t.second, 2);
   if (t.nanosecond != 0) {
     char d[9];
     std::uint32_t n = t.nanosecond;
@@ -656,40 +631,36 @@ inline void dt_fmt_time(std::string& o, const Time& t) {
 }  // namespace detail
 
 /// @brief Maps xml::Date to/from the XSD `date` lexical form.
-template <>
+template<>
 struct XmlValueTraits<Date> {
-  static auto parse(std::string_view s, Date& d) -> bool {
-    return detail::parse_date(s, d);
-  }
-  static void format(std::string& out, const Date& d) {
-    detail::dt_fmt_date(out, d);
-    detail::dt_fmt_tz(out, d.has_tz, d.tz_offset_min);
+  static auto parse(std::string_view s, Date& d) -> bool { return detail::parseDate(s, d); }
+  static auto format(std::string& out, const Date& d) -> void {
+    detail::dtFmtDate(out, d);
+    detail::dtFmtTz(out, d.has_tz, d.tz_offset_min);
   }
 };
 
 /// @brief Maps xml::Time to/from the XSD `time` lexical form.
-template <>
+template<>
 struct XmlValueTraits<Time> {
-  static auto parse(std::string_view s, Time& t) -> bool {
-    return detail::parse_time(s, t);
-  }
-  static void format(std::string& out, const Time& t) {
-    detail::dt_fmt_time(out, t);
-    detail::dt_fmt_tz(out, t.has_tz, t.tz_offset_min);
+  static auto parse(std::string_view s, Time& t) -> bool { return detail::parseTime(s, t); }
+  static auto format(std::string& out, const Time& t) -> void {
+    detail::dtFmtTime(out, t);
+    detail::dtFmtTz(out, t.has_tz, t.tz_offset_min);
   }
 };
 
 /// @brief Maps xml::DateTime to/from the XSD `dateTime` lexical form.
-template <>
+template<>
 struct XmlValueTraits<DateTime> {
   static auto parse(std::string_view s, DateTime& dt) -> bool {
-    return detail::parse_datetime(s, dt);
+    return detail::parseDatetime(s, dt);
   }
-  static void format(std::string& out, const DateTime& dt) {
-    detail::dt_fmt_date(out, dt.date);
+  static auto format(std::string& out, const DateTime& dt) -> void {
+    detail::dtFmtDate(out, dt.date);
     out.push_back('T');
-    detail::dt_fmt_time(out, dt.time);
-    detail::dt_fmt_tz(out, dt.time.has_tz, dt.time.tz_offset_min);
+    detail::dtFmtTime(out, dt.time);
+    detail::dtFmtTz(out, dt.time.has_tz, dt.time.tz_offset_min);
   }
 };
 
@@ -697,8 +668,8 @@ namespace detail {
 
 /// @brief Resolves an XML token to its enumerator via XmlEnumTraits<E>::values.
 /// @return false if no token matches (an undefined enumeration value).
-template <typename E>
-constexpr auto enum_from_string(std::string_view s, E& out) noexcept -> bool {
+template<typename E>
+constexpr auto enumFromString(std::string_view s, E& out) noexcept -> bool {
   for (const auto& [name, value] : XmlEnumTraits<E>::values) {
     if (name == s) {
       out = value;
@@ -709,8 +680,8 @@ constexpr auto enum_from_string(std::string_view s, E& out) noexcept -> bool {
 }
 
 /// @brief Maps an enumerator back to its XML token, or "" if unmapped.
-template <typename E>
-constexpr auto enum_to_string(E v) noexcept -> std::string_view {
+template<typename E>
+constexpr auto enumToString(E v) noexcept -> std::string_view {
   for (const auto& [name, value] : XmlEnumTraits<E>::values) {
     if (value == v) {
       return name;
@@ -727,30 +698,28 @@ constexpr auto enum_to_string(E v) noexcept -> std::string_view {
 /// XML name -- the element name comes from where the owning type is referenced.
 /// @param m        Pointer to the target scalar member (string/number/enum).
 /// @param required If true, deserialize() fails when the element has no text.
-template <typename C, typename M>
-constexpr auto value_field(M C::* m, bool required = false)
-    -> ValueField<C, M> {
-  static_assert(XmlScalar<M>,
-                "value_field target must be a scalar (string/number/enum)");
-  return detail::make_field<FieldKind::Value>(std::string_view{}, m, required);
+template<typename C, typename M>
+constexpr auto valueField(M C::*m, bool required = false) -> ValueField<C, M> {
+  static_assert(XmlScalar<M>, "valueField target must be a scalar (string/number/enum)");
+  return detail::makeField<FieldKind::Value>(std::string_view{}, m, required);
 }
 
 /// @brief Adapts a container for use with ContainerField. Specialize for custom
 /// types.
 /// @tparam C Container type to adapt.
-template <typename C>
+template<typename C>
 struct XmlContainerTraits;
 
 /// @brief XmlContainerTraits specialization for std::vector.
-template <typename T, typename A>
+template<typename T, typename A>
 struct XmlContainerTraits<std::vector<T, A>> {
   using value_type = T;
   static T& emplace(std::vector<T, A>& c) { return c.emplace_back(); }
-  static void pop(std::vector<T, A>& c) { c.pop_back(); }
+  static auto pop(std::vector<T, A>& c) -> void { c.pop_back(); }
 };
 
 /// @brief XmlContainerTraits specialization for std::array.
-template <typename T, size_t N>
+template<typename T, size_t N>
 struct XmlContainerTraits<std::array<T, N>> {
   using value_type = T;
   static constexpr size_t capacity = N;
@@ -760,7 +729,7 @@ struct XmlContainerTraits<std::array<T, N>> {
 
 /// @brief Satisfied when C supports dynamic insertion via XmlContainerTraits
 /// (e.g., std::vector).
-template <typename C>
+template<typename C>
 concept XmlDynContainer = requires(C& c) {
   typename XmlContainerTraits<C>::value_type;
   {
@@ -771,97 +740,92 @@ concept XmlDynContainer = requires(C& c) {
 
 /// @brief Satisfied when C has a fixed capacity and indexed access via
 /// XmlContainerTraits (e.g., std::array).
-template <typename C>
+template<typename C>
 concept XmlFixedContainer = requires(C& c, size_t i) {
   typename XmlContainerTraits<C>::value_type;
   XmlContainerTraits<C>::capacity;
-  {
-    XmlContainerTraits<C>::at(c, i)
-  } -> std::same_as<typename XmlContainerTraits<C>::value_type&>;
+  { XmlContainerTraits<C>::at(c, i) } -> std::same_as<typename XmlContainerTraits<C>::value_type&>;
 };
 
 /// @brief Satisfied when C is a dynamic or fixed container: the member type a
 /// whitespace-separated list value (XSD xs:list) is parsed into.
-template <typename C>
+template<typename C>
 concept XmlListContainer = XmlDynContainer<C> || XmlFixedContainer<C>;
 
 // ---- Variant fields (xs:choice -> std::variant) ----
 namespace detail {
-template <typename T>
+template<typename T>
 struct is_variant : std::false_type {};
-template <typename... Ts>
+template<typename... Ts>
 struct is_variant<std::variant<Ts...>> : std::true_type {};
 
 // The std::variant underlying a variant field member: the member itself when it
 // is a variant, else the element type of a dynamic container of variant.
-template <typename M, bool = is_variant<M>::value>
+template<typename M, bool = is_variant<M>::value>
 struct variant_member {
   using type = M;
 };
-template <typename M>
+template<typename M>
 struct variant_member<M, false> {
   using type = typename XmlContainerTraits<M>::value_type;
 };
-template <typename M>
+template<typename M>
 using variant_member_t = typename variant_member<M>::type;
 
 // Index of alternative T within std::variant V (T must appear exactly once).
-template <typename V, typename T>
+template<typename V, typename T>
 struct variant_index;
-template <typename T, typename... Rest>
+template<typename T, typename... Rest>
 struct variant_index<std::variant<T, Rest...>, T> {
   static constexpr size_t value = 0;
 };
-template <typename T, typename U, typename... Rest>
+template<typename T, typename U, typename... Rest>
 struct variant_index<std::variant<U, Rest...>, T> {
-  static constexpr size_t value =
-      1 + variant_index<std::variant<Rest...>, T>::value;
+  static constexpr size_t value = 1 + variant_index<std::variant<Rest...>, T>::value;
 };
 }  // namespace detail
 
 /// @brief One alternative of a variant field: binds element `<name>` to the
 /// std::variant alternative of type T. Build with `xml::alt<T>("name")`.
-template <typename T>
+template<typename T>
 struct VariantAlt {
   std::string_view name;
 };
 
 /// @brief Names a variant alternative. @tparam T the std::variant alternative.
-template <typename T>
+template<typename T>
 constexpr auto alt(std::string_view name) -> VariantAlt<T> {
   return {name};
 }
 
 /// @brief Descriptor for a variant (xs:choice) field. `names` and `hashes` are
 /// indexed by the std::variant alternative index.
-template <typename Class, typename Member, size_t NAlts>
+template<typename Class, typename Member, size_t NAlts>
 struct VariantField {
   static constexpr FieldKind kind = FieldKind::Variant;
-  Member Class::* member;
+  Member Class::*member;
   bool required;
   std::array<std::string_view, NAlts> names;
   std::array<FieldHash, NAlts> hashes;
 };
 
 namespace detail {
-template <typename V, typename C, typename Member, size_t N, typename T>
-constexpr void place_variant_alt(VariantField<C, Member, N>& f,
-                                 VariantAlt<T> a) {
+template<typename V, typename C, typename Member, size_t N, typename T>
+constexpr auto placeVariantAlt(VariantField<C, Member, N>& f, VariantAlt<T> a) -> void {
   constexpr size_t idx = variant_index<V, T>::value;
   f.names[idx] = a.name;
-  f.hashes[idx] = hash_field_name(a.name);
+  f.hashes[idx] = hashFieldName(a.name);
 }
 
-template <typename C, typename Member, typename... Ts>
-constexpr auto make_variant_field(Member C::* m, bool required,
-                                  VariantAlt<Ts>... alts) {
+template<typename C, typename Member, typename... Ts>
+constexpr auto make_variantField(Member C::*m, bool required, VariantAlt<Ts>... alts) {
   using V = variant_member_t<Member>;
   constexpr size_t N = std::variant_size_v<V>;
   static_assert(sizeof...(Ts) == N,
-                "variant_field: provide exactly one alt<T>() per std::variant "
+                "variantField: provide exactly one alt<T>() per std::variant "
                 "alternative");
   VariantField<C, Member, N> f{m, required, {}, {}};
-  (place_variant_alt<V>(f, alts), ...);
+  (placeVariantAlt<V>(f, alts), ...);
   return f;
 }
 }  // namespace detail
@@ -872,50 +836,48 @@ constexpr auto make_variant_field(Member C::* m, bool required,
 /// to the alternative of type T; alternatives must be distinct types.
 /// @code
 /// std::variant<Circle, Square> shape;  // member
-/// xml::variant_field(&Shapes::shape, xml::alt<Circle>("circle"),
+/// xml::variantField(&Shapes::shape, xml::alt<Circle>("circle"),
 ///                                    xml::alt<Square>("square"));
 /// @endcode
-template <typename C, typename Member, typename... Ts>
-constexpr auto variant_field(Member C::* m, VariantAlt<Ts>... alts) {
-  return detail::make_variant_field(m, false, alts...);
+template<typename C, typename Member, typename... Ts>
+constexpr auto variantField(Member C::*m, VariantAlt<Ts>... alts) {
+  return detail::make_variantField(m, false, alts...);
 }
 
-/// @brief Like variant_field, but required: deserialize() fails with
+/// @brief Like variantField, but required: deserialize() fails with
 /// MissingRequiredField if no alternative is matched (xs:choice minOccurs>=1).
-template <typename C, typename Member, typename... Ts>
-constexpr auto required_variant_field(Member C::* m, VariantAlt<Ts>... alts) {
-  return detail::make_variant_field(m, true, alts...);
+template<typename C, typename Member, typename... Ts>
+constexpr auto requiredVariantField(Member C::*m, VariantAlt<Ts>... alts) {
+  return detail::make_variantField(m, true, alts...);
 }
 
 // Compile-time field introspection
 namespace detail {
 
 /// @brief Number of XML field descriptors declared for T.
-template <typename T>
-inline constexpr size_t field_count =
-    std::tuple_size_v<decltype(XmlMetadata<T>::fields)>;
+template<typename T>
+inline constexpr size_t FIELD_COUNT = std::tuple_size_v<decltype(XmlMetadata<T>::fields)>;
 
 /// @brief Index sequence over T's field descriptors, in declaration order.
-template <typename T>
-inline constexpr auto field_seq = std::make_index_sequence<field_count<T>>{};
+template<typename T>
+inline constexpr auto FIELD_SEQ = std::make_index_sequence<FIELD_COUNT<T>>{};
 
-/// @brief Builds a std::array<Elem, field_count<T>> by applying `proj` to each
+/// @brief Builds a std::array<Elem, FIELD_COUNT<T>> by applying `proj` to each
 /// field descriptor of T in declaration order. Elem is given explicitly so the
 /// result type is well-defined even for a zero-field type.
-template <typename Elem, typename T, typename Proj>
-constexpr auto map_fields(Proj proj) noexcept {
+template<typename Elem, typename T, typename Proj>
+constexpr auto mapFields(Proj proj) noexcept {
   return [&]<size_t... I>(std::index_sequence<I...>) {
-    return std::array<Elem, field_count<T>>{
-        {proj(std::get<I>(XmlMetadata<T>::fields))...}};
-  }(field_seq<T>);
+    return std::array<Elem, FIELD_COUNT<T>>{{proj(std::get<I>(XmlMetadata<T>::fields))...}};
+  }(FIELD_SEQ<T>);
 }
 
 // Variant fields carry per-alternative names/hashes rather than a single
 // xml_name/hash, so the per-field projections fall back to a sentinel for them;
 // they are matched via the separate variant tables, never these.
-template <typename T>
-constexpr auto make_field_hashes() noexcept {
-  return map_fields<FieldHash, T>([](const auto& f) -> FieldHash {
+template<typename T>
+constexpr auto makeFieldHashes() noexcept {
+  return mapFields<FieldHash, T>([](const auto& f) -> FieldHash {
     if constexpr (requires { f.hash; }) {
       return f.hash;
     } else {
@@ -924,9 +886,9 @@ constexpr auto make_field_hashes() noexcept {
   });
 }
 
-template <typename T>
-constexpr auto make_field_names() noexcept {
-  return map_fields<std::string_view, T>([](const auto& f) -> std::string_view {
+template<typename T>
+constexpr auto makeFieldNames() noexcept {
+  return mapFields<std::string_view, T>([](const auto& f) -> std::string_view {
     if constexpr (requires { f.xml_name; }) {
       return f.xml_name;
     } else {
@@ -935,22 +897,22 @@ constexpr auto make_field_names() noexcept {
   });
 }
 
-template <typename T>
-constexpr auto make_field_kinds() noexcept {
-  return map_fields<FieldKind, T>([](const auto& f) { return f.kind; });
+template<typename T>
+constexpr auto makeFieldKinds() noexcept {
+  return mapFields<FieldKind, T>([](const auto& f) { return f.kind; });
 }
 
 /// @brief Kinds matched against a child element by their own single name/hash
-/// in find_field_index (element/attribute/container/list). Value and Variant
+/// in findFieldIndex (element/attribute/container/list). Value and Variant
 /// fields are matched by other means and excluded here.
-constexpr bool is_named_field(FieldKind k) noexcept {
-  return k == FieldKind::Element || k == FieldKind::Attr ||
-         k == FieldKind::Container || k == FieldKind::List;
+constexpr bool isNamedField(FieldKind k) noexcept {
+  return k == FieldKind::Element || k == FieldKind::Attr || k == FieldKind::Container ||
+         k == FieldKind::List;
 }
 
-template <typename T>
-inline size_t find_field_index(FieldHash hash) noexcept {
-  constexpr auto hashes = make_field_hashes<T>();
+template<typename T>
+inline size_t findFieldIndex(FieldHash hash) noexcept {
+  constexpr auto hashes = makeFieldHashes<T>();
   const auto it = std::ranges::find(hashes, hash);
   return static_cast<size_t>(std::distance(hashes.begin(), it));
 }
@@ -961,14 +923,12 @@ inline size_t find_field_index(FieldHash hash) noexcept {
 /// needs, so the common N <= 64 case is a single word and compiles to the same
 /// code as a plain uint64_t; wider types simply use more words. A zero mask
 /// (any() == false) lets pull() skip all presence tracking entirely.
-template <size_t N>
+template<size_t N>
 struct FieldMask {
-  static constexpr size_t kWords = (N == 0) ? 1 : (N + 63) / 64;
-  std::array<uint64_t, kWords> words{};
+  static constexpr size_t WORDS = (N == 0) ? 1 : (N + 63) / 64;
+  std::array<uint64_t, WORDS> words{};
 
-  constexpr void set(size_t i) noexcept {
-    words[i / 64] |= uint64_t{1} << (i % 64);
-  }
+  constexpr auto set(size_t i) noexcept -> void { words[i / 64] |= uint64_t{1} << (i % 64); }
   [[nodiscard]] constexpr bool any() const noexcept {
     for (uint64_t w : words) {
       if (w != 0) {
@@ -978,9 +938,8 @@ struct FieldMask {
     return false;
   }
   /// @brief True when every bit set in `required` is also set in *this.
-  [[nodiscard]] constexpr bool contains_all(
-      const FieldMask& required) const noexcept {
-    for (size_t i = 0; i < kWords; ++i) {
+  [[nodiscard]] constexpr bool contains_all(const FieldMask& required) const noexcept {
+    for (size_t i = 0; i < WORDS; ++i) {
       if ((words[i] & required.words[i]) != required.words[i]) {
         return false;
       }
@@ -991,67 +950,61 @@ struct FieldMask {
 };
 
 /// @brief Required/parsed presence mask type for T, sized to its field count.
-template <typename T>
-using RequiredMaskT = FieldMask<field_count<T>>;
+template<typename T>
+using RequiredMaskT = FieldMask<FIELD_COUNT<T>>;
 
 /// @brief Bit i is set when field i of XmlMetadata<T> is marked required.
 /// Drives the parsed-vs-required check in Parser::pull(). A zero mask (the
 /// default, since fields are optional unless opted in) lets pull() skip all
 /// presence tracking, so types without required fields pay nothing.
-template <typename T>
-constexpr auto make_required_mask() noexcept -> RequiredMaskT<T> {
+template<typename T>
+constexpr auto makeRequiredMask() noexcept -> RequiredMaskT<T> {
   RequiredMaskT<T> mask{};
   [&]<size_t... I>(std::index_sequence<I...>) {
-    ((void)(std::get<I>(XmlMetadata<T>::fields).required &&
-            (mask.set(I), true)),
-     ...);
-  }(field_seq<T>);
+    ((void)(std::get<I>(XmlMetadata<T>::fields).required && (mask.set(I), true)), ...);
+  }(FIELD_SEQ<T>);
   return mask;
 }
 
 /// @brief True for the kinds matched against child element tags in pull()'s
 /// element loop: child elements, containers, and list elements (not attributes,
 /// not the nameless value field).
-constexpr bool is_element_kind(FieldKind k) noexcept {
-  return k == FieldKind::Element || k == FieldKind::Container ||
-         k == FieldKind::List;
+constexpr bool isElementKind(FieldKind k) noexcept {
+  return k == FieldKind::Element || k == FieldKind::Container || k == FieldKind::List;
 }
 
 /// @brief True if any field of T is an attribute field.
-template <typename T>
-constexpr bool has_attr_fields() noexcept {
-  constexpr auto kinds = make_field_kinds<T>();
-  return std::ranges::any_of(kinds,
-                             [](FieldKind k) { return k == FieldKind::Attr; });
+template<typename T>
+constexpr bool has_attrFields() noexcept {
+  constexpr auto kinds = makeFieldKinds<T>();
+  return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Attr; });
 }
 
 /// @brief True if any field of T is a child element or container field.
-template <typename T>
-constexpr bool has_element_fields() noexcept {
-  constexpr auto kinds = make_field_kinds<T>();
-  return std::ranges::any_of(kinds, is_element_kind);
+template<typename T>
+constexpr bool hasElementFields() noexcept {
+  constexpr auto kinds = makeFieldKinds<T>();
+  return std::ranges::any_of(kinds, isElementKind);
 }
 
 /// @brief True if T declares a value field (binds the element's own text).
-template <typename T>
-constexpr bool has_value_field() noexcept {
-  constexpr auto kinds = make_field_kinds<T>();
-  return std::ranges::any_of(kinds,
-                             [](FieldKind k) { return k == FieldKind::Value; });
+template<typename T>
+constexpr bool has_valueField() noexcept {
+  constexpr auto kinds = makeFieldKinds<T>();
+  return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Value; });
 }
 
 /// @brief True if T declares a variant (xs:choice) field.
-template <typename T>
-constexpr bool has_variant_fields() noexcept {
-  constexpr auto kinds = make_field_kinds<T>();
-  return std::ranges::any_of(
-      kinds, [](FieldKind k) { return k == FieldKind::Variant; });
+template<typename T>
+constexpr bool has_variantFields() noexcept {
+  constexpr auto kinds = makeFieldKinds<T>();
+  return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Variant; });
 }
 
 /// @brief Index of T's first value field (only meaningful when one exists).
-template <typename T>
-constexpr auto value_field_index() noexcept -> size_t {
-  constexpr auto kinds = make_field_kinds<T>();
+template<typename T>
+constexpr auto valueField_index() noexcept -> size_t {
+  constexpr auto kinds = makeFieldKinds<T>();
   for (size_t i = 0; i < kinds.size(); ++i) {
     if (kinds[i] == FieldKind::Value) {
       return i;
@@ -1061,11 +1014,11 @@ constexpr auto value_field_index() noexcept -> size_t {
 }
 
 /// @brief Index of the first child-element field, or 0 if none.
-template <typename T>
-constexpr auto first_elem_index() noexcept -> size_t {
-  constexpr auto kinds = make_field_kinds<T>();
+template<typename T>
+constexpr auto firstElemIndex() noexcept -> size_t {
+  constexpr auto kinds = makeFieldKinds<T>();
   for (size_t i = 0; i < kinds.size(); ++i) {
-    if (is_element_kind(kinds[i])) {
+    if (isElementKind(kinds[i])) {
       return i;
     }
   }
@@ -1075,16 +1028,16 @@ constexpr auto first_elem_index() noexcept -> size_t {
 /// @brief Cyclic successor table over child-element fields: entry i holds
 /// the index of the next element/container field after i (itself if it is
 /// the only one). Drives the document-order hint in Parser::pull().
-template <typename T>
-constexpr auto make_next_elem_table() noexcept {
-  constexpr auto kinds = make_field_kinds<T>();
+template<typename T>
+constexpr auto makeNextElemTable() noexcept {
+  constexpr auto kinds = makeFieldKinds<T>();
   constexpr size_t n = kinds.size();
   std::array<size_t, (n != 0 ? n : 1)> next{};
   for (size_t i = 0; i < n; ++i) {
     next[i] = i;
     for (size_t step = 1; step <= n; ++step) {
       const size_t j = (i + step) % n;
-      if (is_element_kind(kinds[j])) {
+      if (isElementKind(kinds[j])) {
         next[i] = j;
         break;
       }
@@ -1106,61 +1059,57 @@ struct VariantMatcher {
 
 /// @brief Total number of variant alternatives across all of T's variant
 /// fields.
-template <typename T>
-constexpr auto variant_matcher_count() noexcept -> size_t {
+template<typename T>
+constexpr auto variantMatcherCount() noexcept -> size_t {
   size_t n = 0;
   [&]<size_t... I>(std::index_sequence<I...>) {
-    (
-        [&] {
-          constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
-          if constexpr (f.kind == FieldKind::Variant) {
-            n += f.names.size();
-          }
-        }(),
-        ...);
-  }(field_seq<T>);
+    ([&] {
+      constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
+      if constexpr (f.kind == FieldKind::Variant) {
+        n += f.names.size();
+      }
+    }(), ...);
+  }(FIELD_SEQ<T>);
   return n;
 }
 
 /// @brief One matcher per variant alternative, in declaration then alternative
-/// order. Indexes the handler table built by build_variant_dispatch.
-template <typename T>
-constexpr auto make_variant_matchers() noexcept {
-  std::array<VariantMatcher, variant_matcher_count<T>()> out{};
+/// order. Indexes the handler table built by buildVariantDispatch.
+template<typename T>
+constexpr auto makeVariantMatchers() noexcept {
+  std::array<VariantMatcher, variantMatcherCount<T>()> out{};
   size_t w = 0;
   [&]<size_t... I>(std::index_sequence<I...>) {
-    (
-        [&] {
-          constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
-          if constexpr (f.kind == FieldKind::Variant) {
-            for (size_t a = 0; a < f.names.size(); ++a) {
-              out[w++] = {f.hashes[a], I, a};
-            }
-          }
-        }(),
-        ...);
-  }(field_seq<T>);
+    ([&] {
+      constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
+      if constexpr (f.kind == FieldKind::Variant) {
+        for (size_t a = 0; a < f.names.size(); ++a) {
+          out[w++] = {f.hashes[a], I, a};
+        }
+      }
+    }(), ...);
+  }(FIELD_SEQ<T>);
   return out;
 }
 
 // Compile-time check that no two element names collide under FNV-1a: among the
 // named (element/attribute/container) fields, and across variant alternatives
 // (which must be unique among themselves and disjoint from named fields).
-template <typename T>
-constexpr bool all_names_unique() noexcept {
-  constexpr auto hashes = make_field_hashes<T>();
-  constexpr auto kinds = make_field_kinds<T>();
+template<typename T>
+constexpr bool allNamesUnique() noexcept {
+  constexpr auto hashes = makeFieldHashes<T>();
+  constexpr auto kinds = makeFieldKinds<T>();
   for (size_t i = 0; i < hashes.size(); ++i) {
-    if (!is_named_field(kinds[i])) {
+    if (!isNamedField(kinds[i])) {
       continue;
     }
     for (size_t j = i + 1; j < hashes.size(); ++j) {
-      if (is_named_field(kinds[j]) && hashes[i] == hashes[j]) {
+      if (isNamedField(kinds[j]) && hashes[i] == hashes[j]) {
         return false;
       }
     }
   }
-  constexpr auto vm = make_variant_matchers<T>();
+  constexpr auto vm = makeVariantMatchers<T>();
   for (size_t i = 0; i < vm.size(); ++i) {
     for (size_t j = i + 1; j < vm.size(); ++j) {
       if (vm[i].hash == vm[j].hash) {
@@ -1168,7 +1117,7 @@ constexpr bool all_names_unique() noexcept {
       }
     }
     for (size_t j = 0; j < hashes.size(); ++j) {
-      if (is_named_field(kinds[j]) && hashes[j] == vm[i].hash) {
+      if (isNamedField(kinds[j]) && hashes[j] == vm[i].hash) {
         return false;
       }
     }
@@ -1178,23 +1127,20 @@ constexpr bool all_names_unique() noexcept {
 
 // Compile-time check that no std::optional member is marked required: an
 // optional field is inherently optional, so the combination is rejected.
-template <typename T>
-constexpr bool optionals_not_required() noexcept {
+template<typename T>
+constexpr bool optionalsNotRequired() noexcept {
   bool ok = true;
   [&]<size_t... I>(std::index_sequence<I...>) {
-    (
-        [&] {
-          constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
-          using M =
-              std::remove_cvref_t<decltype(std::declval<T&>().*(f.member))>;
-          if constexpr (is_optional<M>::value) {
-            if (f.required) {
-              ok = false;
-            }
-          }
-        }(),
-        ...);
-  }(field_seq<T>);
+    ([&] {
+      constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
+      using M = std::remove_cvref_t<decltype(std::declval<T&>().*(f.member))>;
+      if constexpr (is_optional<M>::value) {
+        if (f.required) {
+          ok = false;
+        }
+      }
+    }(), ...);
+  }(FIELD_SEQ<T>);
   return ok;
 }
 
@@ -1204,18 +1150,17 @@ constexpr bool optionals_not_required() noexcept {
 /// std::string field. Reference expansion and line-ending normalization only
 /// run on this path; std::string_view fields stay raw and zero-copy.
 enum class NormMode : uint8_t {
-  Text,  ///< Element text: expand references, normalize CR/CRLF -> LF.
-  Attr,  ///< Attribute value: as Text, plus literal whitespace -> single space.
+  Text,   ///< Element text: expand references, normalize CR/CRLF -> LF.
+  Attr,   ///< Attribute value: as Text, plus literal whitespace -> single space.
   CData,  ///< CDATA content: normalize line endings only; '&' stays literal.
 };
 
 /// @brief Appends the UTF-8 encoding of code point cp to out. Returns false if
 /// cp is not a valid XML character (out of range, a surrogate, or a forbidden
 /// control character), per the Char production [2].
-inline bool encode_utf8(std::string& out, uint32_t cp) {
-  const bool valid =
-      cp == 0x9 || cp == 0xA || cp == 0xD || (cp >= 0x20 && cp <= 0xD7FF) ||
-      (cp >= 0xE000 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0x10FFFF);
+inline bool encodeUtf8(std::string& out, uint32_t cp) {
+  const bool valid = cp == 0x9 || cp == 0xA || cp == 0xD || (cp >= 0x20 && cp <= 0xD7FF) ||
+                     (cp >= 0xE000 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0x10FFFF);
   if (!valid) {
     return false;
   }
@@ -1241,8 +1186,7 @@ inline bool encode_utf8(std::string& out, uint32_t cp) {
 /// out and advancing i past the terminating ';'. Handles the five predefined
 /// entities and decimal/hex character references; any other name is an
 /// UndefinedEntity (no DTD is processed).
-inline ErrorCode expand_reference(std::string& out, std::string_view s,
-                                  size_t& i) {
+inline ErrorCode expandReference(std::string& out, std::string_view s, size_t& i) {
   const size_t semi = s.find(';', i + 1);
   if (semi == std::string_view::npos) {
     return ErrorCode::InvalidCharRef;  // bare '&' / unterminated reference
@@ -1261,8 +1205,7 @@ inline ErrorCode expand_reference(std::string& out, std::string_view s,
     uint32_t cp = 0;
     const char* const last = digits.data() + digits.size();
     const auto r = std::from_chars(digits.data(), last, cp, base);
-    if (digits.empty() || r.ec != std::errc() || r.ptr != last ||
-        !encode_utf8(out, cp)) {
+    if (digits.empty() || r.ec != std::errc() || r.ptr != last || !encodeUtf8(out, cp)) {
       return ErrorCode::InvalidCharRef;
     }
   } else if (body == "amp") {
@@ -1287,7 +1230,7 @@ inline ErrorCode expand_reference(std::string& out, std::string_view s,
 /// the marked bytes need per-character handling: '&' (reference expansion, not
 /// in CData), '\r' (EOL folding, all modes), and literal '\n'/'\t' (folded to a
 /// space, Attr only).
-inline const std::array<bool, 256>& norm_special_table(NormMode mode) noexcept {
+inline const std::array<bool, 256>& normSpecialTable(NormMode mode) noexcept {
   constexpr auto make = [](bool amp, bool ws) {
     std::array<bool, 256> t{};
     t[static_cast<unsigned char>('\r')] = true;
@@ -1320,9 +1263,8 @@ inline const std::array<bool, 256>& norm_special_table(NormMode mode) noexcept {
 /// Ordinary bytes (the overwhelming majority of typical content) are copied in
 /// bulk runs via std::string::append; only reference starts and line-ending /
 /// whitespace bytes are handled one at a time.
-inline ErrorCode append_normalized(std::string& out, std::string_view raw,
-                                   NormMode mode) {
-  const std::array<bool, 256>& special = norm_special_table(mode);
+inline ErrorCode appendNormalized(std::string& out, std::string_view raw, NormMode mode) {
+  const std::array<bool, 256>& special = normSpecialTable(mode);
   const char* const base = raw.data();
   const size_t n = raw.size();
   out.reserve(out.size() + n);
@@ -1342,11 +1284,10 @@ inline ErrorCode append_normalized(std::string& out, std::string_view raw,
     }
     const char c = base[i];
     if (c == '&') {  // marked special only for Text/Attr
-      if (const ErrorCode ec = expand_reference(out, raw, i);
-          ec != ErrorCode::None) {
+      if (const ErrorCode ec = expandReference(out, raw, i); ec != ErrorCode::None) {
         return ec;
       }
-      continue;  // expand_reference advanced i past ';'
+      continue;  // expandReference advanced i past ';'
     }
     if (c == '\r') {  // EOL normalization: CR and CRLF collapse to one LF.
       out.push_back(mode == NormMode::Attr ? ' ' : '\n');
@@ -1391,17 +1332,17 @@ struct ParserOptions {
   bool strict = false;
 };
 
-template <ParserOptions Opts = ParserOptions{}>
+template<ParserOptions Opts = ParserOptions{}>
 class BasicParser {
  public:
   /// @brief Maximum element nesting depth (descent and skip) before
   /// ErrorCode::DepthExceeded. Guards against stack exhaustion on hostile
   /// input.
-  static constexpr int kMaxDepth = 256;
+  static constexpr int MAX_DEPTH = 256;
 
   /// @brief Maximum number of attributes accepted on a single start-tag before
   /// ErrorCode::TooManyAttributes. Bounds attribute-storage amplification.
-  static constexpr size_t kMaxAttributesPerElement = 1U << 16;
+  static constexpr size_t MAX_ATTRIBUTES_PER_ELEMENT = 1U << 16;
 
   /// @brief Mirrors ParserOptions::normalize for this instantiation. When set
   /// (NormalizingParser), owning std::string fields receive normalized,
@@ -1410,19 +1351,19 @@ class BasicParser {
   /// attribute whitespace is normalized to spaces. std::string_view fields are
   /// always raw zero-copy regardless. Off by default (Parser), which compiles
   /// the normalization paths away entirely.
-  static constexpr bool kNormalize = Opts.normalize;
+  static constexpr bool NORMALIZE = Opts.normalize;
 
   /// @brief Mirrors ParserOptions::strict. When set (StrictParser), the parser
   /// enforces well-formedness constraints the fast path otherwise skips for
   /// speed: "]]>" in character data, '<' in attribute values, and duplicate
   /// attribute names are rejected. Off by default (Parser); the checks compile
   /// away entirely.
-  static constexpr bool kStrict = Opts.strict;
+  static constexpr bool STRICT = Opts.strict;
 
   /// @brief Constructs a parser over src. src must outlive the Parser.
   explicit BasicParser(std::string_view src) noexcept
       : src_(src), cur_(src.data()), end_(src.data() + src.size()) {
-    skip_bom();
+    skipBom();
   }
 
   BasicParser(const BasicParser&) = delete;
@@ -1430,34 +1371,31 @@ class BasicParser {
   BasicParser(BasicParser&&) noexcept = default;
   auto operator=(BasicParser&&) noexcept -> BasicParser& = default;
 
-  template <ParserOptions O, typename T>
-  friend auto deserialize(BasicParser<O>& parser, std::string_view root_name,
-                          T& object) -> bool;
+  template<ParserOptions O, typename T>
+  friend auto deserialize(BasicParser<O>& parser, std::string_view root_name, T& object) -> bool;
 
   /// @brief Resets the parser to the beginning of the source string.
-  void reset() {
+  auto reset() -> void {
     cur_ = src_.data();
     end_ = src_.data() + src_.size();
     has_peek_ = false;
     attributes_.clear();
-    error_code_ = ErrorCode::None;
+    errorCode_ = ErrorCode::None;
     last_self_closing_ = false;
-    skip_bom();
+    skipBom();
   }
 
   /// @brief Reason the most recent parse failed, or None if it succeeded.
-  [[nodiscard]] auto error_code() const noexcept -> ErrorCode {
-    return error_code_;
-  }
+  [[nodiscard]] auto errorCode() const noexcept -> ErrorCode { return errorCode_; }
 
  private:
-  static constexpr auto kSpaceTable = [] {
+  static constexpr auto SPACE_TABLE = [] {
     std::array<bool, 256> t{false};
     t[' '] = t['\t'] = t['\n'] = t['\r'] = true;
     return t;
   }();
 
-  static constexpr auto kNameStartTable = [] {
+  static constexpr auto NAME_START_TABLE = [] {
     std::array<bool, 256> t{false};
     for (unsigned i = 'a'; i <= 'z'; ++i) {
       t[i] = true;
@@ -1472,8 +1410,8 @@ class BasicParser {
     return t;
   }();
 
-  static constexpr auto kNameCharTable = [] {
-    std::array<bool, 256> t = kNameStartTable;
+  static constexpr auto NAME_CHAR_TABLE = [] {
+    std::array<bool, 256> t = NAME_START_TABLE;
     for (unsigned i = '0'; i <= '9'; ++i) {
       t[i] = true;
     }
@@ -1484,31 +1422,31 @@ class BasicParser {
   [[nodiscard]] auto next() -> const Token*;
   [[nodiscard]] auto peek() -> const Token*;
 
-  template <typename T>
+  template<typename T>
   [[nodiscard]] auto attr(FieldHash hash, T& out, size_t& pos) -> bool;
 
-  [[nodiscard]] auto begin_element(std::string_view expected_name) -> bool;
-  [[nodiscard]] auto end_element(std::string_view expected_name) -> bool;
+  [[nodiscard]] auto beginElement(std::string_view expected_name) -> bool;
+  [[nodiscard]] auto endElement(std::string_view expected_name) -> bool;
 
-  template <typename T>
-  static auto parse_numeric(std::string_view text, T& out) noexcept -> bool;
+  template<typename T>
+  static auto parseNumeric(std::string_view text, T& out) noexcept -> bool;
 
   // Parse a non-string scalar (arithmetic/bool, a mapped enum, or a custom
   // value type such as a date) from text.
-  template <typename T>
-  static auto parse_scalar(std::string_view text, T& out) -> bool {
+  template<typename T>
+  static auto parseScalar(std::string_view text, T& out) -> bool {
     if constexpr (XmlEnum<T>) {
-      return detail::enum_from_string(text, out);
+      return detail::enumFromString(text, out);
     } else if constexpr (XmlCustomValue<T>) {
       return XmlValueTraits<T>::parse(text, out);
     } else {
-      return parse_numeric(text, out);
+      return parseNumeric(text, out);
     }
   }
 
-  // Error code reported when parse_scalar<T> fails on element text.
-  template <typename T>
-  static constexpr auto scalar_error() noexcept -> ErrorCode {
+  // Error code reported when parseScalar<T> fails on element text.
+  template<typename T>
+  static constexpr auto scalarError() noexcept -> ErrorCode {
     if constexpr (XmlEnum<T>) {
       return ErrorCode::InvalidEnumValue;
     } else if constexpr (XmlCustomValue<T>) {
@@ -1518,23 +1456,20 @@ class BasicParser {
     }
   }
 
-  [[nodiscard]] auto at_end() const noexcept -> bool { return cur_ >= end_; }
+  [[nodiscard]] auto atEnd() const noexcept -> bool { return cur_ >= end_; }
 
-  [[nodiscard]] auto peek_char() const noexcept -> char {
-    return at_end() ? '\0' : *cur_;
-  }
+  [[nodiscard]] auto peekChar() const noexcept -> char { return atEnd() ? '\0' : *cur_; }
 
-  void skip_whitespace() noexcept {
-    while (!at_end() && is_space(*cur_)) [[likely]] {
+  auto skipWhitespace() noexcept -> void {
+    while (!atEnd() && isSpace(*cur_)) [[likely]] {
       ++cur_;
     }
   }
 
   // Skips a UTF-8 BOM (\xEF\xBB\xBF) at the current position if present.
-  void skip_bom() noexcept {
+  auto skipBom() noexcept -> void {
     if (end_ - cur_ >= 3 && static_cast<uint8_t>(cur_[0]) == 0xEF &&
-        static_cast<uint8_t>(cur_[1]) == 0xBB &&
-        static_cast<uint8_t>(cur_[2]) == 0xBF) {
+        static_cast<uint8_t>(cur_[1]) == 0xBB && static_cast<uint8_t>(cur_[2]) == 0xBF) {
       cur_ += 3;
     }
   }
@@ -1543,59 +1478,74 @@ class BasicParser {
   // cur_ must point to the character immediately after '<!'. Handles internal
   // subsets ('[' ... ']'), quoted literals, and nested comments so that '>'
   // characters inside those contexts do not terminate the scan prematurely.
-  void skip_bang_decl() noexcept {
+  auto skipBangDecl() noexcept -> void {
     int bracket_depth = 0;
     while (cur_ < end_) {
       const char c = *cur_++;
       switch (c) {
-        case '[': ++bracket_depth; break;
-        case ']': if (bracket_depth > 0) --bracket_depth; break;
-        case '>': if (bracket_depth == 0) return; break;
-        case '"': case '\'': while (cur_ < end_ && *cur_++ != c) {} break;
+        case '[':
+          ++bracket_depth;
+          break;
+        case ']':
+          if (bracket_depth > 0) {
+            --bracket_depth;
+          }
+          break;
+        case '>':
+          if (bracket_depth == 0) {
+            return;
+          }
+          break;
+        case '"':
+        case '\'':
+          while (cur_ < end_ && *cur_++ != c) {
+          }
+          break;
         case '<':
           if (cur_ + 2 < end_ && cur_[0] == '!' && cur_[1] == '-' && cur_[2] == '-') {
             cur_ += 3;
-            skip_past("-->");
+            skipPast("-->");
           } else if (cur_ < end_ && *cur_ == '?') {
             ++cur_;
-            skip_past("?>");
+            skipPast("?>");
           }
           break;
-        default: break;
+        default:
+          break;
       }
     }
     cur_ = end_;
   }
 
-  [[nodiscard]] static constexpr auto is_space(char c) noexcept -> bool {
-    return kSpaceTable[static_cast<unsigned char>(c)];
+  [[nodiscard]] static constexpr auto isSpace(char c) noexcept -> bool {
+    return SPACE_TABLE[static_cast<unsigned char>(c)];
   }
-  [[nodiscard]] static constexpr auto is_name_start(char c) noexcept -> bool {
-    return kNameStartTable[static_cast<unsigned char>(c)];
+  [[nodiscard]] static constexpr auto isNameStart(char c) noexcept -> bool {
+    return NAME_START_TABLE[static_cast<unsigned char>(c)];
   }
-  [[nodiscard]] static constexpr auto is_name_char(char c) noexcept -> bool {
-    return kNameCharTable[static_cast<unsigned char>(c)];
+  [[nodiscard]] static constexpr auto isNameChar(char c) noexcept -> bool {
+    return NAME_CHAR_TABLE[static_cast<unsigned char>(c)];
   }
 
-  void parse_name(std::string_view& prefix, std::string_view& local,
-                  FieldHash& local_hash) noexcept {
+  auto parseName(std::string_view& prefix, std::string_view& local,
+                 FieldHash& local_hash) noexcept -> void {
     prefix = {};
-    if (at_end() || !is_name_start(*cur_)) [[unlikely]] {
+    if (atEnd() || !isNameStart(*cur_)) [[unlikely]] {
       local = {};
-      local_hash = detail::kFnvOffset;
+      local_hash = detail::FNV_OFFSET;
       return;
     }
     const char* start = cur_;
     const char* local_start = start;
-    FieldHash hash = detail::kFnvOffset;
+    FieldHash hash = detail::FNV_OFFSET;
 
-    while (!at_end() && is_name_char(*cur_)) {
+    while (!atEnd() && isNameChar(*cur_)) {
       if (*cur_ == ':') {
         prefix = {start, static_cast<size_t>(cur_ - start)};
         local_start = cur_ + 1;
-        hash = detail::kFnvOffset;  // reset; hash only the local part
+        hash = detail::FNV_OFFSET;  // reset; hash only the local part
       } else {
-        hash = detail::fnv1a_step(hash, static_cast<unsigned char>(*cur_));
+        hash = detail::fnv1aStep(hash, static_cast<unsigned char>(*cur_));
       }
       ++cur_;
     }
@@ -1604,7 +1554,7 @@ class BasicParser {
   }
 
   [[nodiscard]] auto expect(char c) noexcept -> bool {
-    if (at_end() || *cur_ != c) {
+    if (atEnd() || *cur_ != c) {
       return false;
     }
     ++cur_;
@@ -1612,27 +1562,25 @@ class BasicParser {
   }
 
   [[nodiscard]] auto starts_with(std::string_view s) const noexcept -> bool {
-    return std::string_view{cur_, static_cast<size_t>(end_ - cur_)}.starts_with(
-        s);
+    return std::string_view{cur_, static_cast<size_t>(end_ - cur_)}.starts_with(s);
   }
 
   // Records the first error (later cascading failures don't overwrite it) and
   // flags the parser stopped. Returns false so callers can `return fail(code)`.
   auto fail(ErrorCode code) noexcept -> bool {
     if (!error()) [[likely]] {
-      error_code_ = code;
+      errorCode_ = code;
     }
     return false;
   }
 
   // Assigns one text run to a string field: normalized into an owning
   // std::string under NormalizingParser, else the raw zero-copy view.
-  template <typename T>
-  auto assign_value(T& out, std::string_view text) -> bool {
-    if constexpr (kNormalize && std::same_as<T, std::string>) {
+  template<typename T>
+  auto assignValue(T& out, std::string_view text) -> bool {
+    if constexpr (NORMALIZE && std::same_as<T, std::string>) {
       out.clear();
-      const ErrorCode ec =
-          detail::append_normalized(out, text, detail::NormMode::Text);
+      const ErrorCode ec = detail::appendNormalized(out, text, detail::NormMode::Text);
       return ec == ErrorCode::None ? true : fail(ec);
     } else {
       out = text;
@@ -1643,15 +1591,14 @@ class BasicParser {
   // Assigns a matched attribute's value to a leaf member (string normalized
   // when applicable, otherwise a scalar/enum/custom-value parse), or splits an
   // xs:list value into a container member.
-  template <typename U>
-  auto assign_attr_value(U& out, const Attribute& a) -> bool {
+  template<typename U>
+  auto assignAttrValue(U& out, const Attribute& a) -> bool {
     if constexpr (XmlListContainer<U>) {
-      return split_into(out, a.value);
+      return splitInto(out, a.value);
     } else if constexpr (XmlStringLike<U>) {
-      if constexpr (kNormalize && std::same_as<U, std::string>) {
+      if constexpr (NORMALIZE && std::same_as<U, std::string>) {
         out.clear();
-        const ErrorCode ec =
-            detail::append_normalized(out, a.value, detail::NormMode::Attr);
+        const ErrorCode ec = detail::appendNormalized(out, a.value, detail::NormMode::Attr);
         // On a bad reference, fail() records the code; the attribute reports
         // "not matched" and pull() converts the recorded error into a hard fail
         // right after attribute dispatch.
@@ -1661,35 +1608,35 @@ class BasicParser {
         return true;
       }
     } else {
-      return parse_scalar(a.value, out);
+      return parseScalar(a.value, out);
     }
   }
 
   // Assigns one whitespace-split list token to a container slot: a string
   // assignment for string-like items, else a scalar/enum/custom-value parse.
-  template <typename V>
-  auto assign_token(V& out, std::string_view tok) -> bool {
+  template<typename V>
+  auto assignToken(V& out, std::string_view tok) -> bool {
     if constexpr (XmlStringLike<V>) {
-      return assign_value(out, tok);
+      return assignValue(out, tok);
     } else {
-      return parse_scalar(tok, out) ? true : fail(scalar_error<V>());
+      return parseScalar(tok, out) ? true : fail(scalarError<V>());
     }
   }
 
   // Splits an xs:list value on XML whitespace and parses each token into the
   // container: dynamic containers grow per token; fixed containers fill
-  // sequentially and skip overflow (as arr_field does).
-  template <typename Container>
-  auto split_into(Container& out, std::string_view text) -> bool {
+  // sequentially and skip overflow (as arrField does).
+  template<typename Container>
+  auto splitInto(Container& out, std::string_view text) -> bool {
     using Traits = XmlContainerTraits<Container>;
     size_t i = 0;
     size_t fill = 0;
     while (i < text.size()) {
-      while (i < text.size() && is_space(text[i])) {
+      while (i < text.size() && isSpace(text[i])) {
         ++i;
       }
       const size_t start = i;
-      while (i < text.size() && !is_space(text[i])) {
+      while (i < text.size() && !isSpace(text[i])) {
         ++i;
       }
       if (i == start) {
@@ -1698,14 +1645,14 @@ class BasicParser {
       const std::string_view tok = text.substr(start, i - start);
       if constexpr (XmlFixedContainer<Container>) {
         if (fill < Traits::capacity) {
-          if (!assign_token(Traits::at(out, fill), tok)) {
+          if (!assignToken(Traits::at(out, fill), tok)) {
             return false;
           }
           ++fill;
         }
       } else {
         auto& slot = Traits::emplace(out);
-        if (!assign_token(slot, tok)) {
+        if (!assignToken(slot, tok)) {
           Traits::pop(out);
           return false;
         }
@@ -1715,68 +1662,66 @@ class BasicParser {
   }
 
   // Reads a list element's text, then splits it into the container member.
-  // Mirrors read_chardata's raw branch but tokenizes the value.
-  template <typename Container>
-  auto read_list(Container& out, std::string_view expected_name) -> bool {
+  // Mirrors readChardata's raw branch but tokenizes the value.
+  template<typename Container>
+  auto readList(Container& out, std::string_view expected_name) -> bool {
     std::string_view text;
     while (const Token* tok = peek()) {
       if (tok->type == TokenType::Text || tok->type == TokenType::CData) {
         text = tok->data;
-        consume_peeked();
+        consumePeeked();
       } else if (tok->type == TokenType::ElementClose) {
         if (tok->name != expected_name) {
           return fail(ErrorCode::ElementMismatch);
         }
-        consume_peeked();
-        return split_into(out, text);
+        consumePeeked();
+        return splitInto(out, text);
       } else if (tok->type == TokenType::Error) {
         return false;
       } else {
-        consume_peeked();
+        consumePeeked();
       }
     }
     return fail(ErrorCode::UnexpectedEof);
   }
 
-  // Validates and consumes a read_chardata closing tag. ConsumeClose drives the
-  // two callers: value() consumes + name-checks the close; the value_field path
-  // leaves it peeked for read_element's end_element().
-  template <bool ConsumeClose>
-  auto finish_chardata(const Token& close, std::string_view expected_name)
-      -> bool {
+  // Validates and consumes a readChardata closing tag. ConsumeClose drives the
+  // two callers: value() consumes + name-checks the close; the valueField path
+  // leaves it peeked for readElement's endElement().
+  template<bool ConsumeClose>
+  auto finishChardata(const Token& close, std::string_view expected_name) -> bool {
     if constexpr (ConsumeClose) {
       if (close.name != expected_name) {
         return fail(ErrorCode::ElementMismatch);
       }
-      consume_peeked();
+      consumePeeked();
     }
     return true;
   }
 
   // Reads an element's character data into a leaf member: normalized into an
   // owning std::string, the raw last run into a string_view, or parsed for a
-  // numeric/enum/custom value. Stops at the close tag (see finish_chardata).
-  template <bool ConsumeClose, typename M>
-  auto read_chardata(M& out, std::string_view expected_name) -> bool {
-    if constexpr (kNormalize && std::same_as<M, std::string>) {
+  // numeric/enum/custom value. Stops at the close tag (see finishChardata).
+  template<bool ConsumeClose, typename M>
+  auto readChardata(M& out, std::string_view expected_name) -> bool {
+    if constexpr (NORMALIZE && std::same_as<M, std::string>) {
       out.clear();
       while (const Token* tok = peek()) {
         if (tok->type == TokenType::Text) {
-          const ErrorCode ec =
-              detail::append_normalized(out, tok->data, detail::NormMode::Text);
+          const ErrorCode ec = detail::appendNormalized(out, tok->data, detail::NormMode::Text);
           if (ec != ErrorCode::None) {
             return fail(ec);
           }
-          consume_peeked();
+          consumePeeked();
         } else if (tok->type == TokenType::CData) {
-          detail::append_normalized(out, tok->data, detail::NormMode::CData);
-          consume_peeked();
+          detail::appendNormalized(out, tok->data, detail::NormMode::CData);
+          consumePeeked();
         } else if (tok->type == TokenType::ElementClose) {
-          return finish_chardata<ConsumeClose>(*tok, expected_name);
+          return finishChardata<ConsumeClose>(*tok, expected_name);
         } else if (tok->type == TokenType::Error) {
           return false;
         } else {
-          consume_peeked();
+          consumePeeked();
         }
       }
       return fail(ErrorCode::UnexpectedEof);
@@ -1785,80 +1730,77 @@ class BasicParser {
       while (const Token* tok = peek()) {
         if (tok->type == TokenType::Text || tok->type == TokenType::CData) {
           text = tok->data;
-          consume_peeked();
+          consumePeeked();
         } else if (tok->type == TokenType::ElementClose) {
-          if (!finish_chardata<ConsumeClose>(*tok, expected_name)) {
+          if (!finishChardata<ConsumeClose>(*tok, expected_name)) {
             return false;
           }
           if constexpr (XmlStringLike<M>) {
             out = text;
             return true;
           } else {
-            return parse_scalar(text, out) ? true : fail(scalar_error<M>());
+            return parseScalar(text, out) ? true : fail(scalarError<M>());
           }
         } else if (tok->type == TokenType::Error) {
           return false;
         } else {
-          consume_peeked();
+          consumePeeked();
         }
       }
       return fail(ErrorCode::UnexpectedEof);
     }
   }
 
-  auto make_error(Token& token, ErrorCode code) noexcept -> bool {
+  auto makeError(Token& token, ErrorCode code) noexcept -> bool {
     token.type = TokenType::Error;
     return fail(code);
   }
 
   /// @brief Whether the parser has encountered an error.
-  /// @return true if `error_code_` is not `ErrorCode::None`.
-  auto error() const noexcept -> bool { return error_code_ != ErrorCode::None; }
+  /// @return true if `errorCode_` is not `ErrorCode::None`.
+  auto error() const noexcept -> bool { return errorCode_ != ErrorCode::None; }
 
   // Record self-closing state after consuming an ElementOpen.
-  void update_self_closing() noexcept {
+  auto updateSelfClosing() noexcept -> void {
     if (current_token_.type == TokenType::ElementOpen) {
       last_self_closing_ = current_token_.self_closing;
     }
   }
 
-  void consume() { std::ignore = next(); }
+  auto consume() -> void { std::ignore = next(); }
 
   // Branch-free consume when we know a peek() just succeeded.
-  void consume_peeked() noexcept {
+  auto consumePeeked() noexcept -> void {
     has_peek_ = false;
-    update_self_closing();
+    updateSelfClosing();
   }
 
   // Consume the peeked element and skip its entire subtree.
-  void skip_current() {
-    consume_peeked();
-    skip_element();
+  auto skipCurrent() -> void {
+    consumePeeked();
+    skipElement();
   }
 
-  auto parse_markup(Token& token) -> bool;
-  auto parse_element_open(Token& token) -> bool;
-  auto parse_element_close(Token& token) -> bool;
-  auto next_from_source(Token& token) -> bool;
-  void skip_element();
+  auto parseMarkup(Token& token) -> bool;
+  auto parseElementOpen(Token& token) -> bool;
+  auto parseElementClose(Token& token) -> bool;
+  auto nextFromSource(Token& token) -> bool;
+  auto skipElement() -> void;
 
   // First occurrence of `c` in [from, end_), or end_ if absent - std::find
   // semantics over the parse range.
-  [[nodiscard]] auto find_byte(const char* from, char c) const noexcept -> const
-      char* {
-    const char* hit = static_cast<const char*>(
-        std::memchr(from, c, static_cast<size_t>(end_ - from)));
+  [[nodiscard]] auto findByte(const char* from, char c) const noexcept -> const char* {
+    const char* hit =
+        static_cast<const char*>(std::memchr(from, c, static_cast<size_t>(end_ - from)));
     return hit != nullptr ? hit : end_;
   }
 
   // Whether [p, e) contains the CDATA-close delimiter "]]>". Used only by the
   // strict path (Production [14] forbids it in character data); memchr-driven
   // so the scan is fast when the parser opts into the check.
-  [[nodiscard]] static auto contains_cdata_end(const char* p,
-                                               const char* e) noexcept -> bool {
+  [[nodiscard]] static auto containsCdataEnd(const char* p, const char* e) noexcept -> bool {
     while (p < e) {
-      const char* hit = static_cast<const char*>(
-          std::memchr(p, ']', static_cast<size_t>(e - p)));
+      const char* hit = static_cast<const char*>(std::memchr(p, ']', static_cast<size_t>(e - p)));
       if (hit == nullptr) {
         return false;
       }
@@ -1872,12 +1814,11 @@ class BasicParser {
 
   // Scan forward until `delim` is found. Sets token.data to the content
   // before the delimiter and advances past it.
-  auto scan_to_delimiter(Token& token, std::string_view delim, ErrorCode ec)
-      -> bool {
+  auto scanToDelimiter(Token& token, std::string_view delim, ErrorCode ec) -> bool {
     const char* start = cur_;
     const char first = delim[0];
     while (cur_ < end_) {
-      cur_ = find_byte(cur_, first);
+      cur_ = findByte(cur_, first);
       if (cur_ == end_) {
         break;
       }
@@ -1888,14 +1829,14 @@ class BasicParser {
       }
       ++cur_;
     }
-    return make_error(token, ec);
+    return makeError(token, ec);
   }
 
   // Advances past the next occurrence of delim; cur_ = end_ if absent.
-  void skip_past(std::string_view delim) noexcept {
+  auto skipPast(std::string_view delim) noexcept -> void {
     const char first = delim[0];
     while (cur_ < end_) {
-      cur_ = find_byte(cur_, first);
+      cur_ = findByte(cur_, first);
       if (cur_ == end_) {
         break;
       }
@@ -1915,7 +1856,7 @@ class BasicParser {
     token.type = TokenType::Comment;
     const char* start = cur_;
     while (cur_ < end_) {
-      const char* hit = find_byte(cur_, '-');
+      const char* hit = findByte(cur_, '-');
       if (hit == end_ || hit + 1 >= end_) {
         break;  // no '-' (or a lone trailing '-'): unterminated
       }
@@ -1931,21 +1872,21 @@ class BasicParser {
         cur_ = hit + 3;
         return true;
       }
-      return make_error(token, ErrorCode::MalformedComment);  // interior "--"
+      return makeError(token, ErrorCode::MalformedComment);  // interior "--"
     }
     cur_ = end_;
-    return make_error(token, ErrorCode::UnterminatedComment);
+    return makeError(token, ErrorCode::UnterminatedComment);
   }
 
   auto parse_cdata(Token& token) -> bool {
     token.type = TokenType::CData;
-    return scan_to_delimiter(token, "]]>", ErrorCode::UnterminatedCData);
+    return scanToDelimiter(token, "]]>", ErrorCode::UnterminatedCData);
   }
 
   auto parse_pi(Token& token) -> bool {
-    parse_name(token.prefix, token.name, token.name_hash);
+    parseName(token.prefix, token.name, token.name_hash);
     if (token.name.empty()) {
-      return make_error(token, ErrorCode::ExpectedPiTarget);
+      return makeError(token, ErrorCode::ExpectedPiTarget);
     }
     // Production [17]: PITarget excludes every case variant of "xml". Exact
     // lowercase "xml" names the XML declaration; "XML", "Xml", ... are reserved
@@ -1954,26 +1895,25 @@ class BasicParser {
     if (token.name == "xml") {
       token.type = TokenType::XmlDeclaration;
     } else {
-      if (token.prefix.empty() && is_reserved_xml_target(token.name)) {
-        return make_error(token, ErrorCode::ReservedPiTarget);
+      if (token.prefix.empty() && isReservedXmlTarget(token.name)) {
+        return makeError(token, ErrorCode::ReservedPiTarget);
       }
       token.type = TokenType::ProcessingInstruction;
     }
-    skip_whitespace();
-    return scan_to_delimiter(token, "?>", ErrorCode::UnterminatedPi);
+    skipWhitespace();
+    return scanToDelimiter(token, "?>", ErrorCode::UnterminatedPi);
   }
 
   // True for a case-insensitive but not-exactly-lowercase match of "xml".
-  [[nodiscard]] static auto is_reserved_xml_target(
-      std::string_view name) noexcept -> bool {
-    return name.size() == 3 && (name[0] | 0x20) == 'x' &&
-           (name[1] | 0x20) == 'm' && (name[2] | 0x20) == 'l';
+  [[nodiscard]] static auto isReservedXmlTarget(std::string_view name) noexcept -> bool {
+    return name.size() == 3 && (name[0] | 0x20) == 'x' && (name[1] | 0x20) == 'm' &&
+           (name[2] | 0x20) == 'l';
   }
 
   // Fast-path: match and consume "<name>" or "<name/>" without tokenisation.
   // Only succeeds for simple tags (no attributes, no namespace prefix).
   // Returns false to fall through to normal tokenisation path.
-  [[nodiscard]] auto try_begin_element(std::string_view name) noexcept -> bool {
+  [[nodiscard]] auto tryBeginElement(std::string_view name) noexcept -> bool {
     const size_t name_len = name.size();
     const size_t avail = static_cast<size_t>(end_ - cur_);
     if (avail < name_len + 2 || cur_[0] != '<') {
@@ -2001,16 +1941,15 @@ class BasicParser {
   }
 
   // Post-consume dispatch: opening tag already consumed, route to the correct
-  // read_element. arr_fill tracks fill position for fixed containers.
-  template <typename T, size_t I>
-  static bool read_field(BasicParser& p, T& obj, uint16_t depth,
-                         std::span<size_t> arr_fill,
-                         detail::RequiredMaskT<T>& parsed) {
+  // readElement. arr_fill tracks fill position for fixed containers.
+  template<typename T, size_t I>
+  static bool readField(BasicParser& p, T& obj, uint16_t depth, std::span<size_t> arr_fill,
+                        detail::RequiredMaskT<T>& parsed) {
     // Reaching here means field I's element matched, so it is present. Record
     // it for the required-field check; gated so types with no required field
     // never touch parsed (the arg dead-codes away). Failure paths below still
     // return false and the mask is then irrelevant.
-    if constexpr (detail::make_required_mask<T>().any()) {
+    if constexpr (detail::makeRequiredMask<T>().any()) {
       parsed.set(I);
     }
     constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
@@ -2019,48 +1958,45 @@ class BasicParser {
       // Attr/value/variant fields aren't matched as child elements, so this arm
       // is unreachable; it only has to compile (the dispatch table spans every
       // field index).
-      p.skip_element();
+      p.skipElement();
       return true;
     } else if constexpr (f.kind == FieldKind::List) {
       if (p.last_self_closing_) {
         return true;  // <name/> -> empty list
       }
-      return p.read_list(obj.*(f.member), f.xml_name);
+      return p.readList(obj.*(f.member), f.xml_name);
     } else if constexpr (f.kind == FieldKind::Container) {
       using M = std::decay_t<decltype(obj.*(f.member))>;
       if constexpr (XmlFixedContainer<M>) {
         using Traits = XmlContainerTraits<M>;
         if (arr_fill[I] < Traits::capacity) {
-          if (!p.read_element(f.xml_name,
-                              Traits::at(obj.*(f.member), arr_fill[I]),
-                              depth + 1)) {
+          if (!p.readElement(f.xml_name, Traits::at(obj.*(f.member), arr_fill[I]), depth + 1)) {
             return false;
           }
           ++arr_fill[I];
         } else {
-          p.skip_element();
+          p.skipElement();
         }
       } else {
-        static_assert(
-            XmlDynContainer<M>,
-            "container member requires XmlContainerTraits specialization");
+        static_assert(XmlDynContainer<M>,
+                      "container member requires XmlContainerTraits specialization");
         using Traits = XmlContainerTraits<M>;
         auto& container = obj.*(f.member);
         auto& elem = Traits::emplace(container);
-        if (!p.read_element(f.xml_name, elem, depth + 1)) {
+        if (!p.readElement(f.xml_name, elem, depth + 1)) {
           Traits::pop(container);
           return false;
         }
       }
       return true;
     } else {
-      return p.read_element(f.xml_name, obj.*(f.member), depth + 1);
+      return p.readElement(f.xml_name, obj.*(f.member), depth + 1);
     }
   }
 
-  template <typename T, size_t I>
-  static void apply_attr(BasicParser& p, T& obj, size_t& pos,
-                         detail::RequiredMaskT<T>& parsed) {
+  template<typename T, size_t I>
+  static auto applyAttr(BasicParser& p, T& obj, size_t& pos,
+                        detail::RequiredMaskT<T>& parsed) -> void {
     constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
     if constexpr (f.kind == FieldKind::Attr) {
       if (p.attr(f.hash, obj.*(f.member), pos)) {
@@ -2069,35 +2005,34 @@ class BasicParser {
     }
   }
 
-  template <typename T, size_t... I>
-  static constexpr auto build_elem_dispatch(
-      std::index_sequence<I...>) noexcept {
-    using Handler = bool (*)(BasicParser&, T&, uint16_t, std::span<size_t>,
-                             detail::RequiredMaskT<T>&);
-    return std::array<Handler, sizeof...(I)>{&read_field<T, I>...};
+  template<typename T, size_t... I>
+  static constexpr auto buildElemDispatch(std::index_sequence<I...>) noexcept {
+    using Handler =
+        bool (*)(BasicParser&, T&, uint16_t, std::span<size_t>, detail::RequiredMaskT<T>&);
+    return std::array<Handler, sizeof...(I)>{&readField<T, I>...};
   }
 
   // Handle a matched variant alternative: field FieldI's element matched its
   // alternative AltJ. Emplaces that alternative (into the variant, or into a
   // freshly pushed slot for a repeated/container choice) and reads into it.
-  template <typename T, size_t FieldI, size_t AltJ>
-  static bool read_variant(BasicParser& p, T& obj, uint16_t depth,
-                           detail::RequiredMaskT<T>& parsed) {
+  template<typename T, size_t FieldI, size_t AltJ>
+  static bool readVariant(BasicParser& p, T& obj, uint16_t depth,
+                          detail::RequiredMaskT<T>& parsed) {
     constexpr auto& f = std::get<FieldI>(XmlMetadata<T>::fields);
     using Member = std::decay_t<decltype(obj.*(f.member))>;
-    if constexpr (detail::make_required_mask<T>().any()) {
+    if constexpr (detail::makeRequiredMask<T>().any()) {
       parsed.set(FieldI);
     }
     if constexpr (detail::is_variant<Member>::value) {
       auto& var = obj.*(f.member);
       var.template emplace<AltJ>();
-      return p.read_element(f.names[AltJ], std::get<AltJ>(var), depth + 1);
+      return p.readElement(f.names[AltJ], std::get<AltJ>(var), depth + 1);
     } else {
       using Traits = XmlContainerTraits<Member>;
       auto& container = obj.*(f.member);
       auto& slot = Traits::emplace(container);
       slot.template emplace<AltJ>();
-      if (!p.read_element(f.names[AltJ], std::get<AltJ>(slot), depth + 1)) {
+      if (!p.readElement(f.names[AltJ], std::get<AltJ>(slot), depth + 1)) {
         Traits::pop(container);
         return false;
       }
@@ -2105,38 +2040,33 @@ class BasicParser {
     }
   }
 
-  template <typename T, size_t... K>
-  static constexpr auto build_variant_dispatch(
-      std::index_sequence<K...>) noexcept {
-    using Handler =
-        bool (*)(BasicParser&, T&, uint16_t, detail::RequiredMaskT<T>&);
-    constexpr auto m = detail::make_variant_matchers<T>();
-    return std::array<Handler, sizeof...(K)>{
-        &read_variant<T, m[K].field_index, m[K].alt_index>...};
+  template<typename T, size_t... K>
+  static constexpr auto buildVariantDispatch(std::index_sequence<K...>) noexcept {
+    using Handler = bool (*)(BasicParser&, T&, uint16_t, detail::RequiredMaskT<T>&);
+    constexpr auto m = detail::makeVariantMatchers<T>();
+    return std::array<Handler, sizeof...(K)>{&readVariant<T, m[K].field_index, m[K].alt_index>...};
   }
 
-  template <typename T, size_t... I>
-  static void dispatch_attrs(BasicParser& p, T& obj,
-                             detail::RequiredMaskT<T>& parsed,
-                             std::index_sequence<I...>) {
+  template<typename T, size_t... I>
+  static auto dispatchAttrs(BasicParser& p, T& obj, detail::RequiredMaskT<T>& parsed,
+                            std::index_sequence<I...>) -> void {
     size_t pos = 0;  // document-order cursor over attributes_
-    (apply_attr<T, I>(p, obj, pos, parsed), ...);
+    (applyAttr<T, I>(p, obj, pos, parsed), ...);
   }
 
-  template <typename T>
+  template<typename T>
   auto pull(T& object, uint16_t depth) -> bool;
 
   // Opening tag already consumed by caller.
-  template <typename T>
-  auto read_element(std::string_view expected_name, T& out, uint16_t depth)
-      -> bool;
+  template<typename T>
+  auto readElement(std::string_view expected_name, T& out, uint16_t depth) -> bool;
 
   Token current_token_;
   std::vector<Attribute> attributes_;
   std::string_view src_;
   const char* cur_;
   const char* end_;
-  ErrorCode error_code_{ErrorCode::None};
+  ErrorCode errorCode_{ErrorCode::None};
   bool last_self_closing_{};
   bool has_peek_{false};
 };
@@ -2148,16 +2078,15 @@ using Parser = BasicParser<>;
 
 /// @brief Normalizing parser: owning std::string fields receive
 /// reference-expanded, line-ending- and attribute-normalized text. See
-/// BasicParser::kNormalize.
+/// BasicParser::NORMALIZE.
 using NormalizingParser = BasicParser<ParserOptions{.normalize = true}>;
 
 /// @brief Fully-conforming parser: normalizes (expands entity/character
 /// references, folds line endings, normalizes attribute whitespace into owning
 /// std::string fields) AND enforces the well-formedness constraints the default
 /// fast path skips for speed ("]]>" in character data, '<' in attribute values,
-/// duplicate attribute names). Combines kNormalize and kStrict.
-using StrictParser =
-    BasicParser<ParserOptions{.normalize = true, .strict = true}>;
+/// duplicate attribute names). Combines NORMALIZE and STRICT.
+using StrictParser = BasicParser<ParserOptions{.normalize = true, .strict = true}>;
 
 /// @brief Deserializes the root element from parser into object.
 /// @tparam T        XmlObject type with an XmlMetadata specialization.
@@ -2165,11 +2094,10 @@ using StrictParser =
 /// @param root_name Expected root element name.
 /// @param object    Output object to populate.
 /// @return True on success, false on any parse or structure error.
-template <ParserOptions Opts, typename T>
-auto deserialize(BasicParser<Opts>& parser, std::string_view root_name,
-                 T& object) -> bool {
-  if (!parser.begin_element(root_name)) [[unlikely]] {
-    // begin_element() may have hit a tokenizer error (code already set); only
+template<ParserOptions Opts, typename T>
+auto deserialize(BasicParser<Opts>& parser, std::string_view root_name, T& object) -> bool {
+  if (!parser.beginElement(root_name)) [[unlikely]] {
+    // beginElement() may have hit a tokenizer error (code already set); only
     // attribute a plain "root missing/mismatched" when nothing else did.
     return parser.fail(ErrorCode::RootElementNotFound);
   }
@@ -2177,17 +2105,17 @@ auto deserialize(BasicParser<Opts>& parser, std::string_view root_name,
   if (!parser.pull(object, 1)) [[unlikely]] {
     return false;
   }
-  if (!is_self_closing && !parser.end_element(root_name)) [[unlikely]] {
+  if (!is_self_closing && !parser.endElement(root_name)) [[unlikely]] {
     return false;
   }
   return true;
 }
 
 // Parser method implementations
-template <ParserOptions Opts>
+template<ParserOptions Opts>
 inline auto BasicParser<Opts>::peek() -> const Token* {
   if (!has_peek_) {
-    if (!next_from_source(current_token_)) {
+    if (!nextFromSource(current_token_)) {
       return nullptr;
     }
     has_peek_ = true;
@@ -2198,33 +2126,33 @@ inline auto BasicParser<Opts>::peek() -> const Token* {
   return &current_token_;
 }
 
-template <ParserOptions Opts>
+template<ParserOptions Opts>
 inline auto BasicParser<Opts>::next() -> const Token* {
-  if (!has_peek_ && !next_from_source(current_token_)) {
+  if (!has_peek_ && !nextFromSource(current_token_)) {
     return nullptr;
   }
   has_peek_ = false;
-  update_self_closing();
+  updateSelfClosing();
   if (current_token_.type == TokenType::Error) {
     return nullptr;
   }
   return &current_token_;
 }
 
-template <ParserOptions Opts>
-inline auto BasicParser<Opts>::next_from_source(Token& token) -> bool {
-  if (error() || at_end()) {
+template<ParserOptions Opts>
+inline auto BasicParser<Opts>::nextFromSource(Token& token) -> bool {
+  if (error() || atEnd()) {
     return false;
   }
   if (*cur_ == '<') {
     ++cur_;
-    return parse_markup(token);
+    return parseMarkup(token);
   }
   const char* start = cur_;
-  cur_ = find_byte(cur_, '<');
-  if constexpr (kStrict) {
-    if (contains_cdata_end(start, cur_)) {
-      return make_error(token, ErrorCode::CDataEndInContent);
+  cur_ = findByte(cur_, '<');
+  if constexpr (STRICT) {
+    if (containsCdataEnd(start, cur_)) {
+      return makeError(token, ErrorCode::CDataEndInContent);
     }
   }
   token.type = TokenType::Text;
@@ -2232,15 +2160,15 @@ inline auto BasicParser<Opts>::next_from_source(Token& token) -> bool {
   return true;
 }
 
-template <ParserOptions Opts>
-inline auto BasicParser<Opts>::parse_markup(Token& token) -> bool {
-  if (at_end()) {
-    return make_error(token, ErrorCode::UnexpectedEndAfterLt);
+template<ParserOptions Opts>
+inline auto BasicParser<Opts>::parseMarkup(Token& token) -> bool {
+  if (atEnd()) {
+    return makeError(token, ErrorCode::UnexpectedEndAfterLt);
   }
   const char c = *cur_;
   if (c == '/') {
     ++cur_;
-    return parse_element_close(token);
+    return parseElementClose(token);
   }
   if (c == '!') {
     ++cur_;
@@ -2252,33 +2180,33 @@ inline auto BasicParser<Opts>::parse_markup(Token& token) -> bool {
       cur_ += 7;
       return parse_cdata(token);
     }
-    skip_bang_decl();
-    return next_from_source(token);
+    skipBangDecl();
+    return nextFromSource(token);
   }
   if (c == '?') {
     ++cur_;
     return parse_pi(token);
   }
-  if (is_name_start(c)) {
-    return parse_element_open(token);
+  if (isNameStart(c)) {
+    return parseElementOpen(token);
   }
-  return make_error(token, ErrorCode::UnexpectedCharAfterLt);
+  return makeError(token, ErrorCode::UnexpectedCharAfterLt);
 }
 
-template <ParserOptions Opts>
-inline auto BasicParser<Opts>::parse_element_open(Token& token) -> bool {
+template<ParserOptions Opts>
+inline auto BasicParser<Opts>::parseElementOpen(Token& token) -> bool {
   token.type = TokenType::ElementOpen;
   token.self_closing = false;
-  parse_name(token.prefix, token.name, token.name_hash);
+  parseName(token.prefix, token.name, token.name_hash);
   if (token.name.empty()) {
-    return make_error(token, ErrorCode::ExpectedElementName);
+    return makeError(token, ErrorCode::ExpectedElementName);
   }
 
   attributes_.clear();
   while (true) {
-    skip_whitespace();
-    if (at_end()) {
-      return make_error(token, ErrorCode::UnclosedTag);
+    skipWhitespace();
+    if (atEnd()) {
+      return makeError(token, ErrorCode::UnclosedTag);
     }
     const char c = *cur_;
     if (c == '>') {
@@ -2290,47 +2218,46 @@ inline auto BasicParser<Opts>::parse_element_open(Token& token) -> bool {
       token.self_closing = true;
       return true;
     }
-    if (!is_name_start(c)) {
-      return make_error(token, ErrorCode::ExpectedAttributeName);
+    if (!isNameStart(c)) {
+      return makeError(token, ErrorCode::ExpectedAttributeName);
     }
-    if (attributes_.size() >= kMaxAttributesPerElement) [[unlikely]] {
-      return make_error(token, ErrorCode::TooManyAttributes);
+    if (attributes_.size() >= MAX_ATTRIBUTES_PER_ELEMENT) [[unlikely]] {
+      return makeError(token, ErrorCode::TooManyAttributes);
     }
 
     Attribute& a = attributes_.emplace_back();
-    parse_name(a.prefix, a.name, a.name_hash);
-    if constexpr (kStrict) {
+    parseName(a.prefix, a.name, a.name_hash);
+    if constexpr (STRICT) {
       // WFC: Unique Att Spec. Hash compares are the fast filter; the exact
       // name/prefix compare only runs on the (astronomically rare) hash match,
       // so this is O(n^2) hash comparisons over the element's attributes.
       for (size_t i = 0; i + 1 < attributes_.size(); ++i) {
-        if (attributes_[i].name_hash == a.name_hash &&
-            attributes_[i].name == a.name &&
+        if (attributes_[i].name_hash == a.name_hash && attributes_[i].name == a.name &&
             attributes_[i].prefix == a.prefix) {
-          return make_error(token, ErrorCode::DuplicateAttribute);
+          return makeError(token, ErrorCode::DuplicateAttribute);
         }
       }
     }
-    skip_whitespace();
+    skipWhitespace();
     if (!expect('=')) {
-      return make_error(token, ErrorCode::ExpectedEquals);
+      return makeError(token, ErrorCode::ExpectedEquals);
     }
-    skip_whitespace();
-    const char quote = peek_char();
+    skipWhitespace();
+    const char quote = peekChar();
     if (quote != '"' && quote != '\'') {
-      return make_error(token, ErrorCode::ExpectedQuotedValue);
+      return makeError(token, ErrorCode::ExpectedQuotedValue);
     }
     ++cur_;
     const char* val_start = cur_;
-    const char* val_end = find_byte(cur_, quote);
+    const char* val_end = findByte(cur_, quote);
     if (val_end == end_) {
-      return make_error(token, ErrorCode::UnterminatedAttributeValue);
+      return makeError(token, ErrorCode::UnterminatedAttributeValue);
     }
-    if constexpr (kStrict) {
+    if constexpr (STRICT) {
       // WFC: No '<' in attribute values (Production [10]). One short memchr
       // over the value; a '<' beyond val_end belongs to later markup.
-      if (find_byte(val_start, '<') < val_end) {
-        return make_error(token, ErrorCode::LtInAttributeValue);
+      if (findByte(val_start, '<') < val_end) {
+        return makeError(token, ErrorCode::LtInAttributeValue);
       }
     }
     a.value = {val_start, static_cast<size_t>(val_end - val_start)};
@@ -2338,25 +2265,24 @@ inline auto BasicParser<Opts>::parse_element_open(Token& token) -> bool {
   }
 }
 
-template <ParserOptions Opts>
-inline auto BasicParser<Opts>::parse_element_close(Token& token) -> bool {
+template<ParserOptions Opts>
+inline auto BasicParser<Opts>::parseElementClose(Token& token) -> bool {
   token.type = TokenType::ElementClose;
   FieldHash name_hash;
-  parse_name(token.prefix, token.name, name_hash);
+  parseName(token.prefix, token.name, name_hash);
   if (token.name.empty()) {
-    return make_error(token, ErrorCode::ExpectedNameInCloseTag);
+    return makeError(token, ErrorCode::ExpectedNameInCloseTag);
   }
-  skip_whitespace();
+  skipWhitespace();
   if (!expect('>')) {
-    return make_error(token, ErrorCode::ExpectedCloseTagEnd);
+    return makeError(token, ErrorCode::ExpectedCloseTagEnd);
   }
   return true;
 }
 
-template <ParserOptions Opts>
-template <typename T>
-inline auto BasicParser<Opts>::parse_numeric(std::string_view text,
-                                             T& out) noexcept -> bool {
+template<ParserOptions Opts>
+template<typename T>
+inline auto BasicParser<Opts>::parseNumeric(std::string_view text, T& out) noexcept -> bool {
   if constexpr (std::same_as<T, bool>) {
     // XML Schema boolean lexical space; std::from_chars has no bool overload.
     if (text == "true" || text == "1") {
@@ -2372,8 +2298,7 @@ inline auto BasicParser<Opts>::parse_numeric(std::string_view text,
     if (text.empty()) {
       return false;
     }
-    const auto result =
-        std::from_chars(text.data(), text.data() + text.size(), out);
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), out);
     return result.ec == std::errc() && result.ptr == text.data() + text.size();
   }
 }
@@ -2381,17 +2306,16 @@ inline auto BasicParser<Opts>::parse_numeric(std::string_view text,
 // Document-order fast path: attribute fields are typically declared in the
 // same order the attributes appear, so try the cursor position first and
 // fall back to a full first-match scan on miss.
-template <ParserOptions Opts>
-template <typename T>
-inline auto BasicParser<Opts>::attr(const FieldHash hash, T& out, size_t& pos)
-    -> bool {
+template<ParserOptions Opts>
+template<typename T>
+inline auto BasicParser<Opts>::attr(const FieldHash hash, T& out, size_t& pos) -> bool {
   size_t idx;
   if (pos < attributes_.size() && attributes_[pos].name_hash == hash) {
     idx = pos++;
   } else {
-    const auto it = std::ranges::find_if(
-        attributes_,
-        [hash](const Attribute& at) { return at.name_hash == hash; });
+    const auto it = std::ranges::find_if(attributes_, [hash](const Attribute& at) {
+      return at.name_hash == hash;
+    });
     if (it == attributes_.end()) {
       return false;
     }
@@ -2403,19 +2327,18 @@ inline auto BasicParser<Opts>::attr(const FieldHash hash, T& out, size_t& pos)
     // Parse into a temporary so a parse failure leaves the optional empty
     // (rather than engaged with a half-parsed value).
     typename T::value_type tmp{};
-    if (!assign_attr_value(tmp, a)) {
+    if (!assignAttrValue(tmp, a)) {
       return false;
     }
     out = std::move(tmp);
     return true;
   } else {
-    return assign_attr_value(out, a);
+    return assignAttrValue(out, a);
   }
 }
 
-template <ParserOptions Opts>
-inline auto BasicParser<Opts>::begin_element(std::string_view expected_name)
-    -> bool {
+template<ParserOptions Opts>
+inline auto BasicParser<Opts>::beginElement(std::string_view expected_name) -> bool {
   while (const Token* peeked = peek()) {
     if (peeked->type == TokenType::ElementOpen) {
       if (peeked->name == expected_name) {
@@ -2432,20 +2355,18 @@ inline auto BasicParser<Opts>::begin_element(std::string_view expected_name)
   return false;
 }
 
-template <ParserOptions Opts>
-inline auto BasicParser<Opts>::end_element(std::string_view expected_name)
-    -> bool {
+template<ParserOptions Opts>
+inline auto BasicParser<Opts>::endElement(std::string_view expected_name) -> bool {
   if (!has_peek_) {
-    skip_whitespace();
+    skipWhitespace();
     const auto name_len = expected_name.size();
     const size_t required = name_len + 3;  // "</" + name + ">"
     const size_t remaining = static_cast<size_t>(end_ - cur_);
     if (remaining >= required) {
       const char* p = cur_;
-      if (p[0] == '<' && p[1] == '/' &&
-          std::memcmp(p + 2, expected_name.data(), name_len) == 0) {
+      if (p[0] == '<' && p[1] == '/' && std::memcmp(p + 2, expected_name.data(), name_len) == 0) {
         p += 2 + name_len;
-        while (p < end_ && is_space(*p)) {
+        while (p < end_ && isSpace(*p)) {
           ++p;
         }
         if (p < end_ && *p == '>') {
@@ -2479,14 +2400,14 @@ inline auto BasicParser<Opts>::end_element(std::string_view expected_name)
 // Precondition: the opening tag has been consumed and no token is peeked.
 // On malformed or truncated content, leaves cur_ == end_ so the caller's
 // next read fails the parse.
-template <ParserOptions Opts>
-inline void BasicParser<Opts>::skip_element() {
+template<ParserOptions Opts>
+inline auto BasicParser<Opts>::skipElement() -> void {
   if (last_self_closing_) {
     return;
   }
   size_t depth = 1;
   while (depth > 0) {
-    const char* lt = find_byte(cur_, '<');
+    const char* lt = findByte(cur_, '<');
     if (lt == end_ || lt + 1 >= end_) {
       cur_ = end_;
       return;
@@ -2494,7 +2415,7 @@ inline void BasicParser<Opts>::skip_element() {
     cur_ = lt + 1;
     const char c = *cur_;
     if (c == '/') {
-      const char* gt = find_byte(cur_, '>');
+      const char* gt = findByte(cur_, '>');
       if (gt == end_) {
         cur_ = end_;
         return;
@@ -2505,17 +2426,17 @@ inline void BasicParser<Opts>::skip_element() {
       ++cur_;
       if (starts_with("--")) {
         cur_ += 2;
-        skip_past("-->");
+        skipPast("-->");
       } else if (starts_with("[CDATA[")) {
         cur_ += 7;
-        skip_past("]]>");
+        skipPast("]]>");
       } else {
-        skip_bang_decl();
+        skipBangDecl();
       }
     } else if (c == '?') {
       ++cur_;
-      skip_past("?>");
-    } else if (is_name_start(c)) {
+      skipPast("?>");
+    } else if (isNameStart(c)) {
       // Open tag: find the closing '>' outside quoted attribute values.
       bool closed = false;
       bool self_closing = false;
@@ -2528,7 +2449,7 @@ inline void BasicParser<Opts>::skip_element() {
           break;
         }
         if (ch == '"' || ch == '\'') {
-          const char* q = find_byte(cur_ + 1, ch);
+          const char* q = findByte(cur_ + 1, ch);
           if (q == end_) {
             cur_ = end_;
             return;
@@ -2541,8 +2462,7 @@ inline void BasicParser<Opts>::skip_element() {
       if (!closed) {
         return;  // truncated tag; cur_ == end_
       }
-      if (!self_closing && ++depth > static_cast<size_t>(kMaxDepth))
-          [[unlikely]] {
+      if (!self_closing && ++depth > static_cast<size_t>(MAX_DEPTH)) [[unlikely]] {
         fail(ErrorCode::DepthExceeded);
         cur_ = end_;  // force the caller's next read to fail
         return;
@@ -2555,12 +2475,11 @@ inline void BasicParser<Opts>::skip_element() {
 }
 
 // Opening tag already consumed by the caller.
-template <ParserOptions Opts>
-template <typename T>
-inline auto BasicParser<Opts>::read_element(std::string_view expected_name,
-                                            T& out, const uint16_t depth)
-    -> bool {
-  if (depth > kMaxDepth) {
+template<ParserOptions Opts>
+template<typename T>
+inline auto BasicParser<Opts>::readElement(std::string_view expected_name, T& out,
+                                           const uint16_t depth) -> bool {
+  if (depth > MAX_DEPTH) {
     return fail(ErrorCode::DepthExceeded);
   }
   [[maybe_unused]] const bool is_self_closing = last_self_closing_;
@@ -2569,61 +2488,58 @@ inline auto BasicParser<Opts>::read_element(std::string_view expected_name,
     // Optional/recursive child: allocate, then parse the element into it. The
     // depth guard above bounds recursion; the unwrap keeps the same depth.
     out = std::make_unique<typename T::element_type>();
-    return read_element(expected_name, *out, depth);
+    return readElement(expected_name, *out, depth);
   } else if constexpr (XmlOptional<T>) {
     // Element present -> engage the optional and parse the inner value/object.
-    return read_element(expected_name, out.emplace(), depth);
+    return readElement(expected_name, out.emplace(), depth);
   } else if constexpr (XmlScalar<T>) {
     if (is_self_closing) {
       if constexpr (XmlStringLike<T>) {
         return true;
       }
-      return fail(scalar_error<T>());  // empty numeric/bool/enum
+      return fail(scalarError<T>());  // empty numeric/bool/enum
     }
     // Fast path: locate closing tag directly.
-    const char* found = find_byte(cur_, '<');
-    if (found != end_ && found + 3 + expected_name.size() <= end_ &&
-        found[1] == '/' &&
-        std::memcmp(found + 2, expected_name.data(), expected_name.size()) ==
-            0 &&
+    const char* found = findByte(cur_, '<');
+    if (found != end_ && found + 3 + expected_name.size() <= end_ && found[1] == '/' &&
+        std::memcmp(found + 2, expected_name.data(), expected_name.size()) == 0 &&
         found[2 + expected_name.size()] == '>') {
       std::string_view text{cur_, static_cast<size_t>(found - cur_)};
-      if constexpr (kStrict) {
-        if (contains_cdata_end(cur_, found)) {
+      if constexpr (STRICT) {
+        if (containsCdataEnd(cur_, found)) {
           return fail(ErrorCode::CDataEndInContent);
         }
       }
       cur_ = found + 3 + expected_name.size();
       has_peek_ = false;
       if constexpr (XmlStringLike<T>) {
-        return assign_value(out, text);
+        return assignValue(out, text);
       } else {
-        return parse_scalar(text, out) ? true : fail(scalar_error<T>());
+        return parseScalar(text, out) ? true : fail(scalarError<T>());
       }
     }
-    return read_chardata<true>(out, expected_name);
+    return readChardata<true>(out, expected_name);
   } else {
     bool result = false;
     if constexpr (XmlObject<T>) {
       result = pull(out, depth);
     }
-    if (!is_self_closing && !end_element(expected_name)) {
+    if (!is_self_closing && !endElement(expected_name)) {
       return false;
     }
     return result;
   }
 }
 
-template <ParserOptions Opts>
-template <typename T>
+template<ParserOptions Opts>
+template<typename T>
 inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
-  constexpr size_t N = detail::field_count<T>;
-  constexpr auto kIdxSeq = detail::field_seq<T>;
-  static_assert(
-      detail::all_names_unique<T>(),
-      "FNV-1a hash collision among element/attribute/variant names in "
-      "XmlMetadata<T>");
-  static_assert(detail::optionals_not_required<T>(),
+  constexpr size_t N = detail::FIELD_COUNT<T>;
+  constexpr auto IDX_SEQ = detail::FIELD_SEQ<T>;
+  static_assert(detail::allNamesUnique<T>(),
+                "FNV-1a hash collision among element/attribute/variant names in "
+                "XmlMetadata<T>");
+  static_assert(detail::optionalsNotRequired<T>(),
                 "a std::optional field cannot be marked required (an optional "
                 "field is inherently optional)");
 
@@ -2632,14 +2548,14 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   std::array<size_t, (N != 0 ? N : 1)> arr_fill{};
 
   // Presence tracking for required fields. When nothing is required (the
-  // default) kHasRequired is false, so 'parsed' is never read: every write to
+  // default) HAS_REQUIRED is false, so 'parsed' is never read: every write to
   // it is dead-store eliminated and check_required() compiles to `return true`.
-  constexpr auto kRequiredMask = detail::make_required_mask<T>();
-  constexpr bool kHasRequired = kRequiredMask.any();
+  constexpr auto REQUIRED_MASK = detail::makeRequiredMask<T>();
+  constexpr bool HAS_REQUIRED = REQUIRED_MASK.any();
   [[maybe_unused]] detail::RequiredMaskT<T> parsed{};
   const auto check_required = [&]() -> bool {
-    if constexpr (kHasRequired) {
-      if (!parsed.contains_all(kRequiredMask)) {
+    if constexpr (HAS_REQUIRED) {
+      if (!parsed.contains_all(REQUIRED_MASK)) {
         return fail(ErrorCode::MissingRequiredField);
       }
     }
@@ -2647,10 +2563,10 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   };
 
   // Apply attribute fields only when the type actually has some.
-  constexpr bool kHasAttrs = detail::has_attr_fields<T>();
-  if constexpr (kHasAttrs) {
-    dispatch_attrs<T>(*this, object, parsed, kIdxSeq);
-    if constexpr (kNormalize) {
+  constexpr bool HAS_ATTRS = detail::has_attrFields<T>();
+  if constexpr (HAS_ATTRS) {
+    dispatchAttrs<T>(*this, object, parsed, IDX_SEQ);
+    if constexpr (NORMALIZE) {
       // A string attribute may have carried a malformed/undefined reference;
       // attr() recorded the code but reports "absent". Surface it as a hard
       // failure now (only compiled in for the normalizing parser).
@@ -2663,12 +2579,12 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   // simpleContent: the element's own text feeds a value field (its attributes
   // were handled above). Such a type has no child element fields, so capturing
   // the text and checking required fields completes it.
-  if constexpr (detail::has_value_field<T>()) {
-    static_assert(!detail::has_element_fields<T>(),
-                  "a value_field cannot coexist with child element/container "
+  if constexpr (detail::has_valueField<T>()) {
+    static_assert(!detail::hasElementFields<T>(),
+                  "a valueField cannot coexist with child element/container "
                   "fields (XSD simpleContent has no element children)");
-    constexpr size_t kValueIdx = detail::value_field_index<T>();
-    constexpr auto& vf = std::get<kValueIdx>(XmlMetadata<T>::fields);
+    constexpr size_t VALUE_IDX = detail::valueField_index<T>();
+    constexpr auto& vf = std::get<VALUE_IDX>(XmlMetadata<T>::fields);
     using M = std::decay_t<decltype(object.*(vf.member))>;
     // A value field counts as present only when it carries non-empty text
     // (an empty <e/> or <e></e> satisfies a string but not a required field).
@@ -2677,10 +2593,10 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
       if constexpr (XmlStringLike<M>) {
         object.*(vf.member) = {};
       } else {
-        return fail(scalar_error<M>());  // empty number/enum is invalid
+        return fail(scalarError<M>());  // empty number/enum is invalid
       }
     } else {
-      if (!read_chardata<false>(object.*(vf.member), {})) {
+      if (!readChardata<false>(object.*(vf.member), {})) {
         return false;
       }
       if constexpr (XmlStringLike<M>) {
@@ -2690,7 +2606,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
       }
     }
     if (present) {
-      parsed.set(kValueIdx);
+      parsed.set(VALUE_IDX);
     }
     return check_required();
   } else if (last_self_closing_) {
@@ -2700,17 +2616,17 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   // Document-order hint: index of the field expected next. Schema-ordered
   // XML hits the memcmp fast path below on every element; out-of-order
   // documents miss once, re-sync at the dispatch site, and stay correct.
-  constexpr bool kHasElems = detail::has_element_fields<T>();
-  constexpr bool kHasVariants = detail::has_variant_fields<T>();
-  static constexpr auto dispatch = build_elem_dispatch<T>(kIdxSeq);
-  static constexpr auto kNames = detail::make_field_names<T>();
-  static constexpr auto kNextElem = detail::make_next_elem_table<T>();
-  [[maybe_unused]] size_t hint = detail::first_elem_index<T>();
+  constexpr bool HAS_ELEMS = detail::hasElementFields<T>();
+  constexpr bool HAS_VARIANTS = detail::has_variantFields<T>();
+  static constexpr auto dispatch = buildElemDispatch<T>(IDX_SEQ);
+  static constexpr auto NAMES = detail::makeFieldNames<T>();
+  static constexpr auto NEXT_ELEM = detail::makeNextElemTable<T>();
+  [[maybe_unused]] size_t hint = detail::firstElemIndex<T>();
 
   while (true) {
     if (!has_peek_) {
-      skip_whitespace();
-      if (at_end()) {
+      skipWhitespace();
+      if (atEnd()) {
         return fail(ErrorCode::UnexpectedEof);
       }
       if (cur_[0] == '<' && cur_ + 1 < end_ && cur_[1] == '/') {
@@ -2718,26 +2634,26 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
       }
 
       // Fast path: match the hinted open tag via memcmp, bypassing full
-      // tokenisation (parse_name, hash, peek machinery).
-      if constexpr (kHasElems && N == 1) {
+      // tokenisation (parseName, hash, peek machinery).
+      if constexpr (HAS_ELEMS && N == 1) {
         // Single-field types: compile-time tag name and direct call.
-        if (try_begin_element(kNames[0])) {
-          if (!read_field<T, 0>(*this, object, depth, arr_fill, parsed)) {
+        if (tryBeginElement(NAMES[0])) {
+          if (!readField<T, 0>(*this, object, depth, arr_fill, parsed)) {
             return false;
           }
           continue;
         }
-      } else if constexpr (kHasElems) {
-        if (try_begin_element(kNames[hint])) {
+      } else if constexpr (HAS_ELEMS) {
+        if (tryBeginElement(NAMES[hint])) {
           if (!dispatch[hint](*this, object, depth, arr_fill, parsed)) {
             return false;
           }
-          hint = kNextElem[hint];
+          hint = NEXT_ELEM[hint];
           continue;
         }
       }
 
-      cur_ = find_byte(cur_, '<');
+      cur_ = findByte(cur_, '<');
     }
 
     const Token* token = peek();
@@ -2752,19 +2668,18 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
       continue;
     }
 
-    const size_t idx = detail::find_field_index<T>(token->name_hash);
+    const size_t idx = detail::findFieldIndex<T>(token->name_hash);
     if (idx >= N) {
       // No named field matched. A variant (xs:choice) alternative might; this
       // path is compiled out entirely for types with no variant field.
       bool handled = false;
-      if constexpr (kHasVariants) {
-        static constexpr auto kVariantMatch =
-            detail::make_variant_matchers<T>();
-        static constexpr auto variant_dispatch = build_variant_dispatch<T>(
-            std::make_index_sequence<kVariantMatch.size()>{});
-        for (size_t k = 0; k < kVariantMatch.size(); ++k) {
-          if (kVariantMatch[k].hash == token->name_hash) {
-            consume_peeked();
+      if constexpr (HAS_VARIANTS) {
+        static constexpr auto VARIANT_MATCH = detail::makeVariantMatchers<T>();
+        static constexpr auto variant_dispatch =
+            buildVariantDispatch<T>(std::make_index_sequence<VARIANT_MATCH.size()>{});
+        for (size_t k = 0; k < VARIANT_MATCH.size(); ++k) {
+          if (VARIANT_MATCH[k].hash == token->name_hash) {
+            consumePeeked();
             if (!variant_dispatch[k](*this, object, depth, parsed)) {
               return false;
             }
@@ -2774,53 +2689,53 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
         }
       }
       if (!handled) {
-        skip_current();
+        skipCurrent();
       }
       continue;
     }
-    consume_peeked();
+    consumePeeked();
     if (!dispatch[idx](*this, object, depth, arr_fill, parsed)) {
       return false;
     }
-    if constexpr (kHasElems && N > 1) {
-      hint = kNextElem[idx];
+    if constexpr (HAS_ELEMS && N > 1) {
+      hint = NEXT_ELEM[idx];
     }
   }
 }
 
 /// @brief XML serializer. Converts XmlObject instances to XML strings.
-/// @tparam kPretty If true, emits indented output; if false, compact.
-template <bool kPretty = true>
+/// @tparam PRETTY If true, emits indented output; if false, compact.
+template<bool PRETTY = true>
 class Serializer {
  public:
   explicit Serializer(std::string& out) noexcept : out_(out) {}
 
   /// @brief Serializes obj as an XML element named tag, appending to the output
   /// string.
-  template <typename T>
-  void write(std::string_view tag, const T& obj) {
-    write_element(tag, obj, 0);
+  template<typename T>
+  auto write(std::string_view tag, const T& obj) -> void {
+    writeElement(tag, obj, 0);
   }
 
  private:
   std::string& out_;
 
-  void do_indent(int depth) {
-    if constexpr (kPretty) {
+  auto doIndent(int depth) -> void {
+    if constexpr (PRETTY) {
       out_.append(static_cast<size_t>(depth) * 2, ' ');
     }
   }
 
-  void do_newline() {
-    if constexpr (kPretty) {
+  auto doNewline() -> void {
+    if constexpr (PRETTY) {
       out_ += '\n';
     }
   }
 
   // Escapes '&' and '<' always; attribute values additionally escape '"',
   // text content escapes '>'.
-  template <bool kAttr>
-  static void escape(std::string& out, std::string_view s) {
+  template<bool kAttr>
+  static auto escape(std::string& out, std::string_view s) -> void {
     for (char c : s) {
       if (c == '&') {
         out += "&amp;";
@@ -2836,8 +2751,8 @@ class Serializer {
     }
   }
 
-  template <typename V>
-  static void append_arithmetic(std::string& out, V v) {
+  template<typename V>
+  static auto appendArithmetic(std::string& out, V v) -> void {
     if constexpr (std::same_as<V, bool>) {
       out += v ? "true" : "false";
     } else {
@@ -2851,79 +2766,84 @@ class Serializer {
 
   // Appends a scalar's text form. Attr selects attribute- vs content-escaping;
   // custom-value traits must emit XML-safe text.
-  template <bool Attr, typename V>
-  void write_scalar(const V& v) {
+  template<bool Attr, typename V>
+  auto writeScalar(const V& v) -> void {
     if constexpr (XmlStringLike<V>) {
       escape<Attr>(out_, v);
     } else if constexpr (XmlEnum<V>) {
-      escape<Attr>(out_, detail::enum_to_string(v));
+      escape<Attr>(out_, detail::enumToString(v));
     } else if constexpr (XmlCustomValue<V>) {
       XmlValueTraits<V>::format(out_, v);
     } else {
-      append_arithmetic(out_, v);
+      appendArithmetic(out_, v);
     }
   }
 
-  template <typename V>
-  void write_attr_value(std::string_view name, const V& v) {
+  template<typename V>
+  auto writeAttrValue(std::string_view name, const V& v) -> void {
     out_ += ' ';
     out_ += name;
     out_ += "=\"";
-    write_scalar<true>(v);
+    writeScalar<true>(v);
     out_ += '"';
   }
 
-  template <typename V>
-  void write_prim_element(std::string_view tag, const V& v, int depth) {
-    do_indent(depth);
+  template<typename V>
+  auto writePrimElement(std::string_view tag, const V& v, int depth) -> void {
+    doIndent(depth);
     out_ += '<';
     out_ += tag;
     out_ += '>';
-    write_scalar<false>(v);
+    writeScalar<false>(v);
     out_ += "</";
     out_ += tag;
     out_ += '>';
-    do_newline();
+    doNewline();
   }
 
-  template <typename V>
-  void write_field_value(std::string_view tag, const V& v, int depth) {
+  template<typename V>
+  auto writeFieldValue(std::string_view tag, const V& v, int depth) -> void {
     if constexpr (XmlUniquePtr<V>) {
       if (v) {  // null optional/recursive child: omit the element entirely
-        write_element(tag, *v, depth);
+        writeElement(tag, *v, depth);
       }
     } else if constexpr (XmlOptional<V>) {
       if (v) {  // disengaged optional: omit the element entirely
-        write_field_value(tag, *v, depth);
+        writeFieldValue(tag, *v, depth);
       }
     } else if constexpr (XmlScalar<V>) {
-      write_prim_element(tag, v, depth);
+      writePrimElement(tag, v, depth);
     } else {
       static_assert(XmlObject<V>, "field type must be XmlScalar or XmlObject");
-      write_element(tag, v, depth);
+      writeElement(tag, v, depth);
     }
   }
 
   // Writes the items of a list/container, space-separated (XSD xs:list form).
-  template <typename M>
-  void write_list_items(const M& container) {
+  template<typename M>
+  auto writeListItems(const M& container) -> void {
     bool first = true;
     auto write_one = [&](const auto& v) {
-      if (!first) out_ += ' ';
+      if (!first) {
+        out_ += ' ';
+      }
       first = false;
-      write_scalar<true>(v);
+      writeScalar<true>(v);
     };
     if constexpr (XmlFixedContainer<M>) {
       using Traits = XmlContainerTraits<M>;
-      for (size_t i = 0; i < Traits::capacity; ++i)
+      for (size_t i = 0; i < Traits::capacity; ++i) {
         write_one(Traits::at(container, i));
+      }
     } else {
-      for (const auto& v : container) write_one(v);
+      for (const auto& v : container) {
+        write_one(v);
+      }
     }
   }
 
-  template <typename T, size_t I>
-  void write_attr_if(const T& obj) {
+  template<typename T, size_t I>
+  auto writeAttrIf(const T& obj) -> void {
     constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
     if constexpr (f.kind == FieldKind::Attr) {
       using M = std::remove_cvref_t<decltype(obj.*(f.member))>;
@@ -2931,57 +2851,55 @@ class Serializer {
         out_ += ' ';
         out_ += f.xml_name;
         out_ += "=\"";
-        write_list_items(obj.*(f.member));
+        writeListItems(obj.*(f.member));
         out_ += '"';
       } else if constexpr (XmlOptional<M>) {
         if (const auto& m = obj.*(f.member)) {  // omit absent optional attrs
-          write_attr_value(f.xml_name, *m);
+          writeAttrValue(f.xml_name, *m);
         }
       } else {
-        write_attr_value(f.xml_name, obj.*(f.member));
+        writeAttrValue(f.xml_name, obj.*(f.member));
       }
     }
   }
 
-  template <typename T, size_t... I>
-  void write_attrs(const T& obj, std::index_sequence<I...>) {
-    (..., write_attr_if<T, I>(obj));
+  template<typename T, size_t... I>
+  auto writeAttrs(const T& obj, std::index_sequence<I...>) -> void {
+    (..., writeAttrIf<T, I>(obj));
   }
 
   // Writes the active alternative of a variant under its bound element name.
-  template <typename FieldT, typename Var>
-  void write_variant_active(const FieldT& f, const Var& var, int depth) {
+  template<typename FieldT, typename Var>
+  auto writeVariantActive(const FieldT& f, const Var& var, int depth) -> void {
     [&]<size_t... J>(std::index_sequence<J...>) {
-      (..., (var.index() == J
-                 ? write_field_value(f.names[J], std::get<J>(var), depth)
-                 : void()));
+      (..., (var.index() == J ? writeFieldValue(f.names[J], std::get<J>(var), depth) : void()));
     }(std::make_index_sequence<std::variant_size_v<Var>>{});
   }
 
-  template <typename T, size_t I>
-  void write_child(const T& obj, int depth) {
+  template<typename T, size_t I>
+  auto writeChild(const T& obj, int depth) -> void {
     constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
     if constexpr (f.kind == FieldKind::Attr) {
       // written on opening tag
     } else if constexpr (f.kind == FieldKind::Value) {
-      // emitted inline by write_element, not as a child
+      // emitted inline by writeElement, not as a child
     } else if constexpr (f.kind == FieldKind::List) {
-      do_indent(depth);
+      doIndent(depth);
       out_ += '<';
       out_ += f.xml_name;
       out_ += '>';
-      write_list_items(obj.*(f.member));
+      writeListItems(obj.*(f.member));
       out_ += "</";
       out_ += f.xml_name;
       out_ += '>';
-      do_newline();
+      doNewline();
     } else if constexpr (f.kind == FieldKind::Variant) {
       using M = std::decay_t<decltype(obj.*(f.member))>;
       if constexpr (detail::is_variant<M>::value) {
-        write_variant_active(f, obj.*(f.member), depth);
+        writeVariantActive(f, obj.*(f.member), depth);
       } else {
         for (const auto& item : obj.*(f.member)) {
-          write_variant_active(f, item, depth);
+          writeVariantActive(f, item, depth);
         }
       }
     } else if constexpr (f.kind == FieldKind::Container) {
@@ -2989,70 +2907,69 @@ class Serializer {
       if constexpr (XmlFixedContainer<M>) {
         using Traits = XmlContainerTraits<M>;
         for (size_t i = 0; i < Traits::capacity; ++i) {
-          write_field_value(f.xml_name, Traits::at(obj.*(f.member), i), depth);
+          writeFieldValue(f.xml_name, Traits::at(obj.*(f.member), i), depth);
         }
       } else {
         for (const auto& item : obj.*(f.member)) {
-          write_field_value(f.xml_name, item, depth);
+          writeFieldValue(f.xml_name, item, depth);
         }
       }
     } else {
-      write_field_value(f.xml_name, obj.*(f.member), depth);
+      writeFieldValue(f.xml_name, obj.*(f.member), depth);
     }
   }
 
-  template <typename T, size_t... I>
-  void write_children(const T& obj, int depth, std::index_sequence<I...>) {
-    (..., write_child<T, I>(obj, depth));
+  template<typename T, size_t... I>
+  auto writeChildren(const T& obj, int depth, std::index_sequence<I...>) -> void {
+    (..., writeChild<T, I>(obj, depth));
   }
 
-  template <typename T>
-  void write_element(std::string_view tag, const T& obj, int depth) {
-    constexpr size_t N = detail::field_count<T>;
+  template<typename T>
+  auto writeElement(std::string_view tag, const T& obj, int depth) -> void {
+    constexpr size_t N = detail::FIELD_COUNT<T>;
     using Seq = std::make_index_sequence<N>;
 
-    do_indent(depth);
+    doIndent(depth);
     out_ += '<';
     out_ += tag;
-    write_attrs<T>(obj, Seq{});
+    writeAttrs<T>(obj, Seq{});
 
-    if constexpr (detail::has_value_field<T>()) {
+    if constexpr (detail::has_valueField<T>()) {
       // simpleContent: <tag attrs>text</tag> on a single line.
-      constexpr size_t VI = detail::value_field_index<T>();
+      constexpr size_t VI = detail::valueField_index<T>();
       constexpr auto& vf = std::get<VI>(XmlMetadata<T>::fields);
       out_ += '>';
-      write_scalar<false>(obj.*(vf.member));
+      writeScalar<false>(obj.*(vf.member));
       out_ += "</";
       out_ += tag;
       out_ += '>';
-      do_newline();
-    } else if constexpr (detail::has_element_fields<T>() ||
-                         detail::has_variant_fields<T>()) {
+      doNewline();
+    } else if constexpr (detail::hasElementFields<T>() || detail::has_variantFields<T>()) {
       out_ += '>';
-      do_newline();
-      write_children<T>(obj, depth + 1, Seq{});
-      do_indent(depth);
+      doNewline();
+      writeChildren<T>(obj, depth + 1, Seq{});
+      doIndent(depth);
       out_ += "</";
       out_ += tag;
       out_ += '>';
-      do_newline();
+      doNewline();
     } else {
       out_ += "/>";
-      do_newline();
+      doNewline();
     }
   }
 };
 
 /// @brief Serializes object to an XML string under root_name.
-/// @tparam kPretty  If true, emits indented output.
+/// @tparam PRETTY  If true, emits indented output.
 /// @tparam T        XmlObject type with an XmlMetadata specialization.
 /// @param root_name Root element tag name.
 /// @param object    Object to serialize.
 /// @return XML string containing the serialized data.
-template <bool kPretty = true, typename T>
+template<bool PRETTY = true, typename T>
 auto serialize(std::string_view root_name, const T& object) -> std::string {
   std::string out;
-  Serializer<kPretty> s{out};
+  Serializer<PRETTY> s{out};
   s.write(root_name, object);
   return out;
 }
@@ -3062,19 +2979,19 @@ auto serialize(std::string_view root_name, const T& object) -> std::string {
 /// Specialize this (typically via xsdgen output) to enforce XSD facet
 /// constraints on a deserialized object. The default is a no-op.
 /// @return nullopt if all constraints pass, or a violation message.
-template <typename T>
+template<typename T>
 struct XmlConstraints {
-  static auto check(const T&) noexcept -> std::optional<std::string> {
-    return {};
-  }
+  static auto check(const T&) noexcept -> std::optional<std::string> { return {}; }
 };
 
 /// @brief Validates obj against its XmlConstraints<T> specialization.
 /// @return nullopt if valid, or a ValidationError describing the first violation.
-template <typename T>
+template<typename T>
 auto validate(const T& obj) -> std::optional<ValidationError> {
   auto msg = XmlConstraints<T>::check(obj);
-  if (!msg) return {};
+  if (!msg) {
+    return {};
+  }
   return ValidationError{std::move(*msg)};
 }
 

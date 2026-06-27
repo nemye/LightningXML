@@ -28,7 +28,7 @@ TEST_F(TurboBasicTests, ParsingNested) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "employee", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::RootElementNotFound);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::RootElementNotFound);
 
   xml::Parser correct_parser{xml_src};
   ASSERT_TRUE(xml::deserialize(correct_parser, "person", person));
@@ -77,14 +77,14 @@ TEST_F(TurboBasicTests, MalformedXmlReturnsFalse) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::UnexpectedEof);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::UnexpectedEof);
 }
 
 TEST_F(TurboBasicTests, EmptyInputReturnsFalse) {
   xml::Parser parser{""};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::RootElementNotFound);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::RootElementNotFound);
 }
 
 TEST_F(TurboBasicTests, ParsesFieldsOutOfOrder) {
@@ -188,8 +188,7 @@ TEST_F(TurboBasicTests, DeserializesFullOrganizationHierarchy) {
 
 /// @brief Tests that empty string attributes are parsed as empty string_views.
 TEST_F(TurboBasicTests, EmptyStringAttribute) {
-  constexpr std::string_view xml_src =
-      R"(<Organization id="1" name=""></Organization>)";
+  constexpr std::string_view xml_src = R"(<Organization id="1" name=""></Organization>)";
   xml::Parser parser{xml_src};
   Organization org;
 
@@ -239,14 +238,13 @@ TEST_F(TurboBasicTests, MalformedNumericDataFailsGracefully) {
   // Because pull() relies on read_element returning true for handled fields,
   // failing to parse 'age' causes it to return false, propagating up.
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::InvalidNumericValue);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::InvalidNumericValue);
 }
 
 /// @brief Tests that self-closing tags with attributes process the attributes
 /// and terminate correctly.
 TEST_F(TurboBasicTests, SelfClosingTagWithAttributes) {
-  constexpr std::string_view xml_src =
-      R"(<Users><User id="77" Name="Self" Email="none"/></Users>)";
+  constexpr std::string_view xml_src = R"(<Users><User id="77" Name="Self" Email="none"/></Users>)";
   xml::Parser parser{xml_src};
   Users users;
 
@@ -323,7 +321,7 @@ TEST_F(TurboBasicTests, MismatchedClosingTagsFailCleanly) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::ElementMismatch);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::ElementMismatch);
 }
 
 /// @brief Tests that both empty tags and self-closing tags yield empty string
@@ -355,7 +353,7 @@ TEST_F(TurboBasicTests, DeepMismatchedClosingTagFails) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::ElementMismatch);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::ElementMismatch);
 }
 
 /// @brief Tests that a close tag with no name (</>) is rejected as malformed.
@@ -364,7 +362,7 @@ TEST_F(TurboBasicTests, EmptyClosingTagNameFails) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::ExpectedNameInCloseTag);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::ExpectedNameInCloseTag);
 }
 
 /// @brief Tests that a stray close tag appearing before the root open tag
@@ -374,7 +372,7 @@ TEST_F(TurboBasicTests, StrayCloseTagBeforeRootFails) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::RootElementNotFound);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::RootElementNotFound);
 }
 
 /// @brief Tests that a non-xml processing instruction before the root element
@@ -435,7 +433,7 @@ TEST_F(TurboBasicTests, WhitespaceOnlyNumericFieldFails) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::InvalidNumericValue);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::InvalidNumericValue);
 }
 
 /// @brief Tests that a numeric field with whitespace padding around a valid
@@ -451,12 +449,11 @@ TEST_F(TurboBasicTests, WhitespacePaddedNumericFieldFails) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::InvalidNumericValue);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::InvalidNumericValue);
 }
 
 TEST_F(TurboBasicTests, ParserCanBeResetAndReused) {
-  constexpr std::string_view xml_src =
-      R"(<person><name>Alice</name><age>30</age></person>)";
+  constexpr std::string_view xml_src = R"(<person><name>Alice</name><age>30</age></person>)";
 
   xml::Parser parser{xml_src};
 
@@ -478,7 +475,7 @@ TEST_F(TurboBasicTests, PrimitiveFastPathTruncatedCloseTag) {
   xml::Parser parser{xml};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::ExpectedCloseTagEnd);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::ExpectedCloseTagEnd);
 }
 
 TEST_F(TurboBasicTests, IgnoresTrailingDocumentContent) {
@@ -552,7 +549,7 @@ TEST_F(TurboBasicTests, TruncatedUnknownSubtreeFails) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::UnexpectedEof);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::UnexpectedEof);
 }
 
 /// @brief An unterminated attribute quote inside an unknown subtree must
@@ -563,12 +560,11 @@ TEST_F(TurboBasicTests, UnterminatedQuoteInUnknownSubtreeFails) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::UnexpectedEof);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::UnexpectedEof);
 }
 
 TEST_F(TurboBasicTests, SingleQuotedAttributes) {
-  constexpr std::string_view xml_src =
-      R"(<Users><User id='123'></User></Users>)";
+  constexpr std::string_view xml_src = R"(<Users><User id='123'></User></Users>)";
 
   xml::Parser parser{xml_src};
 
@@ -586,18 +582,17 @@ TEST_F(TurboBasicTests, MissingAttributeQuoteFails) {
 
   Users users;
   EXPECT_FALSE(xml::deserialize(parser, "Users", users));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::ExpectedQuotedValue);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::ExpectedQuotedValue);
 }
 
 TEST_F(TurboBasicTests, UnterminatedAttributeFails) {
-  constexpr std::string_view xml_src =
-      R"(<Users><User id="123></User></Users>)";
+  constexpr std::string_view xml_src = R"(<Users><User id="123></User></Users>)";
 
   xml::Parser parser{xml_src};
 
   Users users;
   EXPECT_FALSE(xml::deserialize(parser, "Users", users));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::UnterminatedAttributeValue);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::UnterminatedAttributeValue);
 }
 
 TEST_F(TurboBasicTests, UnterminatedCommentFails) {
@@ -612,7 +607,7 @@ TEST_F(TurboBasicTests, UnterminatedCommentFails) {
 
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::UnterminatedComment);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::UnterminatedComment);
 }
 
 TEST_F(TurboBasicTests, UnterminatedCDataFails) {
@@ -626,18 +621,17 @@ TEST_F(TurboBasicTests, UnterminatedCDataFails) {
 
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::UnterminatedCData);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::UnterminatedCData);
 }
 
 TEST_F(TurboBasicTests, UnterminatedProcessingInstructionFails) {
-  constexpr std::string_view xml_src =
-      R"(<?xml-stylesheet type="text/xsl"<person></person>)";
+  constexpr std::string_view xml_src = R"(<?xml-stylesheet type="text/xsl"<person></person>)";
 
   xml::Parser parser{xml_src};
 
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::UnterminatedPi);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::UnterminatedPi);
 }
 
 TEST_F(TurboBasicTests, NamespacePrefixesAreIgnoredForMatching) {
@@ -658,8 +652,7 @@ TEST_F(TurboBasicTests, NamespacePrefixesAreIgnoredForMatching) {
 }
 
 TEST_F(TurboBasicTests, NamespacedAttributes) {
-  constexpr std::string_view xml_src =
-      R"(<Users><User ns:id="55"></User></Users>)";
+  constexpr std::string_view xml_src = R"(<Users><User ns:id="55"></User></Users>)";
 
   xml::Parser parser{xml_src};
 
@@ -775,7 +768,7 @@ TEST_F(TurboBasicTests, RootTagMismatchFails) {
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::RootElementNotFound);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::RootElementNotFound);
 }
 
 /// @brief Verifies that attributes located directly on the root node being
@@ -835,25 +828,23 @@ TEST_F(TurboBasicTests, MixedSelfClosingAndStandardTagsInVector) {
 
 /// @brief Tag names cannot start with a number according to XML specs.
 TEST_F(TurboBasicTests, InvalidTagNamesFailCleanly) {
-  constexpr std::string_view xml_src =
-      R"(<person><123name>Bob</123name></person>)";
+  constexpr std::string_view xml_src = R"(<person><123name>Bob</123name></person>)";
   xml::Parser parser{xml_src};
   Person person;
   // Should fail cleanly inside `parse_element_open` since '1' is not
   // `is_name_start`
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::UnexpectedCharAfterLt);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::UnexpectedCharAfterLt);
 }
 
 /// @brief Tests malformed tags holding garbage characters where attributes are
 /// expected.
 TEST_F(TurboBasicTests, MalformedTagGarbageFails) {
-  constexpr std::string_view xml_src =
-      R"(<person !@#$gar> <name>Alice</name> </person>)";
+  constexpr std::string_view xml_src = R"(<person !@#$gar> <name>Alice</name> </person>)";
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::ExpectedAttributeName);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::ExpectedAttributeName);
 }
 
 // Helper to generate perfectly nested XML
@@ -871,7 +862,7 @@ auto generate_nested_xml(const size_t depth) -> std::string {
 
 /// @brief Tests that the parser successfully evaluates exactly kMaxDepth
 TEST_F(TurboBasicTests, MaxDepthBoundarySucceeds) {
-  std::string xml_src = generate_nested_xml(xml::Parser::kMaxDepth);
+  std::string xml_src = generate_nested_xml(xml::Parser::MAX_DEPTH);
 
   xml::Parser parser{xml_src};
   TreeNode root;
@@ -884,12 +875,12 @@ TEST_F(TurboBasicTests, MaxDepthBoundarySucceeds) {
 
 /// @brief Tests that the parser cleanly aborts when depth hits kMaxDepth + 1
 TEST_F(TurboBasicTests, MaxDepthExceededFailsCleanly) {
-  std::string xml_src = generate_nested_xml(xml::Parser::kMaxDepth + 1);
+  std::string xml_src = generate_nested_xml(xml::Parser::MAX_DEPTH + 1);
 
   xml::Parser parser{xml_src};
   TreeNode root;
   EXPECT_FALSE(xml::deserialize(parser, "Node", root));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::DepthExceeded);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::DepthExceeded);
 }
 
 // ---- try_begin_element fast-path coverage ----
@@ -910,8 +901,7 @@ TEST_F(TurboBasicTests, DeepNestingNoWhitespace) {
 TEST_F(TurboBasicTests, DeepNestingMultipleNoWhitespace) {
   std::string xml = "<DeepList>";
   for (int i = 0; i < 5; ++i) {
-    xml += "<L1><L2><L3><L4><L5><v>" + std::to_string(i) +
-           "</v></L5></L4></L3></L2></L1>";
+    xml += "<L1><L2><L3><L4><L5><v>" + std::to_string(i) + "</v></L5></L4></L3></L2></L1>";
   }
   xml += "</DeepList>";
 
@@ -944,8 +934,7 @@ TEST_F(TurboBasicTests, DeepNestingWithNamespaceFallthrough) {
 /// to fail (char after name is ' ', not '>'), falling through to normal
 /// tokenisation. TreeNode has no AttrField so attributes are silently ignored.
 TEST_F(TurboBasicTests, TreeNodeWithAttributedChildrenFallthrough) {
-  constexpr std::string_view xml_src =
-      R"(<Node><Node id="1"><Node/></Node><Node id="2"/></Node>)";
+  constexpr std::string_view xml_src = R"(<Node><Node id="1"><Node/></Node><Node id="2"/></Node>)";
   xml::Parser parser{xml_src};
   TreeNode root;
   ASSERT_TRUE(xml::deserialize(parser, "Node", root));
@@ -957,8 +946,7 @@ TEST_F(TurboBasicTests, TreeNodeWithAttributedChildrenFallthrough) {
 /// @brief Self-closing tags inside a tree hit the try_begin_element
 /// self-closing path (<Node/> matched as name + "/>").
 TEST_F(TurboBasicTests, SelfClosingViaFastPath) {
-  constexpr std::string_view xml_src =
-      R"(<Node><Node/><Node><Node/></Node></Node>)";
+  constexpr std::string_view xml_src = R"(<Node><Node/><Node><Node/></Node></Node>)";
   xml::Parser parser{xml_src};
   TreeNode root;
   ASSERT_TRUE(xml::deserialize(parser, "Node", root));
@@ -1179,10 +1167,10 @@ TEST_F(TurboBasicTests, ResetAfterFailedParse) {
 
   Person p1;
   EXPECT_FALSE(xml::deserialize(parser, "employee", p1));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::RootElementNotFound);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::RootElementNotFound);
 
   parser.reset();
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::None);  // reset clears it
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::None);  // reset clears it
 
   Person p2;
   ASSERT_TRUE(xml::deserialize(parser, "person", p2));
@@ -1239,12 +1227,11 @@ TEST_F(TurboBasicTests, CommentWithNearMissDelimiters) {
 /// @brief XML forbids "--" within a comment's content (WFC). TurboXML enforces
 /// this in a single scanning pass and reports MalformedComment.
 TEST_F(TurboBasicTests, DoubleHyphenInsideCommentRejected) {
-  constexpr std::string_view xml_src =
-      R"(<person><!-- bad -- comment --><name>X</name></person>)";
+  constexpr std::string_view xml_src = R"(<person><!-- bad -- comment --><name>X</name></person>)";
   xml::Parser parser{xml_src};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::MalformedComment);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::MalformedComment);
 }
 
 /// @brief Verifies that long comments interleaved with elements are
@@ -1297,8 +1284,7 @@ TEST_F(TurboBasicTests, StringFieldsMaterializeData) {
 TEST_F(TurboBasicTests, StringAttrsMaterializeData) {
   OwnedUser user;
   {
-    std::string xml =
-        R"(<OwnedUser id="42" role="admin"><Name>Bob</Name></OwnedUser>)";
+    std::string xml = R"(<OwnedUser id="42" role="admin"><Name>Bob</Name></OwnedUser>)";
     xml::Parser parser{xml};
     ASSERT_TRUE(xml::deserialize(parser, "OwnedUser", user));
   }
@@ -1394,7 +1380,7 @@ TEST_F(TurboBasicTests, ArrFieldEmpty) {
   EXPECT_TRUE(skills.items[2].empty());
 }
 
-/// @brief Self-closing root with arr_field.
+/// @brief Self-closing root with arrField.
 TEST_F(TurboBasicTests, ArrFieldSelfClosingRoot) {
   constexpr std::string_view xml_src = R"(<FixedSkills/>)";
   xml::Parser parser{xml_src};
@@ -1535,12 +1521,11 @@ TEST_F(TurboBasicTests, BoolFieldsAllLexicalForms) {
 
 /// @brief Invalid bool element text fails the parse, mirroring numeric fields.
 TEST_F(TurboBasicTests, BoolFieldRejectsInvalidText) {
-  constexpr std::string_view xml_src =
-      R"(<Toggle enabled="1"><active>yes</active></Toggle>)";
+  constexpr std::string_view xml_src = R"(<Toggle enabled="1"><active>yes</active></Toggle>)";
   xml::Parser parser{xml_src};
   Toggle t;
   EXPECT_FALSE(xml::deserialize(parser, "Toggle", t));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::InvalidNumericValue);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::InvalidNumericValue);
 }
 
 /// @brief An unparseable bool attribute leaves the default value, consistent
@@ -1743,38 +1728,34 @@ struct ReqRecord {
   std::string_view note;  // optional element
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<ReqRecord> {
-  static constexpr auto fields =
-      std::make_tuple(xml::attr_field("id", &ReqRecord::id, true),
-                      xml::field("name", &ReqRecord::name, true),
-                      xml::field("note", &ReqRecord::note));
+  static constexpr auto fields = std::make_tuple(xml::attrField("id", &ReqRecord::id, true),
+                                                 xml::field("name", &ReqRecord::name, true),
+                                                 xml::field("note", &ReqRecord::note));
 };
 
 struct ReqList {
   std::vector<std::string_view> items;  // required: at least one
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<ReqList> {
-  static constexpr auto fields =
-      std::make_tuple(xml::vec_field("item", &ReqList::items, true));
+  static constexpr auto fields = std::make_tuple(xml::vecField("item", &ReqList::items, true));
 };
 
 struct ReqParent {
   ReqRecord child;  // required nested object
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<ReqParent> {
-  static constexpr auto fields =
-      std::make_tuple(xml::field("ReqRecord", &ReqParent::child, true));
+  static constexpr auto fields = std::make_tuple(xml::field("ReqRecord", &ReqParent::child, true));
 };
 
 /// @brief All required fields present, optional one absent -> success.
 TEST_F(TurboBasicTests, RequiredFieldsAllPresentOptionalAbsent) {
-  constexpr std::string_view xml_src =
-      R"(<ReqRecord id="7"><name>Ada</name></ReqRecord>)";
+  constexpr std::string_view xml_src = R"(<ReqRecord id="7"><name>Ada</name></ReqRecord>)";
   xml::Parser parser{xml_src};
   ReqRecord rec;
   ASSERT_TRUE(xml::deserialize(parser, "ReqRecord", rec));
@@ -1806,22 +1787,20 @@ TEST_F(TurboBasicTests, RequiredFieldsOutOfOrder) {
 
 /// @brief Missing a required child element -> MissingRequiredField.
 TEST_F(TurboBasicTests, MissingRequiredElementFails) {
-  constexpr std::string_view xml_src =
-      R"(<ReqRecord id="7"><note>hi</note></ReqRecord>)";
+  constexpr std::string_view xml_src = R"(<ReqRecord id="7"><note>hi</note></ReqRecord>)";
   xml::Parser parser{xml_src};
   ReqRecord rec;
   EXPECT_FALSE(xml::deserialize(parser, "ReqRecord", rec));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::MissingRequiredField);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::MissingRequiredField);
 }
 
 /// @brief Missing a required attribute -> MissingRequiredField.
 TEST_F(TurboBasicTests, MissingRequiredAttributeFails) {
-  constexpr std::string_view xml_src =
-      R"(<ReqRecord><name>Ada</name></ReqRecord>)";
+  constexpr std::string_view xml_src = R"(<ReqRecord><name>Ada</name></ReqRecord>)";
   xml::Parser parser{xml_src};
   ReqRecord rec;
   EXPECT_FALSE(xml::deserialize(parser, "ReqRecord", rec));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::MissingRequiredField);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::MissingRequiredField);
 }
 
 /// @brief A self-closing element cannot satisfy a required child element,
@@ -1831,7 +1810,7 @@ TEST_F(TurboBasicTests, SelfClosingMissingRequiredElementFails) {
   xml::Parser parser{xml_src};
   ReqRecord rec;
   EXPECT_FALSE(xml::deserialize(parser, "ReqRecord", rec));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::MissingRequiredField);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::MissingRequiredField);
 }
 
 /// @brief A required container with zero matching children fails.
@@ -1840,14 +1819,13 @@ TEST_F(TurboBasicTests, RequiredContainerEmptyFails) {
   xml::Parser parser{xml_src};
   ReqList list;
   EXPECT_FALSE(xml::deserialize(parser, "ReqList", list));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::MissingRequiredField);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::MissingRequiredField);
 }
 
 /// @brief A required container with at least one child succeeds (exercises the
 /// N==1 fast-path bit set).
 TEST_F(TurboBasicTests, RequiredContainerNonEmptySucceeds) {
-  constexpr std::string_view xml_src =
-      R"(<ReqList><item>a</item><item>b</item></ReqList>)";
+  constexpr std::string_view xml_src = R"(<ReqList><item>a</item><item>b</item></ReqList>)";
   xml::Parser parser{xml_src};
   ReqList list;
   ASSERT_TRUE(xml::deserialize(parser, "ReqList", list));
@@ -1861,18 +1839,17 @@ TEST_F(TurboBasicTests, RequiredNestedObjectMissingFails) {
   xml::Parser parser{xml_src};
   ReqParent p;
   EXPECT_FALSE(xml::deserialize(parser, "ReqParent", p));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::MissingRequiredField);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::MissingRequiredField);
 }
 
 /// @brief A required nested object that is present but itself incomplete
 /// propagates MissingRequiredField from the inner pull().
 TEST_F(TurboBasicTests, RequiredNestedObjectIncompleteFails) {
-  constexpr std::string_view xml_src =
-      R"(<ReqParent><ReqRecord id="1"></ReqRecord></ReqParent>)";
+  constexpr std::string_view xml_src = R"(<ReqParent><ReqRecord id="1"></ReqRecord></ReqParent>)";
   xml::Parser parser{xml_src};
   ReqParent p;
   EXPECT_FALSE(xml::deserialize(parser, "ReqParent", p));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::MissingRequiredField);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::MissingRequiredField);
 }
 
 /// @brief A required nested object, fully populated, succeeds.
@@ -1891,8 +1868,8 @@ TEST_F(TurboBasicTests, RequiredNestedObjectCompleteSucceeds) {
 /// @brief Exactly kMaxAttributesPerElement attributes is accepted (boundary).
 TEST_F(TurboBasicTests, MaxAttributesBoundaryAccepted) {
   std::string xml = "<User";
-  xml.reserve(xml::Parser::kMaxAttributesPerElement * 5 + 16);
-  for (size_t i = 0; i < xml::Parser::kMaxAttributesPerElement; ++i) {
+  xml.reserve(xml::Parser::MAX_ATTRIBUTES_PER_ELEMENT * 5 + 16);
+  for (size_t i = 0; i < xml::Parser::MAX_ATTRIBUTES_PER_ELEMENT; ++i) {
     xml += R"( a="")";
   }
   xml += "/>";
@@ -1904,22 +1881,22 @@ TEST_F(TurboBasicTests, MaxAttributesBoundaryAccepted) {
 /// @brief One attribute past the cap is rejected with TooManyAttributes.
 TEST_F(TurboBasicTests, TooManyAttributesRejected) {
   std::string xml = "<User";
-  xml.reserve(xml::Parser::kMaxAttributesPerElement * 5 + 16);
-  for (size_t i = 0; i <= xml::Parser::kMaxAttributesPerElement; ++i) {
+  xml.reserve(xml::Parser::MAX_ATTRIBUTES_PER_ELEMENT * 5 + 16);
+  for (size_t i = 0; i <= xml::Parser::MAX_ATTRIBUTES_PER_ELEMENT; ++i) {
     xml += R"( a="")";
   }
   xml += "/>";
   xml::Parser parser{xml};
   User user;
   EXPECT_FALSE(xml::deserialize(parser, "User", user));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::TooManyAttributes);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::TooManyAttributes);
 }
 
 /// @brief A deeply nested *unknown* subtree beyond kMaxDepth is rejected by
 /// skip_element (depth parity with the recursive descent path) rather than
 /// silently skipped.
 TEST_F(TurboBasicTests, UnknownSubtreeDepthLimited) {
-  const int over = xml::Parser::kMaxDepth + 5;
+  const int over = xml::Parser::MAX_DEPTH + 5;
   std::string xml = "<person><name>A</name><unknown>";
   for (int i = 0; i < over; ++i) {
     xml += "<n>";
@@ -1931,7 +1908,7 @@ TEST_F(TurboBasicTests, UnknownSubtreeDepthLimited) {
   xml::Parser parser{xml};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.error_code(), xml::ErrorCode::DepthExceeded);
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::DepthExceeded);
 }
 
 // ---- Normalization & reference expansion (NormalizingParser, opt-in) ----
@@ -1946,11 +1923,10 @@ struct NormRecord {
   std::string_view raw;  // string_view stays raw even under normalization
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<NormRecord> {
   static constexpr auto fields =
-      std::make_tuple(xml::attr_field("a", &NormRecord::attr),
-                      xml::field("body", &NormRecord::body),
+      std::make_tuple(xml::attrField("a", &NormRecord::attr), xml::field("body", &NormRecord::body),
                       xml::field("raw", &NormRecord::raw));
 };
 
@@ -1958,7 +1934,7 @@ struct NormText {
   std::string v;
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<NormText> {
   static constexpr auto fields = std::make_tuple(xml::field("v", &NormText::v));
 };
@@ -1976,8 +1952,7 @@ TEST_F(TurboBasicTests, NormalizePredefinedEntities) {
 /// @brief Decimal and hex character references expand, including a multi-byte
 /// code point encoded as UTF-8.
 TEST_F(TurboBasicTests, NormalizeCharacterReferences) {
-  constexpr std::string_view src =
-      R"(<NormText><v>&#65;&#x42;&#x2764;</v></NormText>)";
+  constexpr std::string_view src = R"(<NormText><v>&#65;&#x42;&#x2764;</v></NormText>)";
   xml::NormalizingParser p{src};
   NormText t;
   ASSERT_TRUE(xml::deserialize(p, "NormText", t));
@@ -1988,8 +1963,7 @@ TEST_F(TurboBasicTests, NormalizeCharacterReferences) {
 /// @brief CDATA content is copied literally: references inside it are NOT
 /// expanded, and it concatenates with surrounding text runs.
 TEST_F(TurboBasicTests, NormalizeCDataLiteralAndConcatenated) {
-  constexpr std::string_view src =
-      R"(<NormText><v>x &amp; <![CDATA[y &amp; z]]> w</v></NormText>)";
+  constexpr std::string_view src = R"(<NormText><v>x &amp; <![CDATA[y &amp; z]]> w</v></NormText>)";
   xml::NormalizingParser p{src};
   NormText t;
   ASSERT_TRUE(xml::deserialize(p, "NormText", t));
@@ -2008,8 +1982,7 @@ TEST_F(TurboBasicTests, NormalizeLineEndings) {
 /// @brief Attribute values: literal whitespace (tab/newline) becomes a space,
 /// but whitespace introduced via a character reference is preserved literally.
 TEST_F(TurboBasicTests, NormalizeAttributeWhitespace) {
-  const std::string src =
-      "<NormRecord a=\"x\ty\nz&#9;w\"><body>b</body><raw>r</raw></NormRecord>";
+  const std::string src = "<NormRecord a=\"x\ty\nz&#9;w\"><body>b</body><raw>r</raw></NormRecord>";
   xml::NormalizingParser p{src};
   NormRecord r;
   ASSERT_TRUE(xml::deserialize(p, "NormRecord", r));
@@ -2045,7 +2018,7 @@ TEST_F(TurboBasicTests, NormalizeUndefinedEntityFailsInText) {
   xml::NormalizingParser p{src};
   NormText t;
   EXPECT_FALSE(xml::deserialize(p, "NormText", t));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UndefinedEntity);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UndefinedEntity);
 }
 
 TEST_F(TurboBasicTests, NormalizeUndefinedEntityFailsInAttribute) {
@@ -2054,7 +2027,7 @@ TEST_F(TurboBasicTests, NormalizeUndefinedEntityFailsInAttribute) {
   xml::NormalizingParser p{src};
   NormRecord r;
   EXPECT_FALSE(xml::deserialize(p, "NormRecord", r));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UndefinedEntity);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UndefinedEntity);
 }
 
 /// @brief A malformed or out-of-range character reference fails with
@@ -2064,7 +2037,7 @@ TEST_F(TurboBasicTests, NormalizeInvalidCharRefFails) {
   xml::NormalizingParser p{src};
   NormText t;
   EXPECT_FALSE(xml::deserialize(p, "NormText", t));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::InvalidCharRef);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::InvalidCharRef);
 }
 
 /// @brief A character reference to a code point outside the XML Char production
@@ -2074,7 +2047,7 @@ TEST_F(TurboBasicTests, NormalizeForbiddenCodePointFails) {
   xml::NormalizingParser p{src};
   NormText t;
   EXPECT_FALSE(xml::deserialize(p, "NormText", t));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::InvalidCharRef);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::InvalidCharRef);
 }
 
 // ---- Strict (fully-conforming) parser: no false positives ----
@@ -2086,8 +2059,7 @@ TEST_F(TurboBasicTests, NormalizeForbiddenCodePointFails) {
 /// @brief A CDATA section's terminating "]]>" must NOT be flagged as the
 /// forbidden CharData sequence (the check runs on text, not CDATA content).
 TEST_F(TurboBasicTests, StrictAcceptsCDataTerminator) {
-  constexpr std::string_view xml_src =
-      R"(<NormText><v><![CDATA[x]]></v></NormText>)";
+  constexpr std::string_view xml_src = R"(<NormText><v><![CDATA[x]]></v></NormText>)";
   xml::StrictParser p{xml_src};
   NormText t;
   ASSERT_TRUE(xml::deserialize(p, "NormText", t));
@@ -2121,28 +2093,24 @@ TEST_F(TurboBasicTests, StrictParserNormalizes) {
 
 // ---- Enumerations via XmlEnumTraits (string tokens) ----
 enum class Priority { Low, Medium, High };
-template <>
+template<>
 struct xml::XmlEnumTraits<Priority> {
-  static constexpr auto values =
-      xml::enum_table<Priority>({{"Low", Priority::Low},
-                                 {"Medium", Priority::Medium},
-                                 {"High", Priority::High}});
+  static constexpr auto values = xml::enumTable<Priority>(
+      {{"Low", Priority::Low}, {"Medium", Priority::Medium}, {"High", Priority::High}});
 };
 
 struct Task {
   Priority priority{};  // attribute
   Priority level{};     // child element
 };
-template <>
+template<>
 struct xml::XmlMetadata<Task> {
-  static constexpr auto fields =
-      std::make_tuple(xml::attr_field("priority", &Task::priority),
-                      xml::field("level", &Task::level));
+  static constexpr auto fields = std::make_tuple(xml::attrField("priority", &Task::priority),
+                                                 xml::field("level", &Task::level));
 };
 
 TEST_F(TurboBasicTests, EnumFieldRoundTrip) {
-  constexpr std::string_view src =
-      R"(<Task priority="High"><level>Medium</level></Task>)";
+  constexpr std::string_view src = R"(<Task priority="High"><level>Medium</level></Task>)";
   xml::Parser p{src};
   Task t;
   ASSERT_TRUE(xml::deserialize(p, "Task", t));
@@ -2153,12 +2121,11 @@ TEST_F(TurboBasicTests, EnumFieldRoundTrip) {
 }
 
 TEST_F(TurboBasicTests, EnumUnknownTokenFails) {
-  constexpr std::string_view src =
-      R"(<Task priority="High"><level>Wizard</level></Task>)";
+  constexpr std::string_view src = R"(<Task priority="High"><level>Wizard</level></Task>)";
   xml::Parser p{src};
   Task t;
   EXPECT_FALSE(xml::deserialize(p, "Task", t));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::InvalidEnumValue);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::InvalidEnumValue);
 }
 
 // ---- Value field (XSD simpleContent) ----
@@ -2166,24 +2133,21 @@ struct Money {
   std::string_view currency;  // attribute
   double amount{};            // element's own text
 };
-template <>
+template<>
 struct xml::XmlMetadata<Money> {
-  static constexpr auto fields =
-      std::make_tuple(xml::attr_field("currency", &Money::currency),
-                      xml::value_field(&Money::amount));
+  static constexpr auto fields = std::make_tuple(xml::attrField("currency", &Money::currency),
+                                                 xml::valueField(&Money::amount));
 };
 struct Invoice {
   Money total;
 };
-template <>
+template<>
 struct xml::XmlMetadata<Invoice> {
-  static constexpr auto fields =
-      std::make_tuple(xml::field("total", &Invoice::total));
+  static constexpr auto fields = std::make_tuple(xml::field("total", &Invoice::total));
 };
 
 TEST_F(TurboBasicTests, ValueFieldNumericRoundTrip) {
-  constexpr std::string_view src =
-      R"(<Invoice><total currency="USD">9.99</total></Invoice>)";
+  constexpr std::string_view src = R"(<Invoice><total currency="USD">9.99</total></Invoice>)";
   xml::Parser p{src};
   Invoice inv;
   ASSERT_TRUE(xml::deserialize(p, "Invoice", inv));
@@ -2197,24 +2161,21 @@ struct Measure {
   std::string unit;  // attribute
   std::string text;  // required value
 };
-template <>
+template<>
 struct xml::XmlMetadata<Measure> {
-  static constexpr auto fields =
-      std::make_tuple(xml::attr_field("unit", &Measure::unit),
-                      xml::value_field(&Measure::text, true));
+  static constexpr auto fields = std::make_tuple(xml::attrField("unit", &Measure::unit),
+                                                 xml::valueField(&Measure::text, true));
 };
 struct MeasureDoc {
   Measure m;
 };
-template <>
+template<>
 struct xml::XmlMetadata<MeasureDoc> {
-  static constexpr auto fields =
-      std::make_tuple(xml::field("m", &MeasureDoc::m));
+  static constexpr auto fields = std::make_tuple(xml::field("m", &MeasureDoc::m));
 };
 
 TEST_F(TurboBasicTests, ValueFieldStringNormalized) {
-  constexpr std::string_view src =
-      R"(<MeasureDoc><m unit="kg">a &amp; b</m></MeasureDoc>)";
+  constexpr std::string_view src = R"(<MeasureDoc><m unit="kg">a &amp; b</m></MeasureDoc>)";
   xml::NormalizingParser p{src};
   MeasureDoc d;
   ASSERT_TRUE(xml::deserialize(p, "MeasureDoc", d));
@@ -2224,13 +2185,12 @@ TEST_F(TurboBasicTests, ValueFieldStringNormalized) {
 
 TEST_F(TurboBasicTests, ValueFieldRequiredEmptyFails) {
   // Self-closing and empty both lack text -> required value field is missing.
-  for (std::string_view src :
-       {std::string_view(R"(<MeasureDoc><m unit="kg"/></MeasureDoc>)"),
-        std::string_view(R"(<MeasureDoc><m unit="kg"></m></MeasureDoc>)")}) {
+  for (std::string_view src : {std::string_view(R"(<MeasureDoc><m unit="kg"/></MeasureDoc>)"),
+                               std::string_view(R"(<MeasureDoc><m unit="kg"></m></MeasureDoc>)")}) {
     xml::Parser p{src};
     MeasureDoc d;
     EXPECT_FALSE(xml::deserialize(p, "MeasureDoc", d));
-    EXPECT_EQ(p.error_code(), xml::ErrorCode::MissingRequiredField);
+    EXPECT_EQ(p.errorCode(), xml::ErrorCode::MissingRequiredField);
   }
 }
 
@@ -2239,16 +2199,15 @@ struct Section {
   std::string_view title;
   std::unique_ptr<Section> sub;  // optional, recursive
 };
-template <>
+template<>
 struct xml::XmlMetadata<Section> {
-  static constexpr auto fields = std::make_tuple(
-      xml::field("title", &Section::title), xml::field("sub", &Section::sub));
+  static constexpr auto fields =
+      std::make_tuple(xml::field("title", &Section::title), xml::field("sub", &Section::sub));
 };
 
 TEST_F(TurboBasicTests, UniquePtrRecursionChain) {
-  constexpr std::string_view src =
-      R"(<Section><title>A</title><sub><title>B</title>)"
-      R"(<sub><title>C</title></sub></sub></Section>)";
+  constexpr std::string_view src = R"(<Section><title>A</title><sub><title>B</title>)"
+                                   R"(<sub><title>C</title></sub></sub></Section>)";
   xml::Parser p{src};
   Section s;
   ASSERT_TRUE(xml::deserialize(p, "Section", s));
@@ -2349,82 +2308,54 @@ struct Wide72 {
   int a70{};
   int a71{};
 };
-template <>
+template<>
 struct xml::XmlMetadata<Wide72> {
-  static constexpr auto fields = std::make_tuple(
-      xml::attr_field("a0", &Wide72::a0, true),
-      xml::attr_field("a1", &Wide72::a1), xml::attr_field("a2", &Wide72::a2),
-      xml::attr_field("a3", &Wide72::a3), xml::attr_field("a4", &Wide72::a4),
-      xml::attr_field("a5", &Wide72::a5), xml::attr_field("a6", &Wide72::a6),
-      xml::attr_field("a7", &Wide72::a7), xml::attr_field("a8", &Wide72::a8),
-      xml::attr_field("a9", &Wide72::a9), xml::attr_field("a10", &Wide72::a10),
-      xml::attr_field("a11", &Wide72::a11),
-      xml::attr_field("a12", &Wide72::a12),
-      xml::attr_field("a13", &Wide72::a13),
-      xml::attr_field("a14", &Wide72::a14),
-      xml::attr_field("a15", &Wide72::a15),
-      xml::attr_field("a16", &Wide72::a16),
-      xml::attr_field("a17", &Wide72::a17),
-      xml::attr_field("a18", &Wide72::a18),
-      xml::attr_field("a19", &Wide72::a19),
-      xml::attr_field("a20", &Wide72::a20),
-      xml::attr_field("a21", &Wide72::a21),
-      xml::attr_field("a22", &Wide72::a22),
-      xml::attr_field("a23", &Wide72::a23),
-      xml::attr_field("a24", &Wide72::a24),
-      xml::attr_field("a25", &Wide72::a25),
-      xml::attr_field("a26", &Wide72::a26),
-      xml::attr_field("a27", &Wide72::a27),
-      xml::attr_field("a28", &Wide72::a28),
-      xml::attr_field("a29", &Wide72::a29),
-      xml::attr_field("a30", &Wide72::a30),
-      xml::attr_field("a31", &Wide72::a31),
-      xml::attr_field("a32", &Wide72::a32),
-      xml::attr_field("a33", &Wide72::a33),
-      xml::attr_field("a34", &Wide72::a34),
-      xml::attr_field("a35", &Wide72::a35),
-      xml::attr_field("a36", &Wide72::a36),
-      xml::attr_field("a37", &Wide72::a37),
-      xml::attr_field("a38", &Wide72::a38),
-      xml::attr_field("a39", &Wide72::a39),
-      xml::attr_field("a40", &Wide72::a40),
-      xml::attr_field("a41", &Wide72::a41),
-      xml::attr_field("a42", &Wide72::a42),
-      xml::attr_field("a43", &Wide72::a43),
-      xml::attr_field("a44", &Wide72::a44),
-      xml::attr_field("a45", &Wide72::a45),
-      xml::attr_field("a46", &Wide72::a46),
-      xml::attr_field("a47", &Wide72::a47),
-      xml::attr_field("a48", &Wide72::a48),
-      xml::attr_field("a49", &Wide72::a49),
-      xml::attr_field("a50", &Wide72::a50),
-      xml::attr_field("a51", &Wide72::a51),
-      xml::attr_field("a52", &Wide72::a52),
-      xml::attr_field("a53", &Wide72::a53),
-      xml::attr_field("a54", &Wide72::a54),
-      xml::attr_field("a55", &Wide72::a55),
-      xml::attr_field("a56", &Wide72::a56),
-      xml::attr_field("a57", &Wide72::a57),
-      xml::attr_field("a58", &Wide72::a58),
-      xml::attr_field("a59", &Wide72::a59),
-      xml::attr_field("a60", &Wide72::a60),
-      xml::attr_field("a61", &Wide72::a61),
-      xml::attr_field("a62", &Wide72::a62),
-      xml::attr_field("a63", &Wide72::a63),
-      xml::attr_field("a64", &Wide72::a64, true),
-      xml::attr_field("a65", &Wide72::a65),
-      xml::attr_field("a66", &Wide72::a66),
-      xml::attr_field("a67", &Wide72::a67),
-      xml::attr_field("a68", &Wide72::a68),
-      xml::attr_field("a69", &Wide72::a69),
-      xml::attr_field("a70", &Wide72::a70),
-      xml::attr_field("a71", &Wide72::a71, true));
+  static constexpr auto fields =
+      std::make_tuple(xml::attrField("a0", &Wide72::a0, true), xml::attrField("a1", &Wide72::a1),
+                      xml::attrField("a2", &Wide72::a2), xml::attrField("a3", &Wide72::a3),
+                      xml::attrField("a4", &Wide72::a4), xml::attrField("a5", &Wide72::a5),
+                      xml::attrField("a6", &Wide72::a6), xml::attrField("a7", &Wide72::a7),
+                      xml::attrField("a8", &Wide72::a8), xml::attrField("a9", &Wide72::a9),
+                      xml::attrField("a10", &Wide72::a10), xml::attrField("a11", &Wide72::a11),
+                      xml::attrField("a12", &Wide72::a12), xml::attrField("a13", &Wide72::a13),
+                      xml::attrField("a14", &Wide72::a14), xml::attrField("a15", &Wide72::a15),
+                      xml::attrField("a16", &Wide72::a16), xml::attrField("a17", &Wide72::a17),
+                      xml::attrField("a18", &Wide72::a18), xml::attrField("a19", &Wide72::a19),
+                      xml::attrField("a20", &Wide72::a20), xml::attrField("a21", &Wide72::a21),
+                      xml::attrField("a22", &Wide72::a22), xml::attrField("a23", &Wide72::a23),
+                      xml::attrField("a24", &Wide72::a24), xml::attrField("a25", &Wide72::a25),
+                      xml::attrField("a26", &Wide72::a26), xml::attrField("a27", &Wide72::a27),
+                      xml::attrField("a28", &Wide72::a28), xml::attrField("a29", &Wide72::a29),
+                      xml::attrField("a30", &Wide72::a30), xml::attrField("a31", &Wide72::a31),
+                      xml::attrField("a32", &Wide72::a32), xml::attrField("a33", &Wide72::a33),
+                      xml::attrField("a34", &Wide72::a34), xml::attrField("a35", &Wide72::a35),
+                      xml::attrField("a36", &Wide72::a36), xml::attrField("a37", &Wide72::a37),
+                      xml::attrField("a38", &Wide72::a38), xml::attrField("a39", &Wide72::a39),
+                      xml::attrField("a40", &Wide72::a40), xml::attrField("a41", &Wide72::a41),
+                      xml::attrField("a42", &Wide72::a42), xml::attrField("a43", &Wide72::a43),
+                      xml::attrField("a44", &Wide72::a44), xml::attrField("a45", &Wide72::a45),
+                      xml::attrField("a46", &Wide72::a46), xml::attrField("a47", &Wide72::a47),
+                      xml::attrField("a48", &Wide72::a48), xml::attrField("a49", &Wide72::a49),
+                      xml::attrField("a50", &Wide72::a50), xml::attrField("a51", &Wide72::a51),
+                      xml::attrField("a52", &Wide72::a52), xml::attrField("a53", &Wide72::a53),
+                      xml::attrField("a54", &Wide72::a54), xml::attrField("a55", &Wide72::a55),
+                      xml::attrField("a56", &Wide72::a56), xml::attrField("a57", &Wide72::a57),
+                      xml::attrField("a58", &Wide72::a58), xml::attrField("a59", &Wide72::a59),
+                      xml::attrField("a60", &Wide72::a60), xml::attrField("a61", &Wide72::a61),
+                      xml::attrField("a62", &Wide72::a62), xml::attrField("a63", &Wide72::a63),
+                      xml::attrField("a64", &Wide72::a64, true),
+                      xml::attrField("a65", &Wide72::a65), xml::attrField("a66", &Wide72::a66),
+                      xml::attrField("a67", &Wide72::a67), xml::attrField("a68", &Wide72::a68),
+                      xml::attrField("a69", &Wide72::a69), xml::attrField("a70", &Wide72::a70),
+                      xml::attrField("a71", &Wide72::a71, true));
 };
 
 static std::string wide_xml(int omit) {
   std::string s = "<Wide72";
   for (int i = 0; i < 72; ++i) {
-    if (i == omit) continue;
+    if (i == omit) {
+      continue;
+    }
     s += " a" + std::to_string(i) + "=\"" + std::to_string(i) + "\"";
   }
   s += "/>";
@@ -2447,7 +2378,7 @@ TEST_F(TurboBasicTests, MoreThan64FieldsMissingRequiredSecondWord) {
   xml::Parser p{src};
   Wide72 w;
   EXPECT_FALSE(xml::deserialize(p, "Wide72", w));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::MissingRequiredField);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::MissingRequiredField);
 }
 
 // Date/time value types and variant (xs:choice) fields.
@@ -2457,17 +2388,16 @@ struct Event {
   xml::DateTime stamp;  // element
   xml::Time at;         // element
 };
-template <>
+template<>
 struct xml::XmlMetadata<Event> {
-  static constexpr auto fields = std::make_tuple(
-      xml::attr_field("day", &Event::day), xml::field("stamp", &Event::stamp),
-      xml::field("at", &Event::at));
+  static constexpr auto fields =
+      std::make_tuple(xml::attrField("day", &Event::day), xml::field("stamp", &Event::stamp),
+                      xml::field("at", &Event::at));
 };
 
 TEST_F(TurboBasicTests, DateTimeRoundTripAndChrono) {
-  constexpr std::string_view src =
-      R"(<Event day="2026-06-18"><stamp>2026-06-18T09:30:00Z</stamp>)"
-      R"(<at>23:59:59.5+02:00</at></Event>)";
+  constexpr std::string_view src = R"(<Event day="2026-06-18"><stamp>2026-06-18T09:30:00Z</stamp>)"
+                                   R"(<at>23:59:59.5+02:00</at></Event>)";
   xml::Parser p{src};
   Event e;
   ASSERT_TRUE(xml::deserialize(p, "Event", e));
@@ -2477,49 +2407,45 @@ TEST_F(TurboBasicTests, DateTimeRoundTripAndChrono) {
   EXPECT_EQ(e.at.nanosecond, 500000000u);
   EXPECT_EQ(e.at.tz_offset_min, 120);
   // chrono accessors
-  EXPECT_EQ(e.day.to_sys_days(),
-            std::chrono::sys_days{std::chrono::year{2026} / 6 / 18});
+  EXPECT_EQ(e.day.to_sys_days(), std::chrono::sys_days{std::chrono::year{2026} / 6 / 18});
   EXPECT_EQ(e.stamp.to_sys_time(),  // UTC instant
-            std::chrono::sys_days{std::chrono::year{2026} / 6 / 18} +
-                std::chrono::hours{9} + std::chrono::minutes{30});
+            std::chrono::sys_days{std::chrono::year{2026} / 6 / 18} + std::chrono::hours{9} +
+                std::chrono::minutes{30});
   EXPECT_EQ(xml::serialize<false>("Event", e), src);
 }
 
 TEST_F(TurboBasicTests, DateTimeInvalidValue) {
   // Month 13 in an element is a hard parse failure.
-  constexpr std::string_view src =
-      R"(<Event day="2026-06-18"><stamp>2026-13-01T00:00:00</stamp>)"
-      R"(<at>00:00:00</at></Event>)";
+  constexpr std::string_view src = R"(<Event day="2026-06-18"><stamp>2026-13-01T00:00:00</stamp>)"
+                                   R"(<at>00:00:00</at></Event>)";
   xml::Parser p{src};
   Event e;
   EXPECT_FALSE(xml::deserialize(p, "Event", e));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::InvalidValue);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::InvalidValue);
 }
 
 // ---- Variant (xs:choice) ----
 struct VCircle {
   int r{};
 };
-template <>
+template<>
 struct xml::XmlMetadata<VCircle> {
-  static constexpr auto fields =
-      std::make_tuple(xml::attr_field("r", &VCircle::r));
+  static constexpr auto fields = std::make_tuple(xml::attrField("r", &VCircle::r));
 };
 struct VSquare {
   int s{};
 };
-template <>
+template<>
 struct xml::XmlMetadata<VSquare> {
-  static constexpr auto fields =
-      std::make_tuple(xml::attr_field("s", &VSquare::s));
+  static constexpr auto fields = std::make_tuple(xml::attrField("s", &VSquare::s));
 };
 
 struct Shape {
   std::variant<VCircle, VSquare> kind;
 };
-template <>
+template<>
 struct xml::XmlMetadata<Shape> {
-  static constexpr auto fields = std::make_tuple(xml::required_variant_field(
+  static constexpr auto fields = std::make_tuple(xml::requiredVariantField(
       &Shape::kind, xml::alt<VCircle>("circle"), xml::alt<VSquare>("square")));
 };
 
@@ -2549,21 +2475,20 @@ TEST_F(TurboBasicTests, VariantRequiredMissing) {
   xml::Parser p{src};
   Shape sh;
   EXPECT_FALSE(xml::deserialize(p, "Shape", sh));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::MissingRequiredField);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::MissingRequiredField);
 }
 
 struct VDoc {
   std::vector<std::variant<VCircle, VSquare>> body;
 };
-template <>
+template<>
 struct xml::XmlMetadata<VDoc> {
-  static constexpr auto fields = std::make_tuple(xml::variant_field(
-      &VDoc::body, xml::alt<VCircle>("circle"), xml::alt<VSquare>("square")));
+  static constexpr auto fields = std::make_tuple(
+      xml::variantField(&VDoc::body, xml::alt<VCircle>("circle"), xml::alt<VSquare>("square")));
 };
 
 TEST_F(TurboBasicTests, VariantRepeatedInterleaved) {
-  constexpr std::string_view src =
-      R"(<VDoc><circle r="1"/><square s="2"/><circle r="3"/></VDoc>)";
+  constexpr std::string_view src = R"(<VDoc><circle r="1"/><square s="2"/><circle r="3"/></VDoc>)";
   xml::Parser p{src};
   VDoc d;
   ASSERT_TRUE(xml::deserialize(p, "VDoc", d));
@@ -2580,10 +2505,9 @@ TEST_F(TurboBasicTests, VariantRepeatedInterleaved) {
 struct OptAddr {
   std::string_view city;
 };
-template <>
+template<>
 struct xml::XmlMetadata<OptAddr> {
-  static constexpr auto fields =
-      std::make_tuple(xml::field("city", &OptAddr::city));
+  static constexpr auto fields = std::make_tuple(xml::field("city", &OptAddr::city));
 };
 
 struct OptPerson {
@@ -2591,11 +2515,10 @@ struct OptPerson {
   std::optional<std::string_view> nick;  // element (scalar inner)
   std::optional<OptAddr> addr;           // element (object inner)
 };
-template <>
+template<>
 struct xml::XmlMetadata<OptPerson> {
   static constexpr auto fields =
-      std::make_tuple(xml::attr_field("age", &OptPerson::age),
-                      xml::field("nick", &OptPerson::nick),
+      std::make_tuple(xml::attrField("age", &OptPerson::age), xml::field("nick", &OptPerson::nick),
                       xml::field("addr", &OptPerson::addr));
 };
 
@@ -2630,10 +2553,10 @@ TEST_F(TurboBasicTests, OptionalAbsentStaysEmptyAndOmitted) {
 
 // xs:list fields (whitespace-separated values in one element / attribute).
 enum class Grade { A, B, C };
-template <>
+template<>
 struct xml::XmlEnumTraits<Grade> {
-  static constexpr auto values = xml::enum_table<Grade>(
-      {{"A", Grade::A}, {"B", Grade::B}, {"C", Grade::C}});
+  static constexpr auto values =
+      xml::enumTable<Grade>({{"A", Grade::A}, {"B", Grade::B}, {"C", Grade::C}});
 };
 
 struct ListRec {
@@ -2642,13 +2565,12 @@ struct ListRec {
   std::array<int, 3> fixed{};     // fixed element list (overflow skipped)
   std::vector<Grade> grades;      // enum element list
 };
-template <>
+template<>
 struct xml::XmlMetadata<ListRec> {
-  static constexpr auto fields =
-      std::make_tuple(xml::attr_field("tags", &ListRec::tags),
-                      xml::list_field("dims", &ListRec::dims),
-                      xml::list_field("fixed", &ListRec::fixed),
-                      xml::list_field("grades", &ListRec::grades));
+  static constexpr auto fields = std::make_tuple(xml::attrField("tags", &ListRec::tags),
+                                                 xml::listField("dims", &ListRec::dims),
+                                                 xml::listField("fixed", &ListRec::fixed),
+                                                 xml::listField("grades", &ListRec::grades));
 };
 
 TEST_F(TurboBasicTests, ListElementsAndAttributesRoundTrip) {
@@ -2665,15 +2587,13 @@ TEST_F(TurboBasicTests, ListElementsAndAttributesRoundTrip) {
   EXPECT_EQ(r.grades, (std::vector<Grade>{Grade::A, Grade::C, Grade::B}));
   // Round-trips to canonical (single-space) list form; fixed array drops
   // overflow.
-  EXPECT_EQ(
-      xml::serialize<false>("ListRec", r),
-      R"(<ListRec tags="a b c"><dims>1 2 3 4</dims><fixed>10 20 30</fixed>)"
-      R"(<grades>A C B</grades></ListRec>)");
+  EXPECT_EQ(xml::serialize<false>("ListRec", r),
+            R"(<ListRec tags="a b c"><dims>1 2 3 4</dims><fixed>10 20 30</fixed>)"
+            R"(<grades>A C B</grades></ListRec>)");
 }
 
 TEST_F(TurboBasicTests, ListEmptyAndSelfClosing) {
-  constexpr std::string_view src =
-      R"(<ListRec tags=""><dims/><fixed></fixed></ListRec>)";
+  constexpr std::string_view src = R"(<ListRec tags=""><dims/><fixed></fixed></ListRec>)";
   xml::Parser p{src};
   ListRec r;
   ASSERT_TRUE(xml::deserialize(p, "ListRec", r));
@@ -2687,7 +2607,7 @@ TEST_F(TurboBasicTests, ListBadTokenFails) {
   xml::Parser p{src};
   ListRec r;
   EXPECT_FALSE(xml::deserialize(p, "ListRec", r));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::InvalidNumericValue);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::InvalidNumericValue);
 }
 
 TEST_F(TurboBasicTests, ListExtraWhitespaceIgnored) {

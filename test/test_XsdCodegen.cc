@@ -17,7 +17,7 @@ auto has(const std::string& code, std::string_view frag) -> bool {
   return code.find(frag) != std::string::npos;
 }
 
-auto read_file(const std::string& path) -> std::string {
+auto readFile(const std::string& path) -> std::string {
   std::ifstream in(path, std::ios::binary);
   std::ostringstream ss;
   ss << in.rdbuf();
@@ -48,11 +48,11 @@ TEST(XsdCodegen, BuiltinTypesAndCardinality) {
   EXPECT_TRUE(has(r.code, "std::vector<std::string> tag;"))  // unbounded
       << r.code;
   EXPECT_TRUE(has(r.code, "xml::DateTime when{};"));  // dateTime -> DateTime
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("id", &Rec::id, true))"));
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("ref", &Rec::ref))"));
-  EXPECT_TRUE(has(r.code, R"(xml::field("name", &Rec::name, true))"));   // minOccurs=1
-  EXPECT_TRUE(has(r.code, R"(xml::field("age", &Rec::age))"));           // optional
-  EXPECT_TRUE(has(r.code, R"(xml::vec_field("tag", &Rec::tag, true))"));
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("id", &Rec::id, true))"));
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("ref", &Rec::ref))"));
+  EXPECT_TRUE(has(r.code, R"(xml::field("name", &Rec::name, true))"));  // minOccurs=1
+  EXPECT_TRUE(has(r.code, R"(xml::field("age", &Rec::age))"));          // optional
+  EXPECT_TRUE(has(r.code, R"(xml::vecField("tag", &Rec::tag, true))"));
 }
 
 TEST(XsdCodegen, EnumFromSimpleType) {
@@ -70,9 +70,9 @@ TEST(XsdCodegen, EnumFromSimpleType) {
   const auto r = xsd::generate(xsd);
   ASSERT_TRUE(r.ok);
   EXPECT_TRUE(has(r.code, "enum class Color"));
-  EXPECT_TRUE(has(r.code, "xml::enum_table<Color>"));
+  EXPECT_TRUE(has(r.code, "xml::enumTable<Color>"));
   EXPECT_TRUE(has(r.code, R"({"green-ish", Color::green_ish})"));  // sanitized id
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("color", &Paint::color))"));
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("color", &Paint::color))"));
 }
 
 TEST(XsdCodegen, SimpleContentBecomesValueField) {
@@ -88,8 +88,8 @@ TEST(XsdCodegen, SimpleContentBecomesValueField) {
   const auto r = xsd::generate(xsd);
   ASSERT_TRUE(r.ok);
   EXPECT_TRUE(has(r.code, "double value{};"));
-  EXPECT_TRUE(has(r.code, "xml::value_field(&Money::value)"));
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("ccy", &Money::ccy))"));
+  EXPECT_TRUE(has(r.code, "xml::valueField(&Money::value)"));
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("ccy", &Money::ccy))"));
 }
 
 TEST(XsdCodegen, ChoiceBecomesVariant) {
@@ -106,7 +106,7 @@ TEST(XsdCodegen, ChoiceBecomesVariant) {
   const auto r = xsd::generate(xsd);
   ASSERT_TRUE(r.ok);
   EXPECT_TRUE(has(r.code, "std::variant<A, B> choice;"));
-  EXPECT_TRUE(has(r.code, "xml::variant_field(&Shape::choice"));
+  EXPECT_TRUE(has(r.code, "xml::variantField(&Shape::choice"));
   EXPECT_TRUE(has(r.code, R"(xml::alt<A>("a"))"));
   EXPECT_TRUE(has(r.code, R"(xml::alt<B>("b"))"));
 }
@@ -126,11 +126,11 @@ TEST(XsdCodegen, ListBecomesListOrAttrField) {
   ASSERT_TRUE(r.ok);
   EXPECT_TRUE(r.notes.empty()) << (r.notes.empty() ? "" : r.notes[0]);
   EXPECT_TRUE(has(r.code, "std::vector<int> codes;"));
-  EXPECT_TRUE(has(r.code, R"(xml::list_field("codes", &Cfg::codes)"));
+  EXPECT_TRUE(has(r.code, R"(xml::listField("codes", &Cfg::codes)"));
   EXPECT_TRUE(has(r.code, "std::vector<std::string> tags;"));  // NMTOKENS attr
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("tags", &Cfg::tags))"));
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("tags", &Cfg::tags))"));
   EXPECT_TRUE(has(r.code, "std::vector<int> ids;"));
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("ids", &Cfg::ids))"));
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("ids", &Cfg::ids))"));
 }
 
 TEST(XsdCodegen, RecursionUsesUniquePtr) {
@@ -193,8 +193,8 @@ TEST(XsdCodegen, EndToEndGeneratedMetadataParses) {
   EXPECT_EQ(o.placed->time.hour, 9u);
   ASSERT_EQ(o.note.size(), 2u);
   EXPECT_EQ(o.note[0], "first");
-  EXPECT_EQ(o.labels, (std::vector<std::string>{"rush", "gift"}));   // NMTOKENS attr list
-  EXPECT_EQ(o.quantities, (std::vector<int>{4, 8, 15}));             // xs:list element
+  EXPECT_EQ(o.labels, (std::vector<std::string>{"rush", "gift"}));  // NMTOKENS attr list
+  EXPECT_EQ(o.quantities, (std::vector<int>{4, 8, 15}));            // xs:list element
   ASSERT_TRUE(o.parent);
   EXPECT_EQ(o.parent->id, 1);
   EXPECT_EQ(o.parent->priority, Priority::Low);
@@ -332,7 +332,7 @@ TEST(XsdCodegen, ComplexContentExtension) {
   const std::string emp_body = r.code.substr(emp_def, emp_end - emp_def);
   EXPECT_EQ(emp_body.find("std::string name"), std::string::npos) << emp_body;
   // But metadata MUST reference them via &Employee::.
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("id", &Employee::id, true))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("id", &Employee::id, true))")) << r.code;
   EXPECT_TRUE(has(r.code, R"(xml::field("name", &Employee::name, true))")) << r.code;
   EXPECT_TRUE(has(r.code, R"(xml::field("department", &Employee::department, true))")) << r.code;
 }
@@ -351,8 +351,8 @@ TEST(XsdCodegen, AttributeGroupExpansion) {
   const auto r = xsd::generate(xsd);
   ASSERT_TRUE(r.ok);
   EXPECT_TRUE(has(r.code, "struct Widget")) << r.code;
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("id", &Widget::id, true))")) << r.code;
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("lang", &Widget::lang))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("id", &Widget::id, true))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("lang", &Widget::lang))")) << r.code;
 }
 
 // 3b: xs:group inline expansion.
@@ -401,13 +401,15 @@ TEST(XsdCodegen, SchemaIncludeLoader) {
 
   xsd::Options opts;
   opts.loader = [&](std::string_view loc) -> std::optional<std::string> {
-    if (loc == "common.xsd") return std::string{common_xsd};
+    if (loc == "common.xsd") {
+      return std::string{common_xsd};
+    }
     return {};
   };
   const auto r = xsd::generate(base_xsd, opts);
   ASSERT_TRUE(r.ok);
   EXPECT_TRUE(has(r.code, "enum class Color")) << r.code;
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("color", &Widget::color))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("color", &Widget::color))")) << r.code;
 }
 
 // 4a: finite maxOccurs -> std::vector member + XmlConstraints size check.
@@ -476,7 +478,7 @@ TEST(XsdCodegen, RepeatedChoiceBecomesVectorVariant) {
   const auto r = xsd::generate(xsd);
   ASSERT_TRUE(r.ok);
   EXPECT_TRUE(has(r.code, "std::vector<std::variant<A, B>> choice;")) << r.code;
-  EXPECT_TRUE(has(r.code, "xml::variant_field(&Mixed::choice")) << r.code;
+  EXPECT_TRUE(has(r.code, "xml::variantField(&Mixed::choice")) << r.code;
 }
 
 // xs:complexContent extension across three levels: all levels appear in
@@ -506,9 +508,9 @@ TEST(XsdCodegen, MultiLevelComplexContentExtension) {
   EXPECT_TRUE(has(r.code, "struct Pet : Animal")) << r.code;
   EXPECT_TRUE(has(r.code, "struct Dog : Pet")) << r.code;
   // Dog's metadata must cover all three levels.
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("name", &Dog::name, true))")) << r.code;
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("owner", &Dog::owner))")) << r.code;
-  EXPECT_TRUE(has(r.code, R"(xml::attr_field("breed", &Dog::breed))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("name", &Dog::name, true))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("owner", &Dog::owner))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::attrField("breed", &Dog::breed))")) << r.code;
   // Dog's struct body must only declare breed.
   const auto dog_def = r.code.find("struct Dog :");
   ASSERT_NE(dog_def, std::string::npos) << r.code;
@@ -621,14 +623,12 @@ TEST(XsdCodegen, SimpleContentConstraint) {
 
 // Guards the committed golden against drift from the generator.
 TEST(XsdCodegen, GoldenMatchesGenerator) {
-  const std::string xsd = read_file(std::string(TXSD_DATA_DIR) + "/xsd_sample.xsd");
+  const std::string xsd = readFile(std::string(TXSD_DATA_DIR) + "/xsd_sample.xsd");
   ASSERT_FALSE(xsd.empty()) << "could not read test/xsd_sample.xsd";
-  const std::string golden =
-      read_file(std::string(TXSD_DATA_DIR) + "/xsd_sample_generated.hh");
+  const std::string golden = readFile(std::string(TXSD_DATA_DIR) + "/xsd_sample_generated.hh");
   ASSERT_FALSE(golden.empty());
   const auto r = xsd::generate(xsd);
   ASSERT_TRUE(r.ok);
-  EXPECT_EQ(r.code, golden)
-      << "regenerate with: turboxml_xsdgen test/xsd_sample.xsd -o "
-         "test/xsd_sample_generated.hh";
+  EXPECT_EQ(r.code, golden) << "regenerate with: turboxml_xsdgen test/xsd_sample.xsd -o "
+                               "test/xsd_sample_generated.hh";
 }

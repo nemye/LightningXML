@@ -17,16 +17,18 @@
 
 namespace {
 
-auto read_file(const std::string& path, std::string& out) -> bool {
+auto readFile(const std::string& path, std::string& out) -> bool {
   std::ifstream in(path, std::ios::binary);
-  if (!in) return false;
+  if (!in) {
+    return false;
+  }
   std::ostringstream ss;
   ss << in.rdbuf();
   out = ss.str();
   return true;
 }
 
-auto dir_of(const std::string& path) -> std::string {
+auto dirOf(const std::string& path) -> std::string {
   const auto sep = path.rfind('/');
   return sep == std::string::npos ? "." : path.substr(0, sep);
 }
@@ -53,17 +55,17 @@ auto main(int argc, char** argv) -> int {
   }
 
   std::string xsd;
-  if (!read_file(input, xsd)) {
+  if (!readFile(input, xsd)) {
     std::cerr << "error: cannot read '" << input << "'\n";
     return 2;
   }
 
-  const std::string base_dir = dir_of(input);
+  const std::string base_dir = dirOf(input);
   xsd::Options opts;
   opts.loader = [&](std::string_view loc) -> std::optional<std::string> {
     std::string path = base_dir + "/" + std::string{loc};
     std::string content;
-    if (!read_file(path, content)) {
+    if (!readFile(path, content)) {
       std::cerr << "note: cannot load xs:include '" << loc << "' (skipped)\n";
       return {};
     }
@@ -72,7 +74,9 @@ auto main(int argc, char** argv) -> int {
 
   const xsd::GenResult result = xsd::generate(xsd, opts);
   if (!result.ok) {
-    for (const auto& n : result.notes) std::cerr << "error: " << n << '\n';
+    for (const auto& n : result.notes) {
+      std::cerr << "error: " << n << '\n';
+    }
     return 1;
   }
 

@@ -40,7 +40,7 @@ struct Leaf {
   std::string_view text;
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<Leaf> {
   static constexpr auto fields = std::make_tuple(xml::field("v", &Leaf::text));
 };
@@ -49,10 +49,9 @@ struct LeafInt {
   int value{};
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<LeafInt> {
-  static constexpr auto fields =
-      std::make_tuple(xml::field("v", &LeafInt::value));
+  static constexpr auto fields = std::make_tuple(xml::field("v", &LeafInt::value));
 };
 
 struct TwoFields {
@@ -60,10 +59,10 @@ struct TwoFields {
   std::string_view b;
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<TwoFields> {
-  static constexpr auto fields = std::make_tuple(
-      xml::field("a", &TwoFields::a), xml::field("b", &TwoFields::b));
+  static constexpr auto fields =
+      std::make_tuple(xml::field("a", &TwoFields::a), xml::field("b", &TwoFields::b));
 };
 
 struct AttrOnly {
@@ -71,10 +70,10 @@ struct AttrOnly {
   std::string_view y;
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<AttrOnly> {
-  static constexpr auto fields = std::make_tuple(
-      xml::attr_field("x", &AttrOnly::x), xml::attr_field("y", &AttrOnly::y));
+  static constexpr auto fields =
+      std::make_tuple(xml::attrField("x", &AttrOnly::x), xml::attrField("y", &AttrOnly::y));
 };
 
 struct AttrInt {
@@ -82,51 +81,46 @@ struct AttrInt {
   std::string_view name;
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<AttrInt> {
   static constexpr auto fields =
-      std::make_tuple(xml::attr_field("id", &AttrInt::id),
-                      xml::attr_field("name", &AttrInt::name));
+      std::make_tuple(xml::attrField("id", &AttrInt::id), xml::attrField("name", &AttrInt::name));
 };
 
 struct VecLeaf {
   std::vector<std::string_view> items;
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<VecLeaf> {
-  static constexpr auto fields =
-      std::make_tuple(xml::vec_field("item", &VecLeaf::items));
+  static constexpr auto fields = std::make_tuple(xml::vecField("item", &VecLeaf::items));
 };
 
 struct Nested {
   Leaf inner;
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<Nested> {
-  static constexpr auto fields =
-      std::make_tuple(xml::field("inner", &Nested::inner));
+  static constexpr auto fields = std::make_tuple(xml::field("inner", &Nested::inner));
 };
 
 struct OwnedLeaf {
   std::string text;
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<OwnedLeaf> {
-  static constexpr auto fields =
-      std::make_tuple(xml::field("v", &OwnedLeaf::text));
+  static constexpr auto fields = std::make_tuple(xml::field("v", &OwnedLeaf::text));
 };
 
 struct OwnedAttr {
   std::string x;
 };
 
-template <>
+template<>
 struct xml::XmlMetadata<OwnedAttr> {
-  static constexpr auto fields =
-      std::make_tuple(xml::attr_field("x", &OwnedAttr::x));
+  static constexpr auto fields = std::make_tuple(xml::attrField("x", &OwnedAttr::x));
 };
 
 // sec 2.1 - Well-Formed XML Documents [Production 1: document]
@@ -159,7 +153,7 @@ TEST_F(Sec2_1_WellFormedDocument, NoRootElement) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::RootElementNotFound);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::RootElementNotFound);
 }
 
 /// Empty input - must fail.
@@ -167,7 +161,7 @@ TEST_F(Sec2_1_WellFormedDocument, EmptyInput) {
   xml::Parser p{""};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::RootElementNotFound);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::RootElementNotFound);
 }
 
 /// Whitespace-only input - must fail (no element).
@@ -176,7 +170,7 @@ TEST_F(Sec2_1_WellFormedDocument, WhitespaceOnlyInput) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::RootElementNotFound);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::RootElementNotFound);
 }
 
 // sec 2.2 - Characters [Production 2: Char]
@@ -270,7 +264,7 @@ TEST_F(Sec2_3_Names, NameStartingWithDigitFails) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "1tag", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnexpectedCharAfterLt);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnexpectedCharAfterLt);
 }
 
 /// Names must not start with hyphen.
@@ -279,7 +273,7 @@ TEST_F(Sec2_3_Names, NameStartingWithHyphenFails) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "-tag", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnexpectedCharAfterLt);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnexpectedCharAfterLt);
 }
 
 /// Names must not start with a dot.
@@ -288,7 +282,7 @@ TEST_F(Sec2_3_Names, NameStartingWithDotFails) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, ".tag", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnexpectedCharAfterLt);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnexpectedCharAfterLt);
 }
 
 // sec 2.4 - Character Data and Markup [Production 14: CharData]
@@ -305,7 +299,7 @@ TEST_F(Sec2_4_CharData, CDataEndDelimiterInTextShouldFail) {
   xml::StrictParser sp{src};
   Leaf strict_leaf;
   EXPECT_FALSE(xml::deserialize(sp, "r", strict_leaf));
-  EXPECT_EQ(sp.error_code(), xml::ErrorCode::CDataEndInContent);
+  EXPECT_EQ(sp.errorCode(), xml::ErrorCode::CDataEndInContent);
 
   xml::Parser p{src};
   Leaf leaf;
@@ -362,7 +356,7 @@ TEST_F(Sec2_5_Comments, DoubleHyphenInsideCommentShouldFail) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::MalformedComment);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::MalformedComment);
 }
 
 /// Comment ending with "--->" is ill-formed: the content's trailing '-' is
@@ -372,7 +366,7 @@ TEST_F(Sec2_5_Comments, CommentEndingWithTripleHyphenShouldFail) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::MalformedComment);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::MalformedComment);
 }
 
 /// Unterminated comment - must fail.
@@ -381,7 +375,7 @@ TEST_F(Sec2_5_Comments, UnterminatedComment) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnterminatedComment);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnterminatedComment);
 }
 
 // sec 2.6 - Processing Instructions [Production 16-17]
@@ -432,14 +426,13 @@ TEST_F(Sec2_6_PI, PITargetXmlMixedCaseRejected) {
   // Production 17 reserves every case variant of "xml"; TurboXML rejects a
   // mixed-case "xml" PI target as ill-formed.
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::ReservedPiTarget);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::ReservedPiTarget);
 }
 
 /// A PI target that merely starts with "xml" (e.g. "xml-stylesheet") is a
 /// legal Name, not the reserved target, and must be skipped without error.
 TEST_F(Sec2_6_PI, PITargetXmlPrefixedNameAllowed) {
-  constexpr std::string_view src =
-      R"(<?xml-stylesheet href="s.xsl"?><r><v>ok</v></r>)";
+  constexpr std::string_view src = R"(<?xml-stylesheet href="s.xsl"?><r><v>ok</v></r>)";
   xml::Parser p{src};
   Leaf leaf;
   ASSERT_TRUE(xml::deserialize(p, "r", leaf));
@@ -452,7 +445,7 @@ TEST_F(Sec2_6_PI, UnterminatedPI) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnterminatedPi);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnterminatedPi);
 }
 
 // sec 2.7 - CDATA Sections [Production 18-21]
@@ -461,8 +454,7 @@ class Sec2_7_CDATA : public ::testing::Test {};
 /// Well-formed CDATA between elements is skipped during struct
 /// deserialization (it's not bound to a field in pull()).
 TEST_F(Sec2_7_CDATA, CDataBetweenElements) {
-  constexpr std::string_view src =
-      R"(<r><![CDATA[ignored <markup> & stuff]]><v>ok</v></r>)";
+  constexpr std::string_view src = R"(<r><![CDATA[ignored <markup> & stuff]]><v>ok</v></r>)";
   xml::Parser p{src};
   Leaf leaf;
   ASSERT_TRUE(xml::deserialize(p, "r", leaf));
@@ -474,8 +466,7 @@ TEST_F(Sec2_7_CDATA, CDataBetweenElements) {
 /// first "]]>" terminates the outer section, leaving " ]]>" as stray
 /// text. But the parser should not crash.
 TEST_F(Sec2_7_CDATA, NestedCData) {
-  constexpr std::string_view src =
-      R"(<r><![CDATA[outer <![CDATA[inner]]> rest]]><v>ok</v></r>)";
+  constexpr std::string_view src = R"(<r><![CDATA[outer <![CDATA[inner]]> rest]]><v>ok</v></r>)";
   xml::Parser p{src};
   Leaf leaf;
   // The exact behavior depends on how scan_to_delimiter handles the
@@ -489,7 +480,7 @@ TEST_F(Sec2_7_CDATA, UnterminatedCData) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnterminatedCData);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnterminatedCData);
 }
 
 // sec 2.8 - Prolog and Document Type Declaration [Production 22-28]
@@ -497,8 +488,7 @@ class Sec2_8_Prolog : public ::testing::Test {};
 
 /// XML declaration must come before the root element.
 TEST_F(Sec2_8_Prolog, XmlDeclarationBeforeRoot) {
-  constexpr std::string_view src =
-      R"(<?xml version="1.0" encoding="UTF-8"?><r><v>ok</v></r>)";
+  constexpr std::string_view src = R"(<?xml version="1.0" encoding="UTF-8"?><r><v>ok</v></r>)";
   xml::Parser p{src};
   Leaf leaf;
   ASSERT_TRUE(xml::deserialize(p, "r", leaf));
@@ -507,8 +497,7 @@ TEST_F(Sec2_8_Prolog, XmlDeclarationBeforeRoot) {
 
 /// XML declaration with standalone="yes".
 TEST_F(Sec2_8_Prolog, XmlDeclarationStandalone) {
-  constexpr std::string_view src =
-      R"(<?xml version="1.0" standalone="yes"?><r><v>ok</v></r>)";
+  constexpr std::string_view src = R"(<?xml version="1.0" standalone="yes"?><r><v>ok</v></r>)";
   xml::Parser p{src};
   Leaf leaf;
   ASSERT_TRUE(xml::deserialize(p, "r", leaf));
@@ -628,7 +617,7 @@ TEST_F(Sec3_1_Tags, WFC_ElementTypeMatch_Mismatch) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::ElementMismatch);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::ElementMismatch);
 }
 
 /// WFC: Element Type Match - case-sensitive matching.
@@ -638,7 +627,7 @@ TEST_F(Sec3_1_Tags, WFC_ElementTypeMatch_CaseSensitive) {
   Leaf leaf;
   // "R" and "r" are different names.
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::RootElementNotFound);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::RootElementNotFound);
   xml::Parser p2{src};
   ASSERT_TRUE(xml::deserialize(p2, "R", leaf));
   EXPECT_EQ(leaf.text, "data");
@@ -731,7 +720,7 @@ TEST_F(Sec3_1_Tags, UnquotedAttributeFails) {
   xml::Parser p{src};
   AttrOnly ao;
   EXPECT_FALSE(xml::deserialize(p, "r", ao));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::ExpectedQuotedValue);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::ExpectedQuotedValue);
 }
 
 /// WFC: No < in Attribute Values.
@@ -744,7 +733,7 @@ TEST_F(Sec3_1_Tags, WFC_NoLtInAttributeValue) {
   xml::StrictParser sp{src};
   AttrOnly strict_ao;
   EXPECT_FALSE(xml::deserialize(sp, "r", strict_ao));
-  EXPECT_EQ(sp.error_code(), xml::ErrorCode::LtInAttributeValue);
+  EXPECT_EQ(sp.errorCode(), xml::ErrorCode::LtInAttributeValue);
 
   xml::Parser p{src};
   AttrOnly ao;
@@ -762,7 +751,7 @@ TEST_F(Sec3_1_Tags, WFC_UniqueAttSpec) {
   xml::StrictParser sp{src};
   AttrOnly strict_ao;
   EXPECT_FALSE(xml::deserialize(sp, "r", strict_ao));
-  EXPECT_EQ(sp.error_code(), xml::ErrorCode::DuplicateAttribute);
+  EXPECT_EQ(sp.errorCode(), xml::ErrorCode::DuplicateAttribute);
 
   xml::Parser p{src};
   AttrOnly ao;
@@ -776,7 +765,7 @@ TEST_F(Sec3_1_Tags, UnclosedStartTag) {
   xml::Parser p{src};
   AttrOnly ao;
   EXPECT_FALSE(xml::deserialize(p, "r", ao));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnclosedTag);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnclosedTag);
 }
 
 /// End-tag with no name - must fail.
@@ -785,7 +774,7 @@ TEST_F(Sec3_1_Tags, EndTagNoName) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::ExpectedNameInCloseTag);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::ExpectedNameInCloseTag);
 }
 
 /// Proper nesting is required - overlapping elements are ill-formed.
@@ -794,7 +783,7 @@ TEST_F(Sec3_1_Tags, OverlappingElements) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::ElementMismatch);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::ElementMismatch);
 }
 
 // sec 3.1 - Namespace-prefixed elements
@@ -803,8 +792,7 @@ class Sec3_1_Namespaces : public ::testing::Test {};
 /// Elements with namespace prefixes should parse; the local name is
 /// used for field matching.
 TEST_F(Sec3_1_Namespaces, PrefixedElementName) {
-  constexpr std::string_view src =
-      R"(<ns:r xmlns:ns="urn:test"><v>ok</v></ns:r>)";
+  constexpr std::string_view src = R"(<ns:r xmlns:ns="urn:test"><v>ok</v></ns:r>)";
   xml::Parser p{src};
   Leaf leaf;
   // TurboXML's begin_element compares the local name "r".
@@ -890,7 +878,7 @@ TEST_F(Sec5_Conformance, FatalError_MissingEndTag) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnexpectedEof);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnexpectedEof);
 }
 
 /// Bare '<' in text content. Per spec, '<' may only appear as part
@@ -1000,8 +988,7 @@ TEST_F(WellFormedness, EmptyVectorField) {
 
 /// Multiple children in a vector field.
 TEST_F(WellFormedness, VectorMultipleChildren) {
-  constexpr std::string_view src =
-      R"(<r><item>a</item><item>b</item><item>c</item></r>)";
+  constexpr std::string_view src = R"(<r><item>a</item><item>b</item><item>c</item></r>)";
   xml::Parser p{src};
   VecLeaf vl;
   ASSERT_TRUE(xml::deserialize(p, "r", vl));
@@ -1099,8 +1086,7 @@ TEST_F(AttributeEdges, NumericAttrAsString) {
 /// Attributes appear after unknown attributes - registered ones are
 /// still found via hash lookup.
 TEST_F(AttributeEdges, UnknownAttributesSkipped) {
-  constexpr std::string_view src =
-      R"(<r foo="bar" x="found" baz="quux" y="also"/>)";
+  constexpr std::string_view src = R"(<r foo="bar" x="found" baz="quux" y="also"/>)";
   xml::Parser p{src};
   AttrOnly ao;
   ASSERT_TRUE(xml::deserialize(p, "r", ao));
@@ -1117,7 +1103,7 @@ TEST_F(Robustness, TruncatedMidTag) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnexpectedEof);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnexpectedEof);
 }
 
 /// Truncated in attribute name.
@@ -1126,7 +1112,7 @@ TEST_F(Robustness, TruncatedInAttribute) {
   xml::Parser p{src};
   AttrOnly ao;
   EXPECT_FALSE(xml::deserialize(p, "r", ao));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::ExpectedEquals);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::ExpectedEquals);
 }
 
 /// Truncated in attribute value (no closing quote).
@@ -1135,7 +1121,7 @@ TEST_F(Robustness, TruncatedInAttrValue) {
   xml::Parser p{src};
   AttrOnly ao;
   EXPECT_FALSE(xml::deserialize(p, "r", ao));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnterminatedAttributeValue);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnterminatedAttributeValue);
 }
 
 /// Just a '<' - must not crash.
@@ -1144,7 +1130,7 @@ TEST_F(Robustness, JustLessThan) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::UnexpectedEndAfterLt);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::UnexpectedEndAfterLt);
 }
 
 /// Just "</" - must not crash.
@@ -1153,7 +1139,7 @@ TEST_F(Robustness, JustCloseTagStart) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::ExpectedNameInCloseTag);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::ExpectedNameInCloseTag);
 }
 
 /// Just "<!-" - partial comment start, must not crash.
@@ -1162,7 +1148,7 @@ TEST_F(Robustness, PartialCommentStart) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::RootElementNotFound);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::RootElementNotFound);
 }
 
 /// Just "<?" - partial PI, must not crash.
@@ -1171,7 +1157,7 @@ TEST_F(Robustness, PartialPIStart) {
   xml::Parser p{src};
   Leaf leaf;
   EXPECT_FALSE(xml::deserialize(p, "r", leaf));
-  EXPECT_EQ(p.error_code(), xml::ErrorCode::ExpectedPiTarget);
+  EXPECT_EQ(p.errorCode(), xml::ErrorCode::ExpectedPiTarget);
 }
 
 /// Very long element name (64KB).
