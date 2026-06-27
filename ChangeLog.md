@@ -2,74 +2,77 @@
 
 ## 2.0.0 - 2026-06-27
 
-XML 1.0 fifth edition conformance, optional XSD 1.0 constraint validation, and
-a substantially expanded code generator.
-
 ### Added
-- **XML 1.0 conformance** (non-validating processor):
-  - UTF-8 BOM (`\xEF\xBB\xBF`) is stripped before parsing.
-  - DOCTYPE internal subset is correctly skipped with bracket-depth tracking so
-    `<!ENTITY ...>` and `<!ATTLIST ...>` declarations containing `>` no longer
-    truncate the skip.
-  - Conformance test suite (`test/test_Conformance.cc`).
-- **XSD constraint validation**:
-  - `xml::XmlConstraints<T>`: specializable trait with a `check(const T&)`
-    static returning `std::optional<std::string>`. The default is a no-op.
-  - `xml::validate(obj)` → `std::optional<xml::ValidationError>`: calls the
-    trait and wraps the result. Empty = valid; `err->message` = first violation.
-  - `xml::ValidationError`: a named struct distinct from `xml::ErrorCode` so
-    parser errors and schema constraint violations can be handled independently.
-- **`xsdgen` expansions** (`tools/XSDCodegen.hh`):
-  - `xs:complexContent extension`: emits `struct Child : Parent` with a merged
-    `XmlMetadata<Child>` that prepends parent fields; multi-level inheritance
-    is handled recursively.
-  - `xs:attributeGroup` / `xs:group`: expanded inline at codegen time; no
-    runtime representation.
-  - `xs:include schemaLocation="..."`: loaded and merged before code generation
-    via a `std::function` loader callback in `xsd::Options`; the CLI resolves
-    paths relative to the input schema's directory.
-  - XSD facets (`minLength`, `maxLength`, `length`, `pattern`, `minInclusive`,
-    `maxInclusive`, `minExclusive`, `maxExclusive`): emitted as
-    `XmlConstraints<T>` specializations; `pattern` uses `<regex>` (included only
-    when needed).
-  - Attribute `default`: emits a C++ default member initializer.
-  - Attribute `fixed`: emits a default initializer *and* an `XmlConstraints<T>`
-    equality check.
-  - Finite `maxOccurs=N` (N > 1): emits `std::vector<T>` + an
-    `XmlConstraints<T>` size check (`v.field.size() > N`).
-- `xsdgen` tool (`tools/`): generates `XmlMetadata` definitions from an XSD
-  schema (parsed with TurboXML itself). Maps complexTypes/elements/attributes,
-  enumerations, simpleContent, `xs:choice`, built-ins (incl. date/time), and
-  recursion to the library's features; unsupported constructs are reported as
-  notes. Built behind `TURBOXML_BUILD_CODEGEN` (on by default).
-- `xml::ErrorCode` enum and `Parser::error_code()`: a failed `deserialize()`
-  now reports a specific reason (e.g. `UnterminatedComment`, `ElementMismatch`,
-  `RootElementNotFound`). `reset()` clears it.
-- Enum fields via `xml::XmlEnumTraits<E>`: maps XML token spellings (e.g.
-  `xs:enumeration`) to C++ enumerators for element and attribute fields, with
-  round-trip serialization. An unknown token reports `InvalidEnumValue`.
-- `xml::value_field`: captures an element's own text into a member while
-  attribute fields still apply (XSD `simpleContent`, e.g.
-  `<price currency="USD">9.99</price>`).
-- `std::unique_ptr<T>` element members: an optional, possibly recursive child;
-  null when absent, allocated when present, omitted on serialization when null.
-- Variant fields via `xml::variant_field` / `required_variant_field` and
-  `xml::alt<T>("name")`: maps `xs:choice` to a `std::variant<...>` member (or a
-  `std::vector<std::variant<...>>` for a repeated/interleaved choice). The matched
-  element selects the alternative; the serializer emits the active one.
-- Built-in date/time value types `xml::Date`, `xml::Time`, `xml::DateTime` (XSD
-  `date`/`time`/`dateTime`, with timezone and fractional seconds), each with
-  `std::chrono` accessors; malformed input reports `InvalidValue`.
-- `xml::XmlValueTraits<T>` customization point: parse/format any leaf type to and
-  from its XML text form (the date types are built-in specializations).
-- `std::optional<T>` element and attribute members: engaged when present, left
-  empty when absent, and omitted on serialization when empty. Marking an optional
-  field `required` is a compile-time error.
+
+**Parser tiers** (`include/TurboXML.hh`)
+- `xml::NormalizingParser`: EOL normalization, character-reference expansion,
+  and attribute-value whitespace normalization per XML 1.0 §3.3.3.
+- `xml::StrictParser`: all of the above plus rejection of `]]>` in text,
+  bare `<` in attribute values, and duplicate attributes.
+- Both are aliases of `BasicParser<ParserOptions>`; `xml::Parser` is unchanged.
+
+**Conformance fixes** (`include/TurboXML.hh`)
+- UTF-8 BOM (`\xEF\xBB\xBF`) stripped before parsing.
+- DOCTYPE internal subset skipped with bracket-depth tracking; declarations
+  containing `>` (e.g. `<!ATTLIST name CDATA "val>ue">`) no longer truncate
+  the skip.
+- Conformance test suite (`test/test_Conformance.cc`).
+
+**New field types**
+- `xml::listField(M C::*m)`: whitespace-delimited list into any sequence container (`xs:list`).
+- `xml::valueField(M C::*m)`: element character content alongside attribute
+  fields (`xs:simpleContent`, e.g. `<price currency="USD">9.99</price>`).
+- `xml::variantField(M C::*m, alt<T>...)` /
+  `xml::requiredVariantField(M C::*m, alt<T>...)`: maps `xs:choice` to a
+  `std::variant<...>` member (or `std::vector<std::variant<...>>` for repeated
+  choice). `xml::alt<T>("name")` names each alternative.
+
+**New member types**
+- `std::optional<T>` elements and attributes: engaged when present, empty when absent, omitted on serialization when empty.
+- `std::unique_ptr<T>` elements: null when absent, allocated when present; supports self-referential types.
+- `std::variant<Ts...>` via variant fields above.
+- Enum members via `xml::XmlEnumTraits<E>` specialization;
+  `xml::enumTable<E>(entries)` helper builds the name->enumerator table.
+  Unknown tokens report `InvalidEnumValue`.
+- Custom leaf types via `xml::XmlValueTraits<T>` (`parse` / `format` statics).
+- `xml::Date`, `xml::Time`, `xml::DateTime`: XSD `date`/`time`/`dateTime` with
+  timezone and fractional-second support and `std::chrono` accessors.
+
+**Error reporting**
+- `xml::ErrorCode` enum: `Parser::errorCode()` returns a specific failure reason
+  after a failed `deserialize()` (e.g. `UnterminatedComment`, `ElementMismatch`,
+  `RootElementNotFound`). Cleared by `reset()`.
+
+**Constraint validation**
+- `xml::XmlConstraints<T>`: specializable trait; `static check(const T&)`
+  returns `std::optional<std::string>` (nullopt = valid). Default is a no-op.
+- `xml::validate(obj)` -> `std::optional<xml::ValidationError>`: calls the
+  trait recursively. Empty = valid.
+- `xml::ValidationError`: message + field path, distinct from `xml::ErrorCode`.
+
+**XSD code generator** (`tools/XSDCodegen.hh`, `tools/XSDGen.cc`)
+- `xsd::Generator` reads an XSD schema (parsed with TurboXML) and emits C++
+  struct definitions with `XmlMetadata<T>` specializations.
+  - `xs:complexType` / `xs:element` / `xs:attribute` -> struct + fields
+  - `xs:simpleType` enumeration -> `enum class` + `XmlEnumTraits<E>`
+  - `xs:simpleContent` -> `valueField`
+  - `xs:choice` -> `variantField`
+  - `xs:complexContent extension` -> struct inheritance with merged
+    `XmlMetadata<Child>` prepending parent fields; recursive
+  - `xs:attributeGroup` / `xs:group` -> expanded inline at codegen time
+  - `xs:include` -> loaded via `xsd::Options::loader` callback; CLI resolves
+    paths relative to the input schema's directory
+  - Facets (`minLength`, `maxLength`, `length`, `pattern`, `minInclusive`,
+    `maxInclusive`, `minExclusive`, `maxExclusive`) -> `XmlConstraints<T>`
+    specializations; `pattern` uses `<regex>`
+  - Attribute `default` -> C++ default member initializer
+  - Attribute `fixed` -> default initializer + `XmlConstraints<T>` equality check
+  - Finite `maxOccurs=N` -> `XmlConstraints<T>` size check
+  - Unsupported constructs reported in `Generator::Result::notes`
+- CMake option `TURBOXML_BUILD_CODEGEN` (default `ON`).
 
 ### Changed
-- Required-field presence is tracked in a multiword mask instead of a single
-  `uint64_t`, removing the 64-fields-per-type ceiling.
-- `xsdgen` tool to generate TurboXML C++ definitions for provided XSD.
+- Required-field tracking widened from a single `uint64_t` to a multiword bitmask, removing the 64-fields-per-type limit.
 
 ## 1.2.0 - 2026-06-12
 
@@ -98,7 +101,7 @@ Performance release. No API changes.
 Initial release.
 
 - Header-only C++20 XML pull-parser, deserializer, and serializer (`TurboXML.hh`).
-- Declarative field mapping via `XmlMetadata<T>` with `field`, `attr_field`, `vec_field`, and `arr_field`.
+- Declarative field mapping via `XmlMetadata<T>` with `field`, `attrField`, `vecField`, and `arrField`.
 - Zero-copy `std::string_view` or owning `std::string` fields; arithmetic types via `std::from_chars`.
 - Compile-time FNV-1a field dispatch; extensible containers through `XmlContainerTraits`.
 - Serializer with pretty/compact output and XML escaping.

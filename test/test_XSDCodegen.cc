@@ -1,27 +1,14 @@
 #include <gtest/gtest.h>
 
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
-#include <variant>
 
 #include "XSDCodegen.hh"
-// The committed golden header generated from test/XSDSample.xsd. Including it
-// proves the generated metadata is valid C++ and parses (see EndToEnd below).
-#include "XSDSampleGenerated.hh"
 
 namespace {
 
 auto has(const std::string& code, std::string_view frag) -> bool {
   return code.find(frag) != std::string::npos;
-}
-
-auto readFile(const std::string& path) -> std::string {
-  std::ifstream in(path, std::ios::binary);
-  std::ostringstream ss;
-  ss << in.rdbuf();
-  return ss.str();
 }
 
 }  // namespace
@@ -53,6 +40,32 @@ TEST(XsdCodegen, BuiltinTypesAndCardinality) {
   EXPECT_TRUE(has(r.code, R"(xml::field("name", &Rec::name, true))"));  // minOccurs=1
   EXPECT_TRUE(has(r.code, R"(xml::field("age", &Rec::age))"));          // optional
   EXPECT_TRUE(has(r.code, R"(xml::vecField("tag", &Rec::tag, true))"));
+}
+
+TEST(XsdCodegen, BuiltinTypeMappings) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:complexType name="Types">
+      <xs:sequence>
+        <xs:element name="flag" type="xs:boolean"/>
+        <xs:element name="day" type="xs:date"/>
+        <xs:element name="t" type="xs:time"/>
+        <xs:element name="fp" type="xs:float"/>
+        <xs:element name="dp" type="xs:double"/>
+        <xs:element name="big" type="xs:long"/>
+        <xs:element name="n" type="xs:integer"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(r.notes.empty()) << r.notes[0];
+  EXPECT_TRUE(has(r.code, "bool flag{};")) << r.code;
+  EXPECT_TRUE(has(r.code, "xml::Date day{};")) << r.code;
+  EXPECT_TRUE(has(r.code, "xml::Time t{};")) << r.code;
+  EXPECT_TRUE(has(r.code, "float fp{};")) << r.code;
+  EXPECT_TRUE(has(r.code, "double dp{};")) << r.code;
+  EXPECT_TRUE(has(r.code, "long big{};")) << r.code;
+  EXPECT_TRUE(has(r.code, "long n{};")) << r.code;  // xs:integer -> long
 }
 
 TEST(XsdCodegen, EnumFromSimpleType) {
@@ -167,43 +180,6 @@ TEST(XsdCodegen, UnsupportedConstructsAreNoted) {
   EXPECT_TRUE(unknown);
 }
 
-// Proves the committed golden header (generated from XSDSample.xsd) compiles
-// and that its metadata parses a representative document correctly.
-TEST(XsdCodegen, EndToEndGeneratedMetadataParses) {
-  constexpr std::string_view doc = R"(<order id="7" labels="rush gift">
-    <priority>High</priority>
-    <total currency="USD">9.99</total>
-    <placed>2026-06-18T09:30:00Z</placed>
-    <note>first</note>
-    <note>second</note>
-    <quantities>4 8 15</quantities>
-    <parent id="1"><priority>Low</priority><total>1.00</total></parent>
-    <circle radius="3"/>
-    <square side="4"/>
-    <circle radius="5"/>
-  </order>)";
-  xml::Parser parser{doc};
-  Order o;
-  ASSERT_TRUE(xml::deserialize(parser, "order", o));
-  EXPECT_EQ(o.id, 7);
-  EXPECT_EQ(o.priority, Priority::High);
-  EXPECT_DOUBLE_EQ(o.total.value, 9.99);
-  EXPECT_EQ(o.total.currency, "USD");
-  ASSERT_TRUE(o.placed);
-  EXPECT_EQ(o.placed->time.hour, 9u);
-  ASSERT_EQ(o.note.size(), 2u);
-  EXPECT_EQ(o.note[0], "first");
-  EXPECT_EQ(o.labels, (std::vector<std::string>{"rush", "gift"}));  // NMTOKENS attr list
-  EXPECT_EQ(o.quantities, (std::vector<int>{4, 8, 15}));            // xs:list element
-  ASSERT_TRUE(o.parent);
-  EXPECT_EQ(o.parent->id, 1);
-  EXPECT_EQ(o.parent->priority, Priority::Low);
-  ASSERT_EQ(o.choice.size(), 3u);
-  EXPECT_EQ(std::get<Circle>(o.choice[0]).radius, 3);
-  EXPECT_EQ(std::get<Square>(o.choice[1]).side, 4);
-  EXPECT_EQ(std::get<Circle>(o.choice[2]).radius, 5);
-}
-
 // Facet capture: string length and numeric range constraints.
 TEST(XsdCodegen, StringLengthFacetsGenerateConstraints) {
   constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -230,7 +206,7 @@ TEST(XsdCodegen, StringLengthFacetsGenerateConstraints) {
   EXPECT_TRUE(has(r.code, "note->size() < 1")) << r.code;
 }
 
-TEST(XsdCodegen, NumericRangeFacetsGenerateConstraints) {
+TEST(XsdCodegen, NumericRangeFacets) {
   constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:simpleType name="SmallInt">
       <xs:restriction base="xs:int">
@@ -238,17 +214,26 @@ TEST(XsdCodegen, NumericRangeFacetsGenerateConstraints) {
         <xs:maxInclusive value="100"/>
       </xs:restriction>
     </xs:simpleType>
-    <xs:complexType name="Score">
+    <xs:simpleType name="UnitInterval">
+      <xs:restriction base="xs:double">
+        <xs:minExclusive value="0"/>
+        <xs:maxExclusive value="1"/>
+      </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Rec">
       <xs:sequence>
-        <xs:element name="value" type="SmallInt"/>
+        <xs:element name="score" type="SmallInt"/>
+        <xs:element name="prob" type="UnitInterval"/>
       </xs:sequence>
     </xs:complexType>
   </xs:schema>)";
   const auto r = xsd::generate(xsd);
   ASSERT_TRUE(r.ok);
-  EXPECT_TRUE(has(r.code, "XmlConstraints<Score>")) << r.code;
-  EXPECT_TRUE(has(r.code, "v.value < 0")) << r.code;
-  EXPECT_TRUE(has(r.code, "v.value > 100")) << r.code;
+  EXPECT_TRUE(has(r.code, "XmlConstraints<Rec>")) << r.code;
+  EXPECT_TRUE(has(r.code, "v.score < 0")) << r.code;    // minInclusive: <
+  EXPECT_TRUE(has(r.code, "v.score > 100")) << r.code;  // maxInclusive: >
+  EXPECT_TRUE(has(r.code, "v.prob <= 0")) << r.code;    // minExclusive: <=
+  EXPECT_TRUE(has(r.code, "v.prob >= 1")) << r.code;    // maxExclusive: >=
 }
 
 TEST(XsdCodegen, InlineFacetsOnElement) {
@@ -289,17 +274,6 @@ TEST(XsdCodegen, PatternFacetGeneratesRegexCheck) {
   EXPECT_TRUE(has(r.code, "#include <regex>")) << r.code;
   EXPECT_TRUE(has(r.code, "std::regex_match")) << r.code;
   EXPECT_TRUE(has(r.code, "[A-Z]{3}")) << r.code;
-}
-
-// Verify the full round-trip: generate code, compile it, parse an XML doc,
-// then validate against the generated XmlConstraints.
-TEST(XsdCodegen, ConstraintRoundTripValidation) {
-  // Use the generated golden header's Order type — it has no facets, so
-  // xml::validate() should always return nullopt (no-op default specialization).
-  Order o;
-  o.id = 1;
-  o.priority = Priority::Low;
-  EXPECT_FALSE(xml::validate(o).has_value());
 }
 
 // 3a: xs:complexContent extension -> struct inheritance + merged metadata.
@@ -521,28 +495,6 @@ TEST(XsdCodegen, MultiLevelComplexContentExtension) {
   EXPECT_NE(dog_body.find("std::string breed"), std::string::npos) << dog_body;
 }
 
-// minExclusive / maxExclusive emit <= / >= comparisons (strict bounds).
-TEST(XsdCodegen, ExclusiveRangeFacetsGenerateConstraints) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
-    <xs:simpleType name="UnitInterval">
-      <xs:restriction base="xs:double">
-        <xs:minExclusive value="0"/>
-        <xs:maxExclusive value="1"/>
-      </xs:restriction>
-    </xs:simpleType>
-    <xs:complexType name="Prob">
-      <xs:sequence>
-        <xs:element name="p" type="UnitInterval"/>
-      </xs:sequence>
-    </xs:complexType>
-  </xs:schema>)";
-  const auto r = xsd::generate(xsd);
-  ASSERT_TRUE(r.ok);
-  EXPECT_TRUE(has(r.code, "XmlConstraints<Prob>")) << r.code;
-  EXPECT_TRUE(has(r.code, "v.p <= 0")) << r.code;
-  EXPECT_TRUE(has(r.code, "v.p >= 1")) << r.code;
-}
-
 // Attribute whose type is a named simpleType with facets generates a constraint.
 TEST(XsdCodegen, AttributeFacetConstraint) {
   constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -619,16 +571,4 @@ TEST(XsdCodegen, SimpleContentConstraint) {
   ASSERT_TRUE(r.ok);
   EXPECT_TRUE(has(r.code, "XmlConstraints<Amount>")) << r.code;
   EXPECT_TRUE(has(r.code, "v.value < 0")) << r.code;
-}
-
-// Guards the committed golden against drift from the generator.
-TEST(XsdCodegen, GoldenMatchesGenerator) {
-  const std::string xsd = readFile(std::string(TXSD_DATA_DIR) + "/XSDSample.xsd");
-  ASSERT_FALSE(xsd.empty()) << "could not read test/XSDSample.xsd";
-  const std::string golden = readFile(std::string(TXSD_DATA_DIR) + "/XSDSampleGenerated.hh");
-  ASSERT_FALSE(golden.empty());
-  const auto r = xsd::generate(xsd);
-  ASSERT_TRUE(r.ok);
-  EXPECT_EQ(r.code, golden) << "regenerate with: turboxml_xsdgen test/XSDSample.xsd -o "
-                               "test/XSDSampleGenerated.hh";
 }

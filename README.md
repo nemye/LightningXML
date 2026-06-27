@@ -2,7 +2,9 @@
 
 A high-performance, header-only XML pull-parser, deserializer, and serializer for C++20.
 
-Define your structs, declare the field mapping, and deserialize or serialize without any code generation or required dependencies. The intent of TurboXML is to trade compile-time work for runtime performance. The goal is not to be feature-rich, but to provide a simple API for getting XML-formatted data into your applications for processing as quickly as possible.
+Define your structs, declare the field mapping, and deserialize or serialize without any dependencies. The intent of TurboXML is to trade compile-time work for runtime performance. The goal is not to be feature-rich, but to provide a simple API for getting XML-formatted data into your applications for processing as quickly as possible.
+
+There are varying levels of parser implementations (Basic, Normalizing, Strict), each with increasing conformance to XML 1.0 (Fifth Edition) at the cost of performance. 
 
 ## Performance
 
@@ -34,11 +36,12 @@ TurboXML leads on every workload (1.4–8× over pugixml; the Tree case is a nea
 
 ## Features
 
-- **Header-only** - single file, drop `TurboXML.hh` into your project
-- **Flexibility** - `std::string_view` fields point directly into the source buffer or `std::string` fields materialize copies that outlive the source
-- **Compile-time dispatch** - field lookup via FNV-1a hash + constexpr dispatch tables
+- **Header-only** - primary parsing support is a single file, drop `TurboXML.hh` into your project.
+- **Flexibility** - `std::string_view` fields point directly into the source buffer or `std::string` fields materialize copies that outlive the source. Many STL types and containers are natively supported. 
+- **Compile-time dispatch** - field lookup via hashing + constexpr dispatch tables result in the fastest parser across nearly every workload tested. 
 - **Serializer** - round-trip to well-formed XML with compile-time pretty/compact control
 - **Extensible containers** - specialize `XmlContainerTraits` to read into any container type
+- **Code generator** - XSD 1.0 code generator covering complexTypes, inheritance, choices, groups, includes, and facet constraints.
 
 ## Quick Start
 
@@ -60,7 +63,7 @@ struct Book {
 template <>
 struct xml::XmlMetadata<Book> {
   static constexpr auto fields = std::make_tuple(
-      xml::attr_field("id",     &Book::id),
+      xml::attrField("id",     &Book::id),
       xml::field("author",      &Book::author),
       xml::field("title",       &Book::title),
       xml::field("price",       &Book::price));
@@ -73,7 +76,7 @@ struct Catalog {
 template <>
 struct xml::XmlMetadata<Catalog> {
   static constexpr auto fields =
-      std::make_tuple(xml::vec_field("book", &Catalog::books));
+      std::make_tuple(xml::vecField("book", &Catalog::books));
 };
 
 int main() {
@@ -105,10 +108,10 @@ int main() {
 | Factory | Description |
 |---|---|
 | `xml::field("name", &T::member)` | Child element: maps `<name>value</name>` to a member |
-| `xml::attr_field("name", &T::member)` | Attribute: maps `name="value"` on the parent tag |
-| `xml::vec_field("name", &T::member)` | Repeated element: appends each `<name>` to a dynamic container |
-| `xml::arr_field("name", &T::member)` | Repeated element: fills a fixed-capacity container sequentially; skips overflow |
-| `xml::value_field(&T::member)` | The element's **own text** (XSD simpleContent); takes no name - see below |
+| `xml::attrField("name", &T::member)` | Attribute: maps `name="value"` on the parent tag |
+| `xml::vecField("name", &T::member)` | Repeated element: appends each `<name>` to a dynamic container |
+| `xml::arrField("name", &T::member)` | Repeated element: fills a fixed-capacity container sequentially; skips overflow |
+| `xml::valueField(&T::member)` | The element's **own text** (XSD simpleContent); takes no name - see below |
 
 All five factories accept an optional trailing `required` flag (default `false`,
 i.e. fields are optional). When `true`, `deserialize()` fails with
@@ -118,7 +121,7 @@ text):
 
 ```cpp
 xml::field("title", &Book::title, true)   // field must be present
-xml::attr_field("id", &Book::id, false)   // optional. Note that the parameter is not needed (default = false) 
+xml::attrField("id", &Book::id, false)   // optional. Note that the parameter is not needed (default = false) 
 ```
 
 Types with no required fields pay nothing for the check: presence tracking
@@ -132,12 +135,12 @@ type may declare.
 - **Enums**: any C++ `enum` with an `XmlEnumTraits` specialization (maps token spellings, e.g. `xs:enumeration`)
 - **Dates & times**: `xml::Date`, `xml::Time`, `xml::DateTime` (XSD `date`/`time`/`dateTime`), with `std::chrono` accessors
 - **Custom leaf types**: any type with an `XmlValueTraits` specialization (text <-> value)
-- **Choices**: `std::variant<...>` (and `std::vector<std::variant<...>>`) via `variant_field` (XSD `xs:choice`)
+- **Choices**: `std::variant<...>` (and `std::vector<std::variant<...>>`) via `variantField` (XSD `xs:choice`)
 - **Nested objects**: any type with an `XmlMetadata` specialization
 - **Optionals**: `std::optional<T>` of any of the above - empty when absent, engaged when present
-- **Optional/recursive children**: `std::unique_ptr<T>` of an `XmlObject` - null when absent, allocated when present
-- **Dynamic containers**: `std::vector<T>` via `vec_field`
-- **Fixed containers**: `std::array<T, N>` via `arr_field`
+- **Optional/recursive children**: `std::unique_ptr<T>` - null when absent, allocated when present
+- **Dynamic containers**: `std::vector<T>` via `vecField`
+- **Fixed containers**: `std::array<T, N>` via `arrField`
 
 ### Enumerations
 
@@ -151,21 +154,21 @@ enum class Priority { Low, Medium, High };
 
 template <>
 struct xml::XmlEnumTraits<Priority> {
-  static constexpr auto values = xml::enum_table<Priority>({
+  static constexpr auto values = xml::enumTable<Priority>({
       {"Low", Priority::Low}, {"Medium", Priority::Medium}, {"High", Priority::High}});
 };
 
 struct Task {
-  Priority priority{};   // xml::attr_field("priority", &Task::priority)
+  Priority priority{};   // xml::attrField("priority", &Task::priority)
 };
 ```
 
-`enum_table<E>({...})` deduces the entry count for you; a plain
+`enumTable<E>({...})` deduces the entry count for you; a plain
 `static constexpr std::array<xml::EnumEntry<Priority>, N> values{{...}}` works too.
 
 ### Value Fields (element text + attributes)
 
-`xml::value_field` binds an element's **own character data** to a member while
+`xml::valueField` binds an element's **own character data** to a member while
 attribute fields on the same element still apply - XSD `simpleContent`, e.g.
 `<price currency="USD">9.99</price>`. It takes no XML name (the name comes from
 where the type is referenced) and the member must be a scalar
@@ -180,8 +183,8 @@ struct Price {
 template <>
 struct xml::XmlMetadata<Price> {
   static constexpr auto fields = std::make_tuple(
-      xml::attr_field("currency", &Price::currency),
-      xml::value_field(&Price::amount));
+      xml::attrField("currency", &Price::currency),
+      xml::valueField(&Price::amount));
 };
 // used as: xml::field("price", &Order::price)  ->  <price currency="USD">9.99</price>
 ```
@@ -195,7 +198,7 @@ optional, marking such a field `required` is a compile-time error.
 
 ```cpp
 struct Person {
-  std::optional<int> age;                // xml::attr_field("age", &Person::age)
+  std::optional<int> age;                // xml::attrField("age", &Person::age)
   std::optional<std::string_view> nick;  // xml::field("nick", &Person::nick)
   std::optional<Address> addr;           // xml::field("addr", &Person::addr)
 };
@@ -217,7 +220,7 @@ struct Section {
 
 ### Choices / Variants
 
-Map an XSD `xs:choice` to a `std::variant<...>` member with `variant_field`,
+Map an XSD `xs:choice` to a `std::variant<...>` member with `variantField`,
 binding each element name to an alternative via `alt<T>("name")` (alternatives
 must be distinct types). The matched element selects the alternative; the
 serializer emits the active one under its name.
@@ -232,14 +235,14 @@ struct Shape {
 template <>
 struct xml::XmlMetadata<Shape> {
   static constexpr auto fields = std::make_tuple(
-      xml::variant_field(&Shape::kind,
+      xml::variantField(&Shape::kind,
           xml::alt<Circle>("circle"), xml::alt<Square>("square")));
 };
 // <Shape><circle r="3"/></Shape>   or   <Shape><square s="7"/></Shape>
 ```
 
 - A plain `std::variant` models *exactly one* branch. Use
-  `required_variant_field` to require that a branch be present (`minOccurs ≥ 1`,
+  `requiredVariantField` to require that a branch be present (`minOccurs ≥ 1`,
   else `ErrorCode::MissingRequiredField`).
 - For a repeated/interleaved choice (`maxOccurs > 1`), use a dynamic container of
   variant, e.g. `std::vector<std::variant<P, Img, Table>>`; an empty vector means
@@ -254,7 +257,7 @@ and round-trip through the serializer. Bad input fails with
 
 ```cpp
 struct Event {
-  xml::Date     day;     // xml::attr_field("day", &Event::day)
+  xml::Date     day;     // xml::attrField("day", &Event::day)
   xml::DateTime stamp;   // xml::field("stamp", &Event::stamp)
 };
 // ... after deserialize:
@@ -297,10 +300,10 @@ Specialize `xml::XmlMetadata<T>` for each type. Field order in the tuple does no
 template <>
 struct xml::XmlMetadata<MyType> {
   static constexpr auto fields = std::make_tuple(
-      xml::attr_field("id",   &MyType::id),
+      xml::attrField("id",   &MyType::id),
       xml::field("name",      &MyType::name),
-      xml::vec_field("item",  &MyType::items),
-      xml::arr_field("score", &MyType::scores));
+      xml::vecField("item",  &MyType::items),
+      xml::arrField("score", &MyType::scores));
 };
 ```
 
@@ -331,7 +334,7 @@ struct xml::XmlContainerTraits<Eigen::Matrix<T, N, 1>> {
 
 Then use the field factory that matches the container's semantics:
 ```cpp
-xml::vec_field("point", &MyStruct::my_eigen_vec)  // or arr_field, both work
+xml::vecField("point", &MyStruct::my_eigen_vec)  // or arrField, both work
 ```
 
 ### Owning vs Zero-Copy
@@ -386,13 +389,13 @@ Supported XSD constructs:
 | XSD | Generated C++ |
 |---|---|
 | `xs:complexType` | `struct` + `XmlMetadata<T>` |
-| `xs:element` / `xs:attribute` | `field` / `attr_field` (required, optional, or vector by `minOccurs`/`maxOccurs`/`use`) |
+| `xs:element` / `xs:attribute` | `field` / `attrField` (required, optional, or vector by `minOccurs`/`maxOccurs`/`use`) |
 | `xs:simpleType` enumeration | `enum class` + `XmlEnumTraits<E>` |
-| `xs:simpleContent` extension | `value_field` + attribute fields |
+| `xs:simpleContent` extension | `valueField` + attribute fields |
 | `xs:complexContent` extension | `struct Child : Parent` with merged `XmlMetadata<Child>` |
-| `xs:choice` | `std::variant<...>` + `variant_field` |
+| `xs:choice` | `std::variant<...>` + `variantField` |
 | `xs:attributeGroup` / `xs:group` | Expanded inline into the referencing type |
-| `xs:include` | Loaded via the `--include-dir` search path (CLI) or a loader callback (API) |
+| `xs:include` | Loaded relative to the input schema's directory (CLI) or a loader callback (`xsd::Options::loader`) |
 | XSD facets (`minLength`, `maxLength`, `length`, `pattern`, `minInclusive`, `maxInclusive`, …) | `XmlConstraints<T>` specialization checked by `xml::validate()` |
 | Attribute `default` | C++ default member initializer |
 | Attribute `fixed` | Default initializer + `XmlConstraints<T>` equality check |
@@ -470,8 +473,7 @@ target_link_libraries(my_target PRIVATE TurboXML::turboxml)
 │   ├── bench_TurboXML.cc
 │   ├── Helpers.hh
 │   ├── test_TurboXML.cc
-│   ├── test_XSDCodegen.cc
-│   └── XSDSample.xsd       # + XSDSampleGenerated.hh golden
+│   └── test_XSDCodegen.cc
 ```
 
 ## License

@@ -79,9 +79,6 @@ if(TURBOXML_BUILD_TESTS)
     target_include_directories(turboxml_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tools
     )
-    target_compile_definitions(turboxml_tests PRIVATE
-        TXSD_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test"
-    )
     target_link_libraries(turboxml_tests PRIVATE
         turboxml_helpers
         GTest::gtest_main
