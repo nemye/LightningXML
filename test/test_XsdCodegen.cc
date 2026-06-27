@@ -302,6 +302,114 @@ TEST(XsdCodegen, ConstraintRoundTripValidation) {
   EXPECT_FALSE(xml::validate(o).has_value());
 }
 
+// 3a: xs:complexContent extension -> struct inheritance + merged metadata.
+TEST(XsdCodegen, ComplexContentExtension) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:complexType name="Person">
+      <xs:sequence>
+        <xs:element name="name" type="xs:string"/>
+      </xs:sequence>
+      <xs:attribute name="id" type="xs:int" use="required"/>
+    </xs:complexType>
+    <xs:complexType name="Employee">
+      <xs:complexContent>
+        <xs:extension base="Person">
+          <xs:sequence>
+            <xs:element name="department" type="xs:string"/>
+          </xs:sequence>
+          <xs:attribute name="empId" type="xs:int"/>
+        </xs:extension>
+      </xs:complexContent>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "struct Employee : Person")) << r.code;
+  // Inherited members must NOT be re-declared in Employee's struct body.
+  const auto emp_def = r.code.find("struct Employee :");
+  ASSERT_NE(emp_def, std::string::npos) << r.code;
+  const auto emp_end = r.code.find("\n};", emp_def);
+  const std::string emp_body = r.code.substr(emp_def, emp_end - emp_def);
+  EXPECT_EQ(emp_body.find("std::string name"), std::string::npos) << emp_body;
+  // But metadata MUST reference them via &Employee::.
+  EXPECT_TRUE(has(r.code, R"(xml::attr_field("id", &Employee::id, true))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::field("name", &Employee::name, true))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::field("department", &Employee::department, true))")) << r.code;
+}
+
+// 3b: xs:attributeGroup inline expansion.
+TEST(XsdCodegen, AttributeGroupExpansion) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:attributeGroup name="CommonAttrs">
+      <xs:attribute name="id" type="xs:int" use="required"/>
+      <xs:attribute name="lang" type="xs:string"/>
+    </xs:attributeGroup>
+    <xs:complexType name="Widget">
+      <xs:attributeGroup ref="CommonAttrs"/>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "struct Widget")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::attr_field("id", &Widget::id, true))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::attr_field("lang", &Widget::lang))")) << r.code;
+}
+
+// 3b: xs:group inline expansion.
+TEST(XsdCodegen, ElementGroupExpansion) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:group name="CommonFields">
+      <xs:sequence>
+        <xs:element name="title" type="xs:string"/>
+        <xs:element name="desc" type="xs:string" minOccurs="0"/>
+      </xs:sequence>
+    </xs:group>
+    <xs:complexType name="Doc">
+      <xs:sequence>
+        <xs:group ref="CommonFields"/>
+        <xs:element name="body" type="xs:string"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "struct Doc")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::field("title", &Doc::title, true))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::field("desc", &Doc::desc))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::field("body", &Doc::body, true))")) << r.code;
+}
+
+// 3c: xs:include merges types from an external schema via loader callback.
+TEST(XsdCodegen, SchemaIncludeLoader) {
+  constexpr std::string_view base_xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:include schemaLocation="common.xsd"/>
+    <xs:complexType name="Widget">
+      <xs:sequence>
+        <xs:element name="name" type="xs:string"/>
+      </xs:sequence>
+      <xs:attribute name="color" type="Color"/>
+    </xs:complexType>
+  </xs:schema>)";
+  constexpr std::string_view common_xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:simpleType name="Color">
+      <xs:restriction base="xs:string">
+        <xs:enumeration value="red"/>
+        <xs:enumeration value="blue"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:schema>)";
+
+  xsd::Options opts;
+  opts.loader = [&](std::string_view loc) -> std::optional<std::string> {
+    if (loc == "common.xsd") return std::string{common_xsd};
+    return {};
+  };
+  const auto r = xsd::generate(base_xsd, opts);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "enum class Color")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xml::attr_field("color", &Widget::color))")) << r.code;
+}
+
 // Guards the committed golden against drift from the generator.
 TEST(XsdCodegen, GoldenMatchesGenerator) {
   const std::string xsd = read_file(std::string(TXSD_DATA_DIR) + "/xsd_sample.xsd");

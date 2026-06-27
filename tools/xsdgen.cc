@@ -3,7 +3,8 @@
 ///
 /// Reads an XSD, emits TurboXML XmlMetadata to stdout (or -o file), and prints
 /// any unsupported-construct notes to stderr. Exits non-zero only when the XSD
-/// cannot be parsed at all.
+/// cannot be parsed at all. xs:include files are resolved relative to the input
+/// file's directory.
 
 #include <cstdio>
 #include <fstream>
@@ -23,6 +24,11 @@ auto read_file(const std::string& path, std::string& out) -> bool {
   ss << in.rdbuf();
   out = ss.str();
   return true;
+}
+
+auto dir_of(const std::string& path) -> std::string {
+  const auto sep = path.rfind('/');
+  return sep == std::string::npos ? "." : path.substr(0, sep);
 }
 
 }  // namespace
@@ -52,7 +58,19 @@ auto main(int argc, char** argv) -> int {
     return 2;
   }
 
-  const xsd::GenResult result = xsd::generate(xsd);
+  const std::string base_dir = dir_of(input);
+  xsd::Options opts;
+  opts.loader = [&](std::string_view loc) -> std::optional<std::string> {
+    std::string path = base_dir + "/" + std::string{loc};
+    std::string content;
+    if (!read_file(path, content)) {
+      std::cerr << "note: cannot load xs:include '" << loc << "' (skipped)\n";
+      return {};
+    }
+    return content;
+  };
+
+  const xsd::GenResult result = xsd::generate(xsd, opts);
   if (!result.ok) {
     for (const auto& n : result.notes) std::cerr << "error: " << n << '\n';
     return 1;
