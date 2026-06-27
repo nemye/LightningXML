@@ -3050,4 +3050,23 @@ auto serialize(std::string_view root_name, const T& object) -> std::string {
   return out;
 }
 
+/// @brief Optional constraint validator for type T.
+///
+/// Specialize this (typically via xsdgen output) to enforce XSD facet
+/// constraints on a deserialized object. The default is a no-op.
+/// @return nullopt if all constraints pass, or a violation message.
+template <typename T>
+struct XmlConstraints {
+  static auto check(const T&) noexcept -> std::optional<std::string> {
+    return {};
+  }
+};
+
+/// @brief Validates obj against its XmlConstraints<T> specialization.
+/// @return nullopt if valid, or a message describing the first violation.
+template <typename T>
+auto validate(const T& obj) -> std::optional<std::string> {
+  return XmlConstraints<T>::check(obj);
+}
+
 }  // namespace xml

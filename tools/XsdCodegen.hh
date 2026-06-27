@@ -25,9 +25,23 @@ struct Enumeration {
   std::string value;
 };
 
+struct Facet {
+  std::string value;
+};
+
 struct Restriction {
   std::string base;
   std::vector<Enumeration> enumerations;
+  std::optional<Facet> minLength;
+  std::optional<Facet> maxLength;
+  std::optional<Facet> length;
+  std::optional<Facet> pattern;
+  std::optional<Facet> minInclusive;
+  std::optional<Facet> maxInclusive;
+  std::optional<Facet> minExclusive;
+  std::optional<Facet> maxExclusive;
+  std::optional<Facet> fractionDigits;
+  std::optional<Facet> totalDigits;
 };
 
 struct List {
@@ -99,10 +113,25 @@ struct xml::XmlMetadata<xsd::Enumeration> {
       std::make_tuple(xml::attr_field("value", &xsd::Enumeration::value));
 };
 template <>
-struct xml::XmlMetadata<xsd::Restriction> {
+struct xml::XmlMetadata<xsd::Facet> {
   static constexpr auto fields =
-      std::make_tuple(xml::attr_field("base", &xsd::Restriction::base),
-                      xml::vec_field("enumeration", &xsd::Restriction::enumerations));
+      std::make_tuple(xml::attr_field("value", &xsd::Facet::value));
+};
+template <>
+struct xml::XmlMetadata<xsd::Restriction> {
+  static constexpr auto fields = std::make_tuple(
+      xml::attr_field("base", &xsd::Restriction::base),
+      xml::vec_field("enumeration", &xsd::Restriction::enumerations),
+      xml::field("minLength", &xsd::Restriction::minLength),
+      xml::field("maxLength", &xsd::Restriction::maxLength),
+      xml::field("length", &xsd::Restriction::length),
+      xml::field("pattern", &xsd::Restriction::pattern),
+      xml::field("minInclusive", &xsd::Restriction::minInclusive),
+      xml::field("maxInclusive", &xsd::Restriction::maxInclusive),
+      xml::field("minExclusive", &xsd::Restriction::minExclusive),
+      xml::field("maxExclusive", &xsd::Restriction::maxExclusive),
+      xml::field("fractionDigits", &xsd::Restriction::fractionDigits),
+      xml::field("totalDigits", &xsd::Restriction::totalDigits));
 };
 template <>
 struct xml::XmlMetadata<xsd::List> {
@@ -252,16 +281,13 @@ class Generator {
 
   auto run() -> GenResult {
     index_named_types();
-    // Collect every struct/enum to emit (named + inline, recursively).
-    for (const auto& st : schema_.simpleTypes) {
-      collect_simple_type(st.name, st);
-    }
-    for (const auto& ct : schema_.complexTypes) {
+    for (const auto& st : schema_.simpleTypes) collect_simple_type(st.name, st);
+    for (const auto& ct : schema_.complexTypes)
       collect_complex_type(detail::capitalize(ct.name), ct);
-    }
-    for (const auto& el : schema_.elements) {
-      collect_element_inline(el);
-    }
+    for (const auto& el : schema_.elements) collect_element_inline(el);
+    order_structs();
+    // Build constraint specializations before emit() so needs_regex_ is known.
+    for (const auto& s : structs_) emit_struct_constraints(s);
     emit();
     GenResult r;
     r.code = std::move(out_);
@@ -477,18 +503,21 @@ class Generator {
     }
     out_ += "#pragma once\n\n";
     out_ += "#include <memory>\n#include <optional>\n#include <string>\n";
+    if (needs_regex_) out_ += "#include <regex>\n";
     out_ += "#include <variant>\n#include <vector>\n\n";
     out_ += "#include \"TurboXML.hh\"\n\n";
 
     for (const auto& e : enums_) emit_enum(e);
 
-    order_structs();
+    // order_structs() already called in run() before constraints were built.
     if (!structs_.empty()) {
       for (const auto& s : structs_) out_ += "struct " + s.cpp_name + ";\n";
       out_ += "\n";
     }
     for (const auto& s : structs_) emit_struct_def(s);
     for (const auto& s : structs_) emit_struct_metadata(s);
+
+    if (!constraints_out_.empty()) out_ += constraints_out_;
 
     for (const auto& el : schema_.elements) {
       const Resolved r = resolve_element_type(el);
@@ -646,6 +675,145 @@ class Generator {
          "xml::variant_field(&" + s.cpp_name + "::choice," + alts_joined + ")"});
   }
 
+  // ---- constraint generation ----
+
+  static auto has_value_facets(const Restriction& r) -> bool {
+    return r.minLength || r.maxLength || r.length || r.pattern || r.minInclusive ||
+           r.maxInclusive || r.minExclusive || r.maxExclusive || r.fractionDigits ||
+           r.totalDigits;
+  }
+
+  static auto is_string_cpp(const std::string& cpp) -> bool {
+    return cpp == "std::string" || cpp == "std::string_view";
+  }
+
+  static auto escape_str_literal(const std::string& s) -> std::string {
+    std::string out;
+    for (char c : s) {
+      if (c == '\\') out += "\\\\";
+      else if (c == '"') out += "\\\"";
+      else out += c;
+    }
+    return out;
+  }
+
+  // Returns the restriction for a named type if it has non-enum value facets.
+  auto type_restriction(std::string_view type) -> const Restriction* {
+    const std::string key{detail::local_name(type)};
+    if (auto it = named_simple_.find(key); it != named_simple_.end()) {
+      if (it->second->restriction && has_value_facets(*it->second->restriction)) {
+        return &*it->second->restriction;
+      }
+    }
+    return nullptr;
+  }
+
+  // Returns the restriction for an element's type if it has non-enum value facets.
+  auto element_restriction(const Element& el) -> const Restriction* {
+    if (el.simpleType && el.simpleType->restriction &&
+        has_value_facets(*el.simpleType->restriction)) {
+      return &*el.simpleType->restriction;
+    }
+    return type_restriction(el.type);
+  }
+
+  // Builds constraint check lines for a field given its restriction.
+  // 'mem' is the C++ member name, 'cpp' is the C++ type, 'is_opt' wraps with optional guard.
+  auto build_check_code(const std::string& mem, const std::string& cpp, bool is_opt,
+                        const Restriction& r) -> std::string {
+    std::string out;
+    const std::string a = is_opt ? "v." + mem + "->" : "v." + mem + ".";
+    const std::string val = is_opt ? "*v." + mem : "v." + mem;
+    const std::string g = is_opt ? "v." + mem + " && " : "";
+
+    auto emit_if = [&](const std::string& cond, const std::string& msg) {
+      out += "    if (" + g + cond + ") return \"" + mem + ": " + msg + "\";\n";
+    };
+
+    if (is_string_cpp(cpp)) {
+      if (r.minLength)
+        emit_if(a + "size() < " + r.minLength->value,
+                "minLength violation (min=" + r.minLength->value + ")");
+      if (r.maxLength)
+        emit_if(a + "size() > " + r.maxLength->value,
+                "maxLength violation (max=" + r.maxLength->value + ")");
+      if (r.length)
+        emit_if(a + "size() != " + r.length->value,
+                "length violation (expected=" + r.length->value + ")");
+      if (r.pattern && !r.pattern->value.empty()) {
+        needs_regex_ = true;
+        out += "    if (" + g + "!std::regex_match(" + val + ", std::regex(\"" +
+               escape_str_literal(r.pattern->value) + "\"))) return \"" + mem +
+               ": pattern violation\";\n";
+      }
+    } else {
+      if (r.minInclusive && !r.minInclusive->value.empty())
+        emit_if(val + " < " + r.minInclusive->value,
+                "minInclusive violation (min=" + r.minInclusive->value + ")");
+      if (r.maxInclusive && !r.maxInclusive->value.empty())
+        emit_if(val + " > " + r.maxInclusive->value,
+                "maxInclusive violation (max=" + r.maxInclusive->value + ")");
+      if (r.minExclusive && !r.minExclusive->value.empty())
+        emit_if(val + " <= " + r.minExclusive->value,
+                "minExclusive violation (min=" + r.minExclusive->value + ")");
+      if (r.maxExclusive && !r.maxExclusive->value.empty())
+        emit_if(val + " >= " + r.maxExclusive->value,
+                "maxExclusive violation (max=" + r.maxExclusive->value + ")");
+    }
+    return out;
+  }
+
+  // Builds the body of XmlConstraints<T>::check for one struct (empty if no constraints).
+  auto struct_constraint_body(const StructDef& s) -> std::string {
+    std::string body;
+    const ComplexType& ct = *s.ct;
+
+    auto process_attr = [&](const Attribute& a) {
+      const Restriction* r = type_restriction(a.type);
+      if (!r) return;
+      const Resolved res = resolve_named_type(a.type, a.name);
+      body += build_check_code(detail::sanitize(a.name), res.cpp, false, *r);
+    };
+
+    auto process_element = [&](const Element& el) {
+      if (is_unbounded(el) || (el.simpleType && el.simpleType->list)) return;
+      const Restriction* r = element_restriction(el);
+      if (!r) return;
+      const Resolved res = resolve_element_type(el);
+      body += build_check_code(detail::sanitize(el.name), res.cpp,
+                               min_occurs(el) == 0, *r);
+    };
+
+    for (const auto& a : ct.attributes) process_attr(a);
+
+    if (ct.simpleContent && ct.simpleContent->extension) {
+      const auto& ext = *ct.simpleContent->extension;
+      if (const Restriction* r = type_restriction(ext.base)) {
+        body += build_check_code("value", base_builtin(ext.base), false, *r);
+      }
+      for (const auto& a : ext.attributes) process_attr(a);
+    }
+
+    if (ct.sequence) {
+      for (const auto& el : ct.sequence->elements) process_element(el);
+    }
+    if (ct.choice) {
+      for (const auto& el : ct.choice->elements) process_element(el);
+    }
+
+    return body;
+  }
+
+  void emit_struct_constraints(const StructDef& s) {
+    std::string body = struct_constraint_body(s);
+    if (body.empty()) return;
+    constraints_out_ += "template <>\nstruct xml::XmlConstraints<" + s.cpp_name + "> {\n";
+    constraints_out_ += "  static auto check(const " + s.cpp_name +
+                        "& v) -> std::optional<std::string> {\n";
+    constraints_out_ += body;
+    constraints_out_ += "    return {};\n  }\n};\n\n";
+  }
+
   // Topologically order structs so a by-value/optional member's type is defined
   // first. Cycles via vector/unique_ptr need only the forward declaration.
   void order_structs() {
@@ -700,6 +868,8 @@ class Generator {
   std::vector<std::string> notes_;
   std::unordered_set<std::string> note_seen_;
   std::string out_;
+  std::string constraints_out_;
+  bool needs_regex_{false};
 };
 
 /// @brief Generates TurboXML metadata source from XSD schema text.

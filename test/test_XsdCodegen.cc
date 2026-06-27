@@ -204,6 +204,104 @@ TEST(XsdCodegen, EndToEndGeneratedMetadataParses) {
   EXPECT_EQ(std::get<Circle>(o.choice[2]).radius, 5);
 }
 
+// Facet capture: string length and numeric range constraints.
+TEST(XsdCodegen, StringLengthFacetsGenerateConstraints) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:simpleType name="BoundedStr">
+      <xs:restriction base="xs:string">
+        <xs:minLength value="1"/>
+        <xs:maxLength value="50"/>
+      </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Item">
+      <xs:sequence>
+        <xs:element name="code" type="BoundedStr"/>
+        <xs:element name="note" type="BoundedStr" minOccurs="0"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "XmlConstraints<Item>")) << r.code;
+  EXPECT_TRUE(has(r.code, "code.size() < 1")) << r.code;
+  EXPECT_TRUE(has(r.code, "code.size() > 50")) << r.code;
+  // Optional field uses nullptr-guard before size check.
+  EXPECT_TRUE(has(r.code, "v.note &&")) << r.code;
+  EXPECT_TRUE(has(r.code, "note->size() < 1")) << r.code;
+}
+
+TEST(XsdCodegen, NumericRangeFacetsGenerateConstraints) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:simpleType name="SmallInt">
+      <xs:restriction base="xs:int">
+        <xs:minInclusive value="0"/>
+        <xs:maxInclusive value="100"/>
+      </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Score">
+      <xs:sequence>
+        <xs:element name="value" type="SmallInt"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "XmlConstraints<Score>")) << r.code;
+  EXPECT_TRUE(has(r.code, "v.value < 0")) << r.code;
+  EXPECT_TRUE(has(r.code, "v.value > 100")) << r.code;
+}
+
+TEST(XsdCodegen, InlineFacetsOnElement) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:complexType name="Rec">
+      <xs:sequence>
+        <xs:element name="code">
+          <xs:simpleType>
+            <xs:restriction base="xs:string">
+              <xs:length value="5"/>
+            </xs:restriction>
+          </xs:simpleType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "XmlConstraints<Rec>")) << r.code;
+  EXPECT_TRUE(has(r.code, "code.size() != 5")) << r.code;
+}
+
+TEST(XsdCodegen, PatternFacetGeneratesRegexCheck) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:simpleType name="AlphaCode">
+      <xs:restriction base="xs:string">
+        <xs:pattern value="[A-Z]{3}"/>
+      </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Item">
+      <xs:sequence>
+        <xs:element name="code" type="AlphaCode"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "#include <regex>")) << r.code;
+  EXPECT_TRUE(has(r.code, "std::regex_match")) << r.code;
+  EXPECT_TRUE(has(r.code, "[A-Z]{3}")) << r.code;
+}
+
+// Verify the full round-trip: generate code, compile it, parse an XML doc,
+// then validate against the generated XmlConstraints.
+TEST(XsdCodegen, ConstraintRoundTripValidation) {
+  // Use the generated golden header's Order type — it has no facets, so
+  // xml::validate() should always return nullopt (no-op default specialization).
+  Order o;
+  o.id = 1;
+  o.priority = Priority::Low;
+  EXPECT_FALSE(xml::validate(o).has_value());
+}
+
 // Guards the committed golden against drift from the generator.
 TEST(XsdCodegen, GoldenMatchesGenerator) {
   const std::string xsd = read_file(std::string(TXSD_DATA_DIR) + "/xsd_sample.xsd");
