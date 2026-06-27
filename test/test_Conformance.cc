@@ -13,7 +13,6 @@
 ///   - DTD processing (sec 2.8, 3.2-3.4) -- DOCTYPE is skipped, not interpreted
 ///   - End-of-line normalization (sec 2.11)
 ///   - Attribute-value normalization (sec 3.3.3)
-///   - Encoding detection / BOM handling (sec 4.3.3, Appendix F)
 ///   - "]]>" rejection in character data (sec 2.4) -- the extra scan over
 ///     every value costs 13-28% on text-heavy input
 ///   - Duplicate-attribute detection (sec 3.1 WFC) -- the O(n^2) check is too
@@ -524,22 +523,46 @@ TEST_F(Sec2_8_Prolog, DoctypeSkipped) {
   EXPECT_EQ(leaf.text, "ok");
 }
 
-/// DOCTYPE with internal subset (inline DTD). The parser should skip
-/// the entire "<!DOCTYPE ...>" block. This is a tricky case because
-/// the internal subset contains '<' and '>'.
-///
-/// XFAIL: TurboXML scans for the first '>' after '<!' which will
-/// terminate too early if the DOCTYPE contains an internal subset with
-/// nested declarations.
+/// DOCTYPE with internal subset (inline DTD). The parser should skip the
+/// entire block, including nested declarations whose '>' must not terminate
+/// the outer DOCTYPE prematurely (sec 2.8, Production [28]).
 TEST_F(Sec2_8_Prolog, DoctypeWithInternalSubset) {
   constexpr std::string_view src =
       R"(<?xml version="1.0"?><!DOCTYPE r [<!ELEMENT r (v)><!ELEMENT v (#PCDATA)>]><r><v>ok</v></r>)";
   xml::Parser p{src};
   Leaf leaf;
-  bool ok = xml::deserialize(p, "r", leaf);
-  if (!ok) {
-    GTEST_SKIP() << "XFAIL sec 2.8: DOCTYPE with internal subset not handled";
-  }
+  ASSERT_TRUE(xml::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// DOCTYPE with entity declaration containing '>' in quoted literal must
+/// not terminate the internal subset scan early (sec 2.8, 4.2).
+TEST_F(Sec2_8_Prolog, DoctypeEntityWithGtInLiteral) {
+  constexpr std::string_view src =
+      R"(<?xml version="1.0"?><!DOCTYPE r [<!ENTITY bar "a>b">]><r><v>ok</v></r>)";
+  xml::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xml::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// UTF-8 BOM (\xEF\xBB\xBF) at the start of the document must be stripped
+/// transparently before parsing begins (sec 4.3.3, Appendix F).
+TEST_F(Sec2_8_Prolog, Utf8BomStripped) {
+  // BOM + "<?xml version=\"1.0\"?><r><v>ok</v></r>"
+  const std::string src = "\xEF\xBB\xBF<?xml version=\"1.0\"?><r><v>ok</v></r>";
+  xml::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xml::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// UTF-8 BOM without an XML declaration (bare BOM before root element).
+TEST_F(Sec2_8_Prolog, Utf8BomNoDeclaration) {
+  const std::string src = "\xEF\xBB\xBF<r><v>ok</v></r>";
+  xml::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xml::deserialize(p, "r", leaf));
   EXPECT_EQ(leaf.text, "ok");
 }
 

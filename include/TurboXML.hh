@@ -1414,7 +1414,9 @@ class BasicParser {
 
   /// @brief Constructs a parser over src. src must outlive the Parser.
   explicit BasicParser(std::string_view src) noexcept
-      : src_(src), cur_(src.data()), end_(src.data() + src.size()) {}
+      : src_(src), cur_(src.data()), end_(src.data() + src.size()) {
+    skip_bom();
+  }
 
   BasicParser(const BasicParser&) = delete;
   auto operator=(const BasicParser&) -> BasicParser& = delete;
@@ -1433,6 +1435,7 @@ class BasicParser {
     attributes_.clear();
     error_code_ = ErrorCode::None;
     last_self_closing_ = false;
+    skip_bom();
   }
 
   /// @brief Reason the most recent parse failed, or None if it succeeded.
@@ -1518,6 +1521,43 @@ class BasicParser {
     while (!at_end() && is_space(*cur_)) [[likely]] {
       ++cur_;
     }
+  }
+
+  // Skips a UTF-8 BOM (\xEF\xBB\xBF) at the current position if present.
+  void skip_bom() noexcept {
+    if (end_ - cur_ >= 3 && static_cast<uint8_t>(cur_[0]) == 0xEF &&
+        static_cast<uint8_t>(cur_[1]) == 0xBB &&
+        static_cast<uint8_t>(cur_[2]) == 0xBF) {
+      cur_ += 3;
+    }
+  }
+
+  // Skips past the closing '>' of a markup declaration that began with '<!'.
+  // cur_ must point to the character immediately after '<!'. Handles internal
+  // subsets ('[' ... ']'), quoted literals, and nested comments so that '>'
+  // characters inside those contexts do not terminate the scan prematurely.
+  void skip_bang_decl() noexcept {
+    int bracket_depth = 0;
+    while (cur_ < end_) {
+      const char c = *cur_++;
+      switch (c) {
+        case '[': ++bracket_depth; break;
+        case ']': if (bracket_depth > 0) --bracket_depth; break;
+        case '>': if (bracket_depth == 0) return; break;
+        case '"': case '\'': while (cur_ < end_ && *cur_++ != c) {} break;
+        case '<':
+          if (cur_ + 2 < end_ && cur_[0] == '!' && cur_[1] == '-' && cur_[2] == '-') {
+            cur_ += 3;
+            skip_past("-->");
+          } else if (cur_ < end_ && *cur_ == '?') {
+            ++cur_;
+            skip_past("?>");
+          }
+          break;
+        default: break;
+      }
+    }
+    cur_ = end_;
   }
 
   [[nodiscard]] static constexpr auto is_space(char c) noexcept -> bool {
@@ -2205,8 +2245,7 @@ inline auto BasicParser<Opts>::parse_markup(Token& token) -> bool {
       cur_ += 7;
       return parse_cdata(token);
     }
-    const char* gt = find_byte(cur_, '>');
-    cur_ = gt == end_ ? end_ : gt + 1;
+    skip_bang_decl();
     return next_from_source(token);
   }
   if (c == '?') {
@@ -2464,7 +2503,7 @@ inline void BasicParser<Opts>::skip_element() {
         cur_ += 7;
         skip_past("]]>");
       } else {
-        skip_past(">");
+        skip_bang_decl();
       }
     } else if (c == '?') {
       ++cur_;
