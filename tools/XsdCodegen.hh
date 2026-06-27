@@ -60,6 +60,7 @@ struct Attribute {
   std::string type;
   std::string use;
   std::string default_;
+  std::string fixed;
 };
 
 struct AttributeGroupRef {
@@ -194,7 +195,8 @@ struct xml::XmlMetadata<xsd::Attribute> {
       std::make_tuple(xml::attr_field("name", &xsd::Attribute::name),
                       xml::attr_field("type", &xsd::Attribute::type),
                       xml::attr_field("use", &xsd::Attribute::use),
-                      xml::attr_field("default", &xsd::Attribute::default_));
+                      xml::attr_field("default", &xsd::Attribute::default_),
+                      xml::attr_field("fixed", &xsd::Attribute::fixed));
 };
 template <>
 struct xml::XmlMetadata<xsd::AttributeGroupRef> {
@@ -594,8 +596,18 @@ class Generator {
                             (!el.maxOccurs->empty() && *el.maxOccurs != "0" &&
                              *el.maxOccurs != "1"));
   }
-  static auto min_occurs(const Element& el) -> int {
-    return el.minOccurs.value_or(1);
+  static auto min_occurs(const Element& el) -> int { return el.minOccurs.value_or(1); }
+
+  // Returns the finite maxOccurs bound when it's an integer > 1; empty otherwise.
+  static auto finite_max_occurs(const Element& el) -> std::optional<int> {
+    if (!el.maxOccurs || el.maxOccurs->empty() || *el.maxOccurs == "unbounded")
+      return {};
+    try {
+      const int n = std::stoi(*el.maxOccurs);
+      return n > 1 ? std::optional<int>{n} : std::optional<int>{};
+    } catch (...) {
+      return {};
+    }
   }
 
   // ---- field generation ----
@@ -606,10 +618,15 @@ class Generator {
     const std::string mem = detail::sanitize(a.name);
     const std::string suffix = (a.use == "required") ? ", true)" : ")";
     std::string decl;
+    const std::string& init_val = !a.fixed.empty() ? a.fixed : a.default_;
     if (r.is_list) {
       decl = "std::vector<" + r.cpp + "> " + mem + ";";
-    } else if (!a.default_.empty()) {
-      decl = r.cpp + " " + mem + "{\"" + a.default_ + "\"};";
+    } else if (!init_val.empty()) {
+      if (is_string_cpp(r.cpp)) {
+        decl = r.cpp + " " + mem + "{\"" + escape_str_literal(init_val) + "\"};";
+      } else {
+        decl = r.cpp + " " + mem + "{" + init_val + "};";
+      }
     } else {
       decl = r.cpp + " " + mem + "{};";
     }
@@ -924,17 +941,32 @@ class Generator {
     const ComplexType& ct = *s.ct;
 
     auto process_attr = [&](const Attribute& a) {
+      const std::string mem = detail::sanitize(a.name);
+      if (!a.fixed.empty()) {
+        const Resolved res = resolve_named_type(a.type, a.name);
+        if (is_string_cpp(res.cpp)) {
+          body += "    if (v." + mem + " != \"" + escape_str_literal(a.fixed) +
+                  "\") return \"" + mem + ": fixed value violation\";\n";
+        } else {
+          body += "    if (v." + mem + " != " + a.fixed + ") return \"" + mem +
+                  ": fixed value violation\";\n";
+        }
+      }
       const Restriction* r = type_restriction(a.type);
       if (!r) return;
-      body += build_check_code(detail::sanitize(a.name),
-                               resolve_named_type(a.type, a.name).cpp, false, *r);
+      body += build_check_code(mem, resolve_named_type(a.type, a.name).cpp, false, *r);
     };
     auto process_element = [&](const Element& el) {
+      const std::string mem = detail::sanitize(el.name);
+      if (auto n = finite_max_occurs(el)) {
+        body += "    if (v." + mem + ".size() > " + std::to_string(*n) +
+                ") return \"" + mem + ": maxOccurs violation (max=" +
+                std::to_string(*n) + ")\";\n";
+      }
       if (is_unbounded(el) || (el.simpleType && el.simpleType->list)) return;
       const Restriction* r = element_restriction(el);
       if (!r) return;
-      body += build_check_code(detail::sanitize(el.name), resolve_element_type(el).cpp,
-                               min_occurs(el) == 0, *r);
+      body += build_check_code(mem, resolve_element_type(el).cpp, min_occurs(el) == 0, *r);
     };
 
     if (ct.simpleContent && ct.simpleContent->extension) {

@@ -410,6 +410,57 @@ TEST(XsdCodegen, SchemaIncludeLoader) {
   EXPECT_TRUE(has(r.code, R"(xml::attr_field("color", &Widget::color))")) << r.code;
 }
 
+// 4a: finite maxOccurs -> std::vector member + XmlConstraints size check.
+TEST(XsdCodegen, FiniteMaxOccursConstraint) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:complexType name="Doc">
+      <xs:sequence>
+        <xs:element name="tag" type="xs:string" maxOccurs="3"/>
+        <xs:element name="note" type="xs:string" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  // Both bounded and unbounded become std::vector.
+  EXPECT_TRUE(has(r.code, "std::vector<std::string> tag;")) << r.code;
+  EXPECT_TRUE(has(r.code, "std::vector<std::string> note;")) << r.code;
+  // Only the bounded one gets a constraint check.
+  EXPECT_TRUE(has(r.code, "XmlConstraints<Doc>")) << r.code;
+  EXPECT_TRUE(has(r.code, "tag.size() > 3")) << r.code;
+  EXPECT_FALSE(has(r.code, "note.size()")) << r.code;
+}
+
+// 4b: attribute default -> C++ default member initializer.
+TEST(XsdCodegen, AttributeDefaultInitializer) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:complexType name="Price">
+      <xs:attribute name="currency" type="xs:string" default="USD"/>
+      <xs:attribute name="precision" type="xs:int" default="2"/>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, R"(std::string currency{"USD"};)")) << r.code;
+  EXPECT_TRUE(has(r.code, "int precision{2};")) << r.code;
+}
+
+// 4c: attribute fixed -> initializer + XmlConstraints equality check.
+TEST(XsdCodegen, AttributeFixedConstraint) {
+  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:complexType name="Hdr">
+      <xs:attribute name="version" type="xs:string" fixed="1.0"/>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  // Member should be pre-initialised to the fixed value.
+  EXPECT_TRUE(has(r.code, R"(std::string version{"1.0"};)")) << r.code;
+  // XmlConstraints must enforce it.
+  EXPECT_TRUE(has(r.code, "XmlConstraints<Hdr>")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(version != "1.0")")) << r.code;
+}
+
 // Guards the committed golden against drift from the generator.
 TEST(XsdCodegen, GoldenMatchesGenerator) {
   const std::string xsd = read_file(std::string(TXSD_DATA_DIR) + "/xsd_sample.xsd");
