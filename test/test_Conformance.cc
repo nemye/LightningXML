@@ -5,21 +5,24 @@
 /// Each test references the relevant spec section, production rule,
 /// or well-formedness constraint (WFC).
 ///
-/// TurboXML is a zero-copy pull-parser/deserializer. It enforces the
-/// structural well-formedness constraints but deliberately does NOT implement
-/// the following, as documented performance/design trade-offs:
-///   - Entity expansion (sec 4.4, 4.6) -- raw text preserved
-///   - Character reference resolution (sec 4.1)
-///   - DTD processing (sec 2.8, 3.2-3.4) -- DOCTYPE is skipped, not interpreted
-///   - End-of-line normalization (sec 2.11)
-///   - Attribute-value normalization (sec 3.3.3)
-///   - "]]>" rejection in character data (sec 2.4) -- the extra scan over
-///     every value costs 13-28% on text-heavy input
-///   - Duplicate-attribute detection (sec 3.1 WFC) -- the O(n^2) check is too
-///     costly; the document-order match wins instead
+/// TurboXML is a zero-copy pull-parser/deserializer. The default xml::Parser
+/// enforces structural well-formedness. Additional conformance is opt-in:
 ///
-/// Tests for those areas are included and marked XFAIL where the parser
-/// diverges from full conformance. These serve as a living checklist.
+///   xml::NormalizingParser (normalize=true):
+///     - Predefined entity expansion &amp; &lt; &gt; &apos; &quot; (sec 4.6)
+///     - Character reference resolution &#nnn; / &#xhh; (sec 4.1)
+///     - End-of-line normalization \r\n -> \n, \r -> \n (sec 2.11)
+///     - Attribute-value whitespace normalization (sec 3.3.3)
+///
+///   xml::StrictParser (normalize=true, strict=true):
+///     - All of the above, plus:
+///     - "]]>" rejection in character data (sec 2.4)
+///     - '<' rejection in attribute values (sec 3.1 WFC)
+///     - Duplicate-attribute detection (sec 3.1 WFC)
+///
+/// Deliberately not implemented (design trade-offs):
+///   - DTD processing (sec 2.8, 3.2-3.4) -- DOCTYPE is skipped, not interpreted
+///   - External entity resolution (sec 4.4) -- requires file I/O
 /// @link https://www.w3.org/TR/2008/REC-xml-20081126/
 
 #include <gtest/gtest.h>
@@ -1210,9 +1213,8 @@ TEST_F(Robustness, GarbageAfterDocument) {
   EXPECT_EQ(leaf.text, "ok");
 }
 
-// Conformance gap summary tests - these exercise areas where the
-// parser diverges from full XML 1.0 conformance. Each is marked
-// XFAIL when the parser is known to accept what should be rejected.
+// Tests for features that require the NormalizingParser opt-in:
+// entity/char-ref expansion and attribute-value normalization.
 class ConformanceGaps : public ::testing::Test {};
 
 /// sec 3.3.3 - Attribute-value normalization. For CDATA-typed attributes
