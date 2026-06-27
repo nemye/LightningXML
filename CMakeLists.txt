@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(TurboXML
-    VERSION 1.2.0
+    VERSION 2.0.0
     LANGUAGES CXX
     DESCRIPTION "High-performance XML pull-parser for C++20"
 )

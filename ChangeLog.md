@@ -1,11 +1,42 @@
 # Changelog
 
-## 2.0.0 Candidate - Unreleased
+## 2.0.0 - 2026-06-27
 
-XML 1.0 well-formedness conformance pass. Adds an XML 1.0 (Fifth Edition)
-conformance test suite (`test/test_Conformance.cc`).
+XML 1.0 fifth edition conformance, optional XSD 1.0 constraint validation, and
+a substantially expanded code generator.
 
 ### Added
+- **XML 1.0 conformance** (non-validating processor):
+  - UTF-8 BOM (`\xEF\xBB\xBF`) is stripped before parsing.
+  - DOCTYPE internal subset is correctly skipped with bracket-depth tracking so
+    `<!ENTITY ...>` and `<!ATTLIST ...>` declarations containing `>` no longer
+    truncate the skip.
+  - Conformance test suite (`test/test_Conformance.cc`).
+- **XSD constraint validation**:
+  - `xml::XmlConstraints<T>`: specializable trait with a `check(const T&)`
+    static returning `std::optional<std::string>`. The default is a no-op.
+  - `xml::validate(obj)` → `std::optional<xml::ValidationError>`: calls the
+    trait and wraps the result. Empty = valid; `err->message` = first violation.
+  - `xml::ValidationError`: a named struct distinct from `xml::ErrorCode` so
+    parser errors and schema constraint violations can be handled independently.
+- **`xsdgen` expansions** (`tools/XsdCodegen.hh`):
+  - `xs:complexContent extension`: emits `struct Child : Parent` with a merged
+    `XmlMetadata<Child>` that prepends parent fields; multi-level inheritance
+    is handled recursively.
+  - `xs:attributeGroup` / `xs:group`: expanded inline at codegen time; no
+    runtime representation.
+  - `xs:include schemaLocation="..."`: loaded and merged before code generation
+    via a `std::function` loader callback in `xsd::Options`; the CLI resolves
+    paths relative to the input schema's directory.
+  - XSD facets (`minLength`, `maxLength`, `length`, `pattern`, `minInclusive`,
+    `maxInclusive`, `minExclusive`, `maxExclusive`): emitted as
+    `XmlConstraints<T>` specializations; `pattern` uses `<regex>` (included only
+    when needed).
+  - Attribute `default`: emits a C++ default member initializer.
+  - Attribute `fixed`: emits a default initializer *and* an `XmlConstraints<T>`
+    equality check.
+  - Finite `maxOccurs=N` (N > 1): emits `std::vector<T>` + an
+    `XmlConstraints<T>` size check (`v.field.size() > N`).
 - `xsdgen` tool (`tools/`): generates `XmlMetadata` definitions from an XSD
   schema (parsed with TurboXML itself). Maps complexTypes/elements/attributes,
   enumerations, simpleContent, `xs:choice`, built-ins (incl. date/time), and
@@ -37,8 +68,8 @@ conformance test suite (`test/test_Conformance.cc`).
 
 ### Changed
 - Required-field presence is tracked in a multiword mask instead of a single
-  `uint64_t`, removing the 64-fields-per-type ceiling. Types of ≤64 fields use a
-  single word (no change to the hot path).
+  `uint64_t`, removing the 64-fields-per-type ceiling.
+- `xsdgen` tool to generate TurboXML C++ definitions for provided XSD.
 
 ## 1.2.0 - 2026-06-12
 

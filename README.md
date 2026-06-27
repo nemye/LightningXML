@@ -381,16 +381,40 @@ so you don't hand-write the mapping. The schema is parsed with TurboXML itself.
 ./build/turboxml_xsdgen schema.xsd -o schema_generated.hh   # stdout if no -o
 ```
 
-It maps `xs:complexType`→`struct`, `xs:element`/`xs:attribute`→`field`/`attr_field`
-(by `minOccurs`/`maxOccurs`/`use`: `std::vector` for repeats, `std::optional` for
-`minOccurs="0"`, `required` otherwise), `xs:simpleType` enumerations→`enum` +
-`XmlEnumTraits`, `simpleContent`→`value_field`, `xs:choice`→`std::variant` +
-`variant_field`, built-ins to `std::string`/`int`/`double`/`bool`/`xml::Date`…,
-and recursive types through `std::vector`/`std::unique_ptr`. It targets a
-practical subset; anything outside it (e.g. `complexContent` inheritance,
-`xs:group`, `xs:any`, mixed content, multiple namespaces) is reported as a
-`// UNSUPPORTED:` note in the output and on stderr rather than failing. Built with
-`TURBOXML_BUILD_CODEGEN` (on by default).
+Supported XSD constructs:
+
+| XSD | Generated C++ |
+|---|---|
+| `xs:complexType` | `struct` + `XmlMetadata<T>` |
+| `xs:element` / `xs:attribute` | `field` / `attr_field` (required, optional, or vector by `minOccurs`/`maxOccurs`/`use`) |
+| `xs:simpleType` enumeration | `enum class` + `XmlEnumTraits<E>` |
+| `xs:simpleContent` extension | `value_field` + attribute fields |
+| `xs:complexContent` extension | `struct Child : Parent` with merged `XmlMetadata<Child>` |
+| `xs:choice` | `std::variant<...>` + `variant_field` |
+| `xs:attributeGroup` / `xs:group` | Expanded inline into the referencing type |
+| `xs:include` | Loaded via the `--include-dir` search path (CLI) or a loader callback (API) |
+| XSD facets (`minLength`, `maxLength`, `length`, `pattern`, `minInclusive`, `maxInclusive`, …) | `XmlConstraints<T>` specialization checked by `xml::validate()` |
+| Attribute `default` | C++ default member initializer |
+| Attribute `fixed` | Default initializer + `XmlConstraints<T>` equality check |
+| Finite `maxOccurs=N` | `std::vector<T>` member + `XmlConstraints<T>` size check |
+| Built-in types | `std::string`, `int`, `double`, `bool`, `xml::Date`, `xml::Time`, `xml::DateTime`, … |
+| Recursive types | `std::unique_ptr<T>` (optional self-reference) or `std::vector<T>` (repeated) |
+
+Constructs outside this set (e.g. `xs:any`, mixed content, `xs:union`, `xs:import`) are reported as notes on stderr rather than causing a failure. Built with `TURBOXML_BUILD_CODEGEN` (on by default).
+
+### Constraint Validation
+
+When types carry XSD constraints, `xsdgen` emits `xml::XmlConstraints<T>` specializations alongside the metadata. Call `xml::validate()` after deserialization:
+
+```cpp
+MyType obj;
+xml::deserialize(parser, "root", obj);
+if (auto err = xml::validate(obj)) {
+  std::cerr << "constraint violation: " << err->message << '\n';
+}
+```
+
+`xml::validate()` returns `std::optional<xml::ValidationError>` — empty when all constraints pass, or the first violation in `err->message`. This is intentionally distinct from `xml::ErrorCode` (parser errors) so the two failure modes can be handled independently. Types with no constraints use the default no-op specialization, which compiles away entirely.
 
 ## Building
 

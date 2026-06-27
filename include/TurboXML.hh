@@ -84,6 +84,13 @@ enum class ErrorCode : uint8_t {
   DuplicateAttribute,  ///< Two attributes share a name (WFC: Unique Att Spec).
 };
 
+/// @brief Returned by xml::validate() when an XmlConstraints check fails.
+/// Distinct from ErrorCode (parser errors) so callers can handle the two
+/// failure modes independently.
+struct ValidationError {
+  std::string message;
+};
+
 /// @brief A parsed XML attribute from an element's opening tag.
 struct Attribute {
   std::string_view name;    ///< Local attribute name.
@@ -3063,10 +3070,12 @@ struct XmlConstraints {
 };
 
 /// @brief Validates obj against its XmlConstraints<T> specialization.
-/// @return nullopt if valid, or a message describing the first violation.
+/// @return nullopt if valid, or a ValidationError describing the first violation.
 template <typename T>
-auto validate(const T& obj) -> std::optional<std::string> {
-  return XmlConstraints<T>::check(obj);
+auto validate(const T& obj) -> std::optional<ValidationError> {
+  auto msg = XmlConstraints<T>::check(obj);
+  if (!msg) return {};
+  return ValidationError{std::move(*msg)};
 }
 
 }  // namespace xml
