@@ -74,7 +74,7 @@ if(TURBOXML_BUILD_TESTS)
     add_executable(turboxml_tests
         test/test_TurboXML.cc
         test/test_Conformance.cc
-        test/test_XsdCodegen.cc
+        test/test_XSDCodegen.cc
     )
     target_include_directories(turboxml_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tools
@@ -177,7 +177,7 @@ endif()
 
 # ---- XSD code generator ----
 if(TURBOXML_BUILD_CODEGEN)
-    add_executable(turboxml_xsdgen tools/xsdgen.cc)
+    add_executable(turboxml_xsdgen tools/XSDGen.cc)
     target_link_libraries(turboxml_xsdgen PRIVATE turboxml)
     target_include_directories(turboxml_xsdgen PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tools

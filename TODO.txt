@@ -1,9 +1,0 @@
-1. Address the outstanding non-conforming XML 1.0 standard items (found in test_Conformance.cc). I am not interested in a fully validating parser (via DTD or XSD), but it should be fully conforming to the spec with as little impact to current performance as possible. Review the standard to see if we have missed anything. 
-
-2. Review TurboXML.hh for simplification opportunities (without compromising performance). I am interested in changes to improve clarity/readability, reduce overall code, and even improve performance overall.
-
-3. Add another optional benchmark to a non-DOM well-known fast XML parser.
-
-4. Address or supress cppcheck failures:
-
-5. Review configuration for and run clang-tidy to update syntax/style across the project

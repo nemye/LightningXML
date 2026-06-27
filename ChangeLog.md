@@ -19,7 +19,7 @@ a substantially expanded code generator.
     trait and wraps the result. Empty = valid; `err->message` = first violation.
   - `xml::ValidationError`: a named struct distinct from `xml::ErrorCode` so
     parser errors and schema constraint violations can be handled independently.
-- **`xsdgen` expansions** (`tools/XsdCodegen.hh`):
+- **`xsdgen` expansions** (`tools/XSDCodegen.hh`):
   - `xs:complexContent extension`: emits `struct Child : Parent` with a merged
     `XmlMetadata<Child>` that prepends parent fields; multi-level inheritance
     is handled recursively.

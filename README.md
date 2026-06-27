@@ -464,14 +464,14 @@ target_link_libraries(my_target PRIVATE TurboXML::turboxml)
 ├── include/
 │   └── TurboXML.hh
 ├── tools/
-│   ├── XsdCodegen.hh        # XSD -> XmlMetadata generator (library)
-│   └── xsdgen.cc            # CLI front-end
+│   ├── XSDCodegen.hh        # XSD -> XmlMetadata generator (library)
+│   └── XSDGen.cc            # CLI front-end
 ├── test/
 │   ├── bench_TurboXML.cc
 │   ├── Helpers.hh
 │   ├── test_TurboXML.cc
-│   ├── test_XsdCodegen.cc
-│   └── xsd_sample.xsd       # + xsd_sample_generated.hh golden
+│   ├── test_XSDCodegen.cc
+│   └── XSDSample.xsd       # + XSDSampleGenerated.hh golden
 ```
 
 ## License

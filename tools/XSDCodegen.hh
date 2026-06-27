@@ -1,4 +1,4 @@
-/// @file XsdCodegen.hh
+/// @file XSDCodegen.hh
 /// @brief Generates TurboXML XmlMetadata definitions from an XSD schema.
 ///
 /// The schema is itself parsed with TurboXML (XSD is XML; the xs: prefix is

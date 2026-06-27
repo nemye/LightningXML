@@ -6,10 +6,10 @@
 #include <string_view>
 #include <variant>
 
-#include "XsdCodegen.hh"
-// The committed golden header generated from test/xsd_sample.xsd. Including it
+#include "XSDCodegen.hh"
+// The committed golden header generated from test/XSDSample.xsd. Including it
 // proves the generated metadata is valid C++ and parses (see EndToEnd below).
-#include "xsd_sample_generated.hh"
+#include "XSDSampleGenerated.hh"
 
 namespace {
 
@@ -167,7 +167,7 @@ TEST(XsdCodegen, UnsupportedConstructsAreNoted) {
   EXPECT_TRUE(unknown);
 }
 
-// Proves the committed golden header (generated from xsd_sample.xsd) compiles
+// Proves the committed golden header (generated from XSDSample.xsd) compiles
 // and that its metadata parses a representative document correctly.
 TEST(XsdCodegen, EndToEndGeneratedMetadataParses) {
   constexpr std::string_view doc = R"(<order id="7" labels="rush gift">
@@ -623,12 +623,12 @@ TEST(XsdCodegen, SimpleContentConstraint) {
 
 // Guards the committed golden against drift from the generator.
 TEST(XsdCodegen, GoldenMatchesGenerator) {
-  const std::string xsd = readFile(std::string(TXSD_DATA_DIR) + "/xsd_sample.xsd");
-  ASSERT_FALSE(xsd.empty()) << "could not read test/xsd_sample.xsd";
-  const std::string golden = readFile(std::string(TXSD_DATA_DIR) + "/xsd_sample_generated.hh");
+  const std::string xsd = readFile(std::string(TXSD_DATA_DIR) + "/XSDSample.xsd");
+  ASSERT_FALSE(xsd.empty()) << "could not read test/XSDSample.xsd";
+  const std::string golden = readFile(std::string(TXSD_DATA_DIR) + "/XSDSampleGenerated.hh");
   ASSERT_FALSE(golden.empty());
   const auto r = xsd::generate(xsd);
   ASSERT_TRUE(r.ok);
-  EXPECT_EQ(r.code, golden) << "regenerate with: turboxml_xsdgen test/xsd_sample.xsd -o "
-                               "test/xsd_sample_generated.hh";
+  EXPECT_EQ(r.code, golden) << "regenerate with: turboxml_xsdgen test/XSDSample.xsd -o "
+                               "test/XSDSampleGenerated.hh";
 }

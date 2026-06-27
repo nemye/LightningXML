@@ -1,4 +1,4 @@
-/// @file xsdgen.cc
+/// @file XSDGen.cc
 /// @brief CLI: turboxml_xsdgen <schema.xsd> [-o out.hh]
 ///
 /// Reads an XSD, emits TurboXML XmlMetadata to stdout (or -o file), and prints
@@ -13,7 +13,7 @@
 #include <string>
 #include <string_view>
 
-#include "XsdCodegen.hh"
+#include "XSDCodegen.hh"
 
 namespace {
 
