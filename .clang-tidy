@@ -10,7 +10,7 @@ Checks: '-*,bugprone-*,-bugprone-easily-swappable-parameters,-bugprone-narrowing
 WarningsAsErrors: 'bugprone-*,performance-*,clang-analyzer-core.*,modernize-use-trailing-return-type,readability-braces-around-statements'
 
 # 3. Target Header Files
-HeaderFilterRegex: '^(include|src|test)/.*\.(h|hh|hpp)$'
+HeaderFilterRegex: '^(include|test|tools)/.*\.(h|hh|hpp)$'
 
 # 4. Format Integration
 FormatStyle: file
