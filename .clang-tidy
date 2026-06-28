@@ -10,7 +10,7 @@ Checks: '-*,bugprone-*,-bugprone-easily-swappable-parameters,-bugprone-narrowing
 WarningsAsErrors: 'bugprone-*,performance-*,clang-analyzer-core.*,modernize-use-trailing-return-type,readability-braces-around-statements'
 
 # 3. Target Header Files
-HeaderFilterRegex: '^.*(include|test|tools)/.*\.(h|hh|hpp)$'
+HeaderFilterRegex: '/(include|test|tools)/'
 
 # 4. Format Integration
 FormatStyle: file
@@ -53,7 +53,7 @@ CheckOptions:
   - key:             readability-identifier-naming.ConstexprVariableCase
     value:           'UPPER_CASE'
   - key:             readability-identifier-naming.ConstexprVariableIgnoredRegexp
-    value:           'fields'
+    value:           'fields|values'
   - key:             readability-identifier-naming.ConstantCase
     value:           'lower_case'
 

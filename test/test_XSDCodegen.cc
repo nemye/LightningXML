@@ -14,7 +14,7 @@ auto has(const std::string& code, std::string_view frag) -> bool {
 }  // namespace
 
 TEST(XsdCodegen, BuiltinTypesAndCardinality) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Rec">
       <xs:sequence>
         <xs:element name="name" type="xs:string"/>
@@ -43,7 +43,7 @@ TEST(XsdCodegen, BuiltinTypesAndCardinality) {
 }
 
 TEST(XsdCodegen, BuiltinTypeMappings) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Types">
       <xs:sequence>
         <xs:element name="flag" type="xs:boolean"/>
@@ -69,7 +69,7 @@ TEST(XsdCodegen, BuiltinTypeMappings) {
 }
 
 TEST(XsdCodegen, EnumFromSimpleType) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:simpleType name="Color">
       <xs:restriction base="xs:string">
         <xs:enumeration value="red"/>
@@ -89,7 +89,7 @@ TEST(XsdCodegen, EnumFromSimpleType) {
 }
 
 TEST(XsdCodegen, SimpleContentBecomesValueField) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Money">
       <xs:simpleContent>
         <xs:extension base="xs:decimal">
@@ -106,7 +106,7 @@ TEST(XsdCodegen, SimpleContentBecomesValueField) {
 }
 
 TEST(XsdCodegen, ChoiceBecomesVariant) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="A"><xs:attribute name="a" type="xs:int"/></xs:complexType>
     <xs:complexType name="B"><xs:attribute name="b" type="xs:int"/></xs:complexType>
     <xs:complexType name="Shape">
@@ -125,7 +125,7 @@ TEST(XsdCodegen, ChoiceBecomesVariant) {
 }
 
 TEST(XsdCodegen, ListBecomesListOrAttrField) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:simpleType name="IntList"><xs:list itemType="xs:int"/></xs:simpleType>
     <xs:complexType name="Cfg">
       <xs:sequence>
@@ -147,7 +147,7 @@ TEST(XsdCodegen, ListBecomesListOrAttrField) {
 }
 
 TEST(XsdCodegen, RecursionUsesUniquePtr) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Node">
       <xs:sequence>
         <xs:element name="child" type="Node" minOccurs="0"/>
@@ -160,7 +160,7 @@ TEST(XsdCodegen, RecursionUsesUniquePtr) {
 }
 
 TEST(XsdCodegen, UnsupportedConstructsAreNoted) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Doc" mixed="true">
       <xs:sequence>
         <xs:element name="title" type="xs:bogusType"/>
@@ -182,7 +182,7 @@ TEST(XsdCodegen, UnsupportedConstructsAreNoted) {
 
 // Facet capture: string length and numeric range constraints.
 TEST(XsdCodegen, StringLengthFacetsGenerateConstraints) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:simpleType name="BoundedStr">
       <xs:restriction base="xs:string">
         <xs:minLength value="1"/>
@@ -207,7 +207,7 @@ TEST(XsdCodegen, StringLengthFacetsGenerateConstraints) {
 }
 
 TEST(XsdCodegen, NumericRangeFacets) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:simpleType name="SmallInt">
       <xs:restriction base="xs:int">
         <xs:minInclusive value="0"/>
@@ -237,7 +237,7 @@ TEST(XsdCodegen, NumericRangeFacets) {
 }
 
 TEST(XsdCodegen, InlineFacetsOnElement) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Rec">
       <xs:sequence>
         <xs:element name="code">
@@ -257,7 +257,7 @@ TEST(XsdCodegen, InlineFacetsOnElement) {
 }
 
 TEST(XsdCodegen, PatternFacetGeneratesRegexCheck) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:simpleType name="AlphaCode">
       <xs:restriction base="xs:string">
         <xs:pattern value="[A-Z]{3}"/>
@@ -278,7 +278,7 @@ TEST(XsdCodegen, PatternFacetGeneratesRegexCheck) {
 
 // 3a: xs:complexContent extension -> struct inheritance + merged metadata.
 TEST(XsdCodegen, ComplexContentExtension) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Person">
       <xs:sequence>
         <xs:element name="name" type="xs:string"/>
@@ -313,7 +313,7 @@ TEST(XsdCodegen, ComplexContentExtension) {
 
 // 3b: xs:attributeGroup inline expansion.
 TEST(XsdCodegen, AttributeGroupExpansion) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:attributeGroup name="CommonAttrs">
       <xs:attribute name="id" type="xs:int" use="required"/>
       <xs:attribute name="lang" type="xs:string"/>
@@ -331,7 +331,7 @@ TEST(XsdCodegen, AttributeGroupExpansion) {
 
 // 3b: xs:group inline expansion.
 TEST(XsdCodegen, ElementGroupExpansion) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:group name="CommonFields">
       <xs:sequence>
         <xs:element name="title" type="xs:string"/>
@@ -355,7 +355,7 @@ TEST(XsdCodegen, ElementGroupExpansion) {
 
 // 3c: xs:include merges types from an external schema via loader callback.
 TEST(XsdCodegen, SchemaIncludeLoader) {
-  constexpr std::string_view base_xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view base_xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:include schemaLocation="common.xsd"/>
     <xs:complexType name="Widget">
       <xs:sequence>
@@ -364,7 +364,7 @@ TEST(XsdCodegen, SchemaIncludeLoader) {
       <xs:attribute name="color" type="Color"/>
     </xs:complexType>
   </xs:schema>)";
-  constexpr std::string_view common_xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view common_xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:simpleType name="Color">
       <xs:restriction base="xs:string">
         <xs:enumeration value="red"/>
@@ -388,7 +388,7 @@ TEST(XsdCodegen, SchemaIncludeLoader) {
 
 // 4a: finite maxOccurs -> std::vector member + XmlConstraints size check.
 TEST(XsdCodegen, FiniteMaxOccursConstraint) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Doc">
       <xs:sequence>
         <xs:element name="tag" type="xs:string" maxOccurs="3"/>
@@ -409,7 +409,7 @@ TEST(XsdCodegen, FiniteMaxOccursConstraint) {
 
 // 4b: attribute default -> C++ default member initializer.
 TEST(XsdCodegen, AttributeDefaultInitializer) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Price">
       <xs:attribute name="currency" type="xs:string" default="USD"/>
       <xs:attribute name="precision" type="xs:int" default="2"/>
@@ -423,7 +423,7 @@ TEST(XsdCodegen, AttributeDefaultInitializer) {
 
 // 4c: attribute fixed -> initializer + XmlConstraints equality check.
 TEST(XsdCodegen, AttributeFixedConstraint) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Hdr">
       <xs:attribute name="version" type="xs:string" fixed="1.0"/>
     </xs:complexType>
@@ -439,7 +439,7 @@ TEST(XsdCodegen, AttributeFixedConstraint) {
 
 // xs:choice with maxOccurs="unbounded" -> std::vector<std::variant<...>>.
 TEST(XsdCodegen, RepeatedChoiceBecomesVectorVariant) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="A"><xs:attribute name="a" type="xs:int"/></xs:complexType>
     <xs:complexType name="B"><xs:attribute name="b" type="xs:int"/></xs:complexType>
     <xs:complexType name="Mixed">
@@ -458,7 +458,7 @@ TEST(XsdCodegen, RepeatedChoiceBecomesVectorVariant) {
 // xs:complexContent extension across three levels: all levels appear in
 // the deepest child's XmlMetadata, none are re-declared in its struct body.
 TEST(XsdCodegen, MultiLevelComplexContentExtension) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Animal">
       <xs:attribute name="name" type="xs:string" use="required"/>
     </xs:complexType>
@@ -497,7 +497,7 @@ TEST(XsdCodegen, MultiLevelComplexContentExtension) {
 
 // Attribute whose type is a named simpleType with facets generates a constraint.
 TEST(XsdCodegen, AttributeFacetConstraint) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:simpleType name="ShortCode">
       <xs:restriction base="xs:string">
         <xs:maxLength value="5"/>
@@ -516,7 +516,7 @@ TEST(XsdCodegen, AttributeFacetConstraint) {
 // Inline simpleType with enumerations on an element generates an enum class
 // scoped to that element name.
 TEST(XsdCodegen, InlineEnumOnElement) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Traffic">
       <xs:sequence>
         <xs:element name="signal">
@@ -540,7 +540,7 @@ TEST(XsdCodegen, InlineEnumOnElement) {
 
 // A top-level xs:element emits a root-deserialize comment in the output.
 TEST(XsdCodegen, TopLevelElementGeneratesRootComment) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:complexType name="Item">
       <xs:attribute name="id" type="xs:int"/>
     </xs:complexType>
@@ -553,7 +553,7 @@ TEST(XsdCodegen, TopLevelElementGeneratesRootComment) {
 
 // simpleContent whose base is a constrained simpleType generates a value constraint.
 TEST(XsdCodegen, SimpleContentConstraint) {
-  constexpr std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
     <xs:simpleType name="PosDouble">
       <xs:restriction base="xs:double">
         <xs:minInclusive value="0"/>
