@@ -18,7 +18,7 @@
 namespace {
 
 auto readFile(const std::string& path, std::string& out) -> bool {
-  std::ifstream in(path, std::ios::binary);
+  const std::ifstream in(path, std::ios::binary);
   if (!in) {
     return false;
   }
@@ -63,7 +63,7 @@ auto main(int argc, char** argv) -> int {
   const std::string base_dir = dirOf(input);
   xsd::Options opts;
   opts.loader = [&](std::string_view loc) -> std::optional<std::string> {
-    std::string path = base_dir + "/" + std::string{loc};
+    const std::string path = base_dir + "/" + std::string{loc};
     std::string content;
     if (!readFile(path, content)) {
       std::cerr << "note: cannot load xs:include '" << loc << "' (skipped)\n";

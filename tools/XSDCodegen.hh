@@ -33,20 +33,20 @@ struct Facet {
 struct Restriction {
   std::string base;
   std::vector<Enumeration> enumerations;
-  std::optional<Facet> minLength;
-  std::optional<Facet> maxLength;
+  std::optional<Facet> min_length;
+  std::optional<Facet> max_length;
   std::optional<Facet> length;
   std::optional<Facet> pattern;
-  std::optional<Facet> minInclusive;
-  std::optional<Facet> maxInclusive;
-  std::optional<Facet> minExclusive;
-  std::optional<Facet> maxExclusive;
-  std::optional<Facet> fractionDigits;
-  std::optional<Facet> totalDigits;
+  std::optional<Facet> min_inclusive;
+  std::optional<Facet> max_inclusive;
+  std::optional<Facet> min_exclusive;
+  std::optional<Facet> max_exclusive;
+  std::optional<Facet> fraction_digits;
+  std::optional<Facet> total_digits;
 };
 
 struct List {
-  std::string itemType;
+  std::string item_type;
 };
 
 struct SimpleType {
@@ -59,7 +59,7 @@ struct Attribute {
   std::string name;
   std::string type;
   std::string use;
-  std::string default_;
+  std::string default_;  // NOLINT(readability-identifier-naming)
   std::string fixed;
 };
 
@@ -79,14 +79,14 @@ struct GroupRef {
 struct Element;  // recursive via the content-model containers below
 
 struct Choice {
-  std::optional<std::string> maxOccurs;
+  std::optional<std::string> max_occurs;
   std::vector<Element> elements;
 };
 
 struct Sequence {
   std::vector<Element> elements;
   std::vector<Choice> choices;
-  std::vector<GroupRef> groupRefs;
+  std::vector<GroupRef> group_refs;
 };
 
 struct GroupDef {
@@ -109,7 +109,7 @@ struct ComplexExtension {
   std::optional<Sequence> sequence;
   std::optional<Choice> choice;
   std::vector<Attribute> attributes;
-  std::vector<AttributeGroupRef> attributeGroupRefs;
+  std::vector<AttributeGroupRef> attribute_group_refs;
 };
 
 struct ComplexContent {
@@ -121,30 +121,30 @@ struct ComplexType {
   bool mixed{};
   std::optional<Sequence> sequence;
   std::optional<Choice> choice;
-  std::optional<SimpleContent> simpleContent;
-  std::optional<ComplexContent> complexContent;
+  std::optional<SimpleContent> simple_content;
+  std::optional<ComplexContent> complex_content;
   std::vector<Attribute> attributes;
-  std::vector<AttributeGroupRef> attributeGroupRefs;
+  std::vector<AttributeGroupRef> attribute_group_refs;
 };
 
 struct Element {
   std::string name;
   std::string type;
-  std::optional<int> minOccurs;
-  std::optional<std::string> maxOccurs;
-  std::optional<ComplexType> complexType;
-  std::optional<SimpleType> simpleType;
+  std::optional<int> min_occurs;
+  std::optional<std::string> max_occurs;
+  std::optional<ComplexType> complex_type;
+  std::optional<SimpleType> simple_type;
 };
 
 struct Include {
-  std::string schemaLocation;
+  std::string schema_location;
 };
 
 struct Schema {
   std::vector<Element> elements;
-  std::vector<ComplexType> complexTypes;
-  std::vector<SimpleType> simpleTypes;
-  std::vector<AttributeGroupDef> attributeGroups;
+  std::vector<ComplexType> complex_types;
+  std::vector<SimpleType> simple_types;
+  std::vector<AttributeGroupDef> attribute_groups;
   std::vector<GroupDef> groups;
   std::vector<Include> includes;
 };
@@ -164,20 +164,20 @@ struct xml::XmlMetadata<xsd::Restriction> {
   static constexpr auto fields =
       std::make_tuple(xml::attrField("base", &xsd::Restriction::base),
                       xml::vecField("enumeration", &xsd::Restriction::enumerations),
-                      xml::field("minLength", &xsd::Restriction::minLength),
-                      xml::field("maxLength", &xsd::Restriction::maxLength),
+                      xml::field("minLength", &xsd::Restriction::min_length),
+                      xml::field("maxLength", &xsd::Restriction::max_length),
                       xml::field("length", &xsd::Restriction::length),
                       xml::field("pattern", &xsd::Restriction::pattern),
-                      xml::field("minInclusive", &xsd::Restriction::minInclusive),
-                      xml::field("maxInclusive", &xsd::Restriction::maxInclusive),
-                      xml::field("minExclusive", &xsd::Restriction::minExclusive),
-                      xml::field("maxExclusive", &xsd::Restriction::maxExclusive),
-                      xml::field("fractionDigits", &xsd::Restriction::fractionDigits),
-                      xml::field("totalDigits", &xsd::Restriction::totalDigits));
+                      xml::field("minInclusive", &xsd::Restriction::min_inclusive),
+                      xml::field("maxInclusive", &xsd::Restriction::max_inclusive),
+                      xml::field("minExclusive", &xsd::Restriction::min_exclusive),
+                      xml::field("maxExclusive", &xsd::Restriction::max_exclusive),
+                      xml::field("fractionDigits", &xsd::Restriction::fraction_digits),
+                      xml::field("totalDigits", &xsd::Restriction::total_digits));
 };
 template<>
 struct xml::XmlMetadata<xsd::List> {
-  static constexpr auto fields = std::make_tuple(xml::attrField("itemType", &xsd::List::itemType));
+  static constexpr auto fields = std::make_tuple(xml::attrField("itemType", &xsd::List::item_type));
 };
 template<>
 struct xml::XmlMetadata<xsd::SimpleType> {
@@ -213,14 +213,15 @@ struct xml::XmlMetadata<xsd::GroupRef> {
 template<>
 struct xml::XmlMetadata<xsd::Choice> {
   static constexpr auto fields =
-      std::make_tuple(xml::attrField("maxOccurs", &xsd::Choice::maxOccurs),
+      std::make_tuple(xml::attrField("maxOccurs", &xsd::Choice::max_occurs),
                       xml::vecField("element", &xsd::Choice::elements));
 };
 template<>
 struct xml::XmlMetadata<xsd::Sequence> {
-  static constexpr auto fields = std::make_tuple(xml::vecField("element", &xsd::Sequence::elements),
-                                                 xml::vecField("choice", &xsd::Sequence::choices),
-                                                 xml::vecField("group", &xsd::Sequence::groupRefs));
+  static constexpr auto fields =
+      std::make_tuple(xml::vecField("element", &xsd::Sequence::elements),
+                      xml::vecField("choice", &xsd::Sequence::choices),
+                      xml::vecField("group", &xsd::Sequence::group_refs));
 };
 template<>
 struct xml::XmlMetadata<xsd::GroupDef> {
@@ -241,12 +242,12 @@ struct xml::XmlMetadata<xsd::SimpleContent> {
 };
 template<>
 struct xml::XmlMetadata<xsd::ComplexExtension> {
-  static constexpr auto fields =
-      std::make_tuple(xml::attrField("base", &xsd::ComplexExtension::base),
-                      xml::field("sequence", &xsd::ComplexExtension::sequence),
-                      xml::field("choice", &xsd::ComplexExtension::choice),
-                      xml::vecField("attribute", &xsd::ComplexExtension::attributes),
-                      xml::vecField("attributeGroup", &xsd::ComplexExtension::attributeGroupRefs));
+  static constexpr auto fields = std::make_tuple(
+      xml::attrField("base", &xsd::ComplexExtension::base),
+      xml::field("sequence", &xsd::ComplexExtension::sequence),
+      xml::field("choice", &xsd::ComplexExtension::choice),
+      xml::vecField("attribute", &xsd::ComplexExtension::attributes),
+      xml::vecField("attributeGroup", &xsd::ComplexExtension::attribute_group_refs));
 };
 template<>
 struct xml::XmlMetadata<xsd::ComplexContent> {
@@ -260,33 +261,33 @@ struct xml::XmlMetadata<xsd::ComplexType> {
                       xml::attrField("mixed", &xsd::ComplexType::mixed),
                       xml::field("sequence", &xsd::ComplexType::sequence),
                       xml::field("choice", &xsd::ComplexType::choice),
-                      xml::field("simpleContent", &xsd::ComplexType::simpleContent),
-                      xml::field("complexContent", &xsd::ComplexType::complexContent),
+                      xml::field("simpleContent", &xsd::ComplexType::simple_content),
+                      xml::field("complexContent", &xsd::ComplexType::complex_content),
                       xml::vecField("attribute", &xsd::ComplexType::attributes),
-                      xml::vecField("attributeGroup", &xsd::ComplexType::attributeGroupRefs));
+                      xml::vecField("attributeGroup", &xsd::ComplexType::attribute_group_refs));
 };
 template<>
 struct xml::XmlMetadata<xsd::Element> {
   static constexpr auto fields =
       std::make_tuple(xml::attrField("name", &xsd::Element::name),
                       xml::attrField("type", &xsd::Element::type),
-                      xml::attrField("minOccurs", &xsd::Element::minOccurs),
-                      xml::attrField("maxOccurs", &xsd::Element::maxOccurs),
-                      xml::field("complexType", &xsd::Element::complexType),
-                      xml::field("simpleType", &xsd::Element::simpleType));
+                      xml::attrField("minOccurs", &xsd::Element::min_occurs),
+                      xml::attrField("maxOccurs", &xsd::Element::max_occurs),
+                      xml::field("complexType", &xsd::Element::complex_type),
+                      xml::field("simpleType", &xsd::Element::simple_type));
 };
 template<>
 struct xml::XmlMetadata<xsd::Include> {
   static constexpr auto fields =
-      std::make_tuple(xml::attrField("schemaLocation", &xsd::Include::schemaLocation));
+      std::make_tuple(xml::attrField("schemaLocation", &xsd::Include::schema_location));
 };
 template<>
 struct xml::XmlMetadata<xsd::Schema> {
   static constexpr auto fields =
       std::make_tuple(xml::vecField("element", &xsd::Schema::elements),
-                      xml::vecField("complexType", &xsd::Schema::complexTypes),
-                      xml::vecField("simpleType", &xsd::Schema::simpleTypes),
-                      xml::vecField("attributeGroup", &xsd::Schema::attributeGroups),
+                      xml::vecField("complexType", &xsd::Schema::complex_types),
+                      xml::vecField("simpleType", &xsd::Schema::simple_types),
+                      xml::vecField("attributeGroup", &xsd::Schema::attribute_groups),
                       xml::vecField("group", &xsd::Schema::groups),
                       xml::vecField("include", &xsd::Schema::includes));
 };
@@ -325,7 +326,7 @@ inline auto isIdentChar(char c) -> bool {
 inline auto sanitize(std::string_view name) -> std::string {
   std::string out;
   out.reserve(name.size() + 1);
-  for (char c : name) {
+  for (const char c : name) {
     out.push_back(isIdentChar(c) ? c : '_');
   }
   if (out.empty() || !isIdentStart(out.front())) {
@@ -344,7 +345,7 @@ inline auto capitalize(std::string_view name) -> std::string {
 
 // XSD built-in -> C++ type, or "" if not a known built-in.
 inline auto builtinType(std::string_view xsd_type) -> std::string {
-  static const std::unordered_map<std::string_view, std::string_view> kMap = {
+  static const std::unordered_map<std::string_view, std::string_view> k_map = {
       {"string", "std::string"},
       {"normalizedString", "std::string"},
       {"token", "std::string"},
@@ -372,8 +373,8 @@ inline auto builtinType(std::string_view xsd_type) -> std::string {
       {"date", "xml::Date"},
       {"time", "xml::Time"},
       {"dateTime", "xml::DateTime"}};
-  const auto it = kMap.find(localName(xsd_type));
-  return it == kMap.end() ? std::string{} : std::string{it->second};
+  const auto it = k_map.find(localName(xsd_type));
+  return it == k_map.end() ? std::string{} : std::string{it->second};
 }
 
 }  // namespace detail
@@ -386,10 +387,10 @@ class Generator {
 
   auto run() -> GenResult {
     indexNamedTypes();
-    for (const auto& st : schema_.simpleTypes) {
+    for (const auto& st : schema_.simple_types) {
       collectSimpleType(st.name, st);
     }
-    for (const auto& ct : schema_.complexTypes) {
+    for (const auto& ct : schema_.complex_types) {
       collectComplexType(detail::capitalize(ct.name), ct);
     }
     for (const auto& el : schema_.elements) {
@@ -424,7 +425,7 @@ class Generator {
     bool inherited{};      // from a base class; omit from struct body but keep in metadata
   };
 
-  // Deduplicated: fields_of() is computed several times (ordering, struct, and
+  // Deduplicated: fieldsOf() is computed several times (ordering, struct, and
   // metadata emission), so the same diagnostic can be produced more than once.
   auto note(std::string msg) -> void {
     if (note_seen_.insert(msg).second) {
@@ -433,17 +434,17 @@ class Generator {
   }
 
   auto indexNamedTypes() -> void {
-    for (const auto& ct : schema_.complexTypes) {
+    for (const auto& ct : schema_.complex_types) {
       if (!ct.name.empty()) {
         named_complex_[ct.name] = &ct;
       }
     }
-    for (const auto& st : schema_.simpleTypes) {
+    for (const auto& st : schema_.simple_types) {
       if (!st.name.empty()) {
         named_simple_[st.name] = &st;
       }
     }
-    for (const auto& ag : schema_.attributeGroups) {
+    for (const auto& ag : schema_.attribute_groups) {
       if (!ag.name.empty()) {
         named_attr_groups_[ag.name] = &ag;
       }
@@ -469,15 +470,15 @@ class Generator {
     return cpp;
   }
 
-  auto collectComplexType(std::string cpp_name, const ComplexType& ct) -> void {
-    if (emitted_.count(cpp_name)) {
+  auto collectComplexType(const std::string& cpp_name, const ComplexType& ct) -> void {
+    if (emitted_.contains(cpp_name)) {
       return;
     }
     emitted_.insert(cpp_name);
 
     std::string parent_xsd;
-    if (ct.complexContent && ct.complexContent->extension) {
-      const std::string& base = ct.complexContent->extension->base;
+    if (ct.complex_content && ct.complex_content->extension) {
+      const std::string& base = ct.complex_content->extension->base;
       parent_xsd = std::string{detail::localName(base)};
       if (auto it = named_complex_.find(parent_xsd); it != named_complex_.end()) {
         collectComplexType(detail::capitalize(parent_xsd), *it->second);
@@ -486,7 +487,7 @@ class Generator {
       }
     }
 
-    structs_.push_back({cpp_name, &ct, parent_xsd});
+    structs_.emplace_back(cpp_name, &ct, parent_xsd);
 
     if (ct.mixed) {
       note("mixed content on complexType '" + ct.name +
@@ -505,8 +506,8 @@ class Generator {
       }
     };
 
-    if (ct.complexContent && ct.complexContent->extension) {
-      const auto& ext = *ct.complexContent->extension;
+    if (ct.complex_content && ct.complex_content->extension) {
+      const auto& ext = *ct.complex_content->extension;
       if (ext.sequence) {
         collect_seq(*ext.sequence);
       }
@@ -528,17 +529,17 @@ class Generator {
   }
 
   auto collectElementInline(const Element& el) -> void {
-    if (el.complexType) {
-      collectComplexType(uniqueName(detail::capitalize(el.name)), *el.complexType);
-    } else if (el.simpleType) {
-      collectSimpleType(el.name, *el.simpleType);
+    if (el.complex_type) {
+      collectComplexType(uniqueName(detail::capitalize(el.name)), *el.complex_type);
+    } else if (el.simple_type) {
+      collectSimpleType(el.name, *el.simple_type);
     }
   }
 
-  auto uniqueName(std::string base) -> std::string {
+  auto uniqueName(const std::string& base) -> std::string {
     std::string name = base;
     int n = 2;
-    while (used_names_.count(name)) {
+    while (used_names_.contains(name)) {
       name = base + std::to_string(n++);
     }
     used_names_.insert(name);
@@ -553,11 +554,11 @@ class Generator {
     bool is_list{};
   };
 
-  auto resolveListItem(std::string_view itemType) -> std::string {
-    if (std::string b = detail::builtinType(itemType); !b.empty()) {
+  auto resolveListItem(std::string_view item_type) -> std::string {
+    if (std::string b = detail::builtinType(item_type); !b.empty()) {
       return b;
     }
-    const std::string key{detail::localName(itemType)};
+    const std::string key{detail::localName(item_type)};
     if (auto it = named_simple_.find(key); it != named_simple_.end()) {
       if (it->second->restriction && !it->second->restriction->enumerations.empty()) {
         return detail::capitalize(key);
@@ -573,18 +574,18 @@ class Generator {
   }
 
   auto resolveElementType(const Element& el) -> Resolved {
-    if (el.complexType) {
+    if (el.complex_type) {
       return {detail::capitalize(el.name), true, false};
     }
-    if (el.simpleType) {
-      if (el.simpleType->list) {
-        return {resolveListItem(el.simpleType->list->itemType), false, true};
+    if (el.simple_type) {
+      if (el.simple_type->list) {
+        return {resolveListItem(el.simple_type->list->item_type), false, true};
       }
       if (std::string e = enumNameForInline(el); !e.empty()) {
         return {e, false, false};
       }
-      if (el.simpleType->restriction) {
-        return {baseBuiltin(el.simpleType->restriction->base), false, false};
+      if (el.simple_type->restriction) {
+        return {baseBuiltin(el.simple_type->restriction->base), false, false};
       }
       note("untyped inline simpleType on '" + el.name + "' -> std::string");
       return {"std::string", false, false};
@@ -592,9 +593,9 @@ class Generator {
     return resolveNamedType(el.type, el.name);
   }
 
-  auto enumNameForInline(const Element& el) -> std::string {
-    if (!el.simpleType || !el.simpleType->restriction ||
-        el.simpleType->restriction->enumerations.empty()) {
+  static auto enumNameForInline(const Element& el) -> std::string {
+    if (!el.simple_type || !el.simple_type->restriction ||
+        el.simple_type->restriction->enumerations.empty()) {
       return {};
     }
     return detail::capitalize(el.name);
@@ -628,7 +629,7 @@ class Generator {
     }
     if (auto it = named_simple_.find(key); it != named_simple_.end()) {
       if (it->second->list) {
-        return {resolveListItem(it->second->list->itemType), false, true};
+        return {resolveListItem(it->second->list->item_type), false, true};
       }
       if (it->second->restriction && !it->second->restriction->enumerations.empty()) {
         return {detail::capitalize(key), false, false};
@@ -643,19 +644,19 @@ class Generator {
   // ---- cardinality ----
 
   static auto isUnbounded(const Element& el) -> bool {
-    return el.maxOccurs &&
-           (*el.maxOccurs == "unbounded" ||
-            (!el.maxOccurs->empty() && *el.maxOccurs != "0" && *el.maxOccurs != "1"));
+    return el.max_occurs &&
+           (*el.max_occurs == "unbounded" ||
+            (!el.max_occurs->empty() && *el.max_occurs != "0" && *el.max_occurs != "1"));
   }
-  static auto minOccursOf(const Element& el) -> int { return el.minOccurs.value_or(1); }
+  static auto minOccursOf(const Element& el) -> int { return el.min_occurs.value_or(1); }
 
-  // Returns the finite maxOccurs bound when it's an integer > 1; empty otherwise.
+  // Returns the finite max_occurs bound when it's an integer > 1; empty otherwise.
   static auto finiteMaxOccurs(const Element& el) -> std::optional<int> {
-    if (!el.maxOccurs || el.maxOccurs->empty() || *el.maxOccurs == "unbounded") {
+    if (!el.max_occurs || el.max_occurs->empty() || *el.max_occurs == "unbounded") {
       return {};
     }
     try {
-      const int n = std::stoi(*el.maxOccurs);
+      const int n = std::stoi(*el.max_occurs);
       return n > 1 ? std::optional<int>{n} : std::optional<int>{};
     } catch (...) {
       return {};
@@ -742,7 +743,7 @@ class Generator {
     }
     variant += ">";
 
-    const bool repeated = ch.maxOccurs && (*ch.maxOccurs == "unbounded" || *ch.maxOccurs != "1");
+    const bool repeated = ch.max_occurs && (*ch.max_occurs == "unbounded" || *ch.max_occurs != "1");
     const std::string member_type = repeated ? "std::vector<" + variant + ">" : variant;
     std::string alts_joined;
     for (size_t i = 0; i < alts.size(); ++i) {
@@ -793,8 +794,8 @@ class Generator {
   auto ownFieldsOf(const std::string& ctx, const ComplexType& ct) -> std::vector<FieldOut> {
     std::vector<FieldOut> out;
 
-    if (ct.simpleContent && ct.simpleContent->extension) {
-      const auto& ext = *ct.simpleContent->extension;
+    if (ct.simple_content && ct.simple_content->extension) {
+      const auto& ext = *ct.simple_content->extension;
       out.push_back({baseBuiltin(ext.base) + " value{};", "xml::valueField(&" + ctx + "::value)"});
       for (const auto& a : ext.attributes) {
         addAttrField(ctx, a, out);
@@ -802,17 +803,17 @@ class Generator {
       return out;
     }
 
-    if (ct.complexContent && ct.complexContent->extension) {
-      const auto& ext = *ct.complexContent->extension;
+    if (ct.complex_content && ct.complex_content->extension) {
+      const auto& ext = *ct.complex_content->extension;
       for (const auto& a : ext.attributes) {
         addAttrField(ctx, a, out);
       }
-      expandAttrGroups(ctx, ext.attributeGroupRefs, out);
+      expandAttrGroups(ctx, ext.attribute_group_refs, out);
       if (ext.sequence) {
         for (const auto& el : ext.sequence->elements) {
           addElementField(ctx, el, out);
         }
-        for (const auto& gr : ext.sequence->groupRefs) {
+        for (const auto& gr : ext.sequence->group_refs) {
           expandGroupRef(ctx, gr, out);
         }
         for (const auto& ch : ext.sequence->choices) {
@@ -828,12 +829,12 @@ class Generator {
     for (const auto& a : ct.attributes) {
       addAttrField(ctx, a, out);
     }
-    expandAttrGroups(ctx, ct.attributeGroupRefs, out);
+    expandAttrGroups(ctx, ct.attribute_group_refs, out);
     if (ct.sequence) {
       for (const auto& el : ct.sequence->elements) {
         addElementField(ctx, el, out);
       }
-      for (const auto& gr : ct.sequence->groupRefs) {
+      for (const auto& gr : ct.sequence->group_refs) {
         expandGroupRef(ctx, gr, out);
       }
       for (const auto& ch : ct.sequence->choices) {
@@ -850,10 +851,10 @@ class Generator {
   // each marked inherited=true. Uses ctx for pointer-to-member names so that
   // &Child::inherited_field is emitted (valid C++ via derived-class access).
   auto inheritedFields(const std::string& ctx, const ComplexType& ct) -> std::vector<FieldOut> {
-    if (!ct.complexContent || !ct.complexContent->extension) {
+    if (!ct.complex_content || !ct.complex_content->extension) {
       return {};
     }
-    const std::string base_key{detail::localName(ct.complexContent->extension->base)};
+    const std::string base_key{detail::localName(ct.complex_content->extension->base)};
     auto it = named_complex_.find(base_key);
     if (it == named_complex_.end()) {
       return {};
@@ -867,7 +868,7 @@ class Generator {
     return result;
   }
 
-  auto fields_of(const StructDef& s) -> std::vector<FieldOut> {
+  auto fieldsOf(const StructDef& s) -> std::vector<FieldOut> {
     auto result = inheritedFields(s.cpp_name, *s.ct);
     for (auto& f : ownFieldsOf(s.cpp_name, *s.ct)) {
       result.push_back(std::move(f));
@@ -941,7 +942,7 @@ class Generator {
       out_ += " : " + detail::capitalize(s.parent_xsd);
     }
     out_ += " {\n";
-    for (const auto& f : fields_of(s)) {
+    for (const auto& f : fieldsOf(s)) {
       if (!f.inherited && !f.member.empty()) {
         out_ += "  " + f.member + "\n";
       }
@@ -950,7 +951,7 @@ class Generator {
   }
 
   auto emitStructMetadata(const StructDef& s) -> void {
-    const auto fields = fields_of(s);
+    const auto fields = fieldsOf(s);
     out_ += "template <>\nstruct xml::XmlMetadata<" + s.cpp_name + "> {\n";
     out_ += "  static constexpr auto fields = std::make_tuple(\n";
     for (size_t i = 0; i < fields.size(); ++i) {
@@ -965,8 +966,9 @@ class Generator {
   // ---- constraint generation ----
 
   static auto hasValueFacets(const Restriction& r) -> bool {
-    return r.minLength || r.maxLength || r.length || r.pattern || r.minInclusive ||
-           r.maxInclusive || r.minExclusive || r.maxExclusive || r.fractionDigits || r.totalDigits;
+    return r.min_length || r.max_length || r.length || r.pattern || r.min_inclusive ||
+           r.max_inclusive || r.min_exclusive || r.max_exclusive || r.fraction_digits ||
+           r.total_digits;
   }
 
   static auto isStringCpp(const std::string& cpp) -> bool {
@@ -975,7 +977,7 @@ class Generator {
 
   static auto escapeStrLiteral(const std::string& s) -> std::string {
     std::string out;
-    for (char c : s) {
+    for (const char c : s) {
       if (c == '\\') {
         out += "\\\\";
       } else if (c == '"') {
@@ -998,9 +1000,9 @@ class Generator {
   }
 
   auto elementRestriction(const Element& el) -> const Restriction* {
-    if (el.simpleType && el.simpleType->restriction &&
-        hasValueFacets(*el.simpleType->restriction)) {
-      return &*el.simpleType->restriction;
+    if (el.simple_type && el.simple_type->restriction &&
+        hasValueFacets(*el.simple_type->restriction)) {
+      return &*el.simple_type->restriction;
     }
     return typeRestriction(el.type);
   }
@@ -1017,13 +1019,13 @@ class Generator {
     };
 
     if (isStringCpp(cpp)) {
-      if (r.minLength) {
-        emit_if(a + "size() < " + r.minLength->value,
-                "minLength violation (min=" + r.minLength->value + ")");
+      if (r.min_length) {
+        emit_if(a + "size() < " + r.min_length->value,
+                "minLength violation (min=" + r.min_length->value + ")");
       }
-      if (r.maxLength) {
-        emit_if(a + "size() > " + r.maxLength->value,
-                "maxLength violation (max=" + r.maxLength->value + ")");
+      if (r.max_length) {
+        emit_if(a + "size() > " + r.max_length->value,
+                "maxLength violation (max=" + r.max_length->value + ")");
       }
       if (r.length) {
         emit_if(a + "size() != " + r.length->value,
@@ -1036,21 +1038,21 @@ class Generator {
                ": pattern violation\";\n";
       }
     } else {
-      if (r.minInclusive && !r.minInclusive->value.empty()) {
-        emit_if(val + " < " + r.minInclusive->value,
-                "minInclusive violation (min=" + r.minInclusive->value + ")");
+      if (r.min_inclusive && !r.min_inclusive->value.empty()) {
+        emit_if(val + " < " + r.min_inclusive->value,
+                "minInclusive violation (min=" + r.min_inclusive->value + ")");
       }
-      if (r.maxInclusive && !r.maxInclusive->value.empty()) {
-        emit_if(val + " > " + r.maxInclusive->value,
-                "maxInclusive violation (max=" + r.maxInclusive->value + ")");
+      if (r.max_inclusive && !r.max_inclusive->value.empty()) {
+        emit_if(val + " > " + r.max_inclusive->value,
+                "maxInclusive violation (max=" + r.max_inclusive->value + ")");
       }
-      if (r.minExclusive && !r.minExclusive->value.empty()) {
-        emit_if(val + " <= " + r.minExclusive->value,
-                "minExclusive violation (min=" + r.minExclusive->value + ")");
+      if (r.min_exclusive && !r.min_exclusive->value.empty()) {
+        emit_if(val + " <= " + r.min_exclusive->value,
+                "minExclusive violation (min=" + r.min_exclusive->value + ")");
       }
-      if (r.maxExclusive && !r.maxExclusive->value.empty()) {
-        emit_if(val + " >= " + r.maxExclusive->value,
-                "maxExclusive violation (max=" + r.maxExclusive->value + ")");
+      if (r.max_exclusive && !r.max_exclusive->value.empty()) {
+        emit_if(val + " >= " + r.max_exclusive->value,
+                "maxExclusive violation (max=" + r.max_exclusive->value + ")");
       }
     }
     return out;
@@ -1073,29 +1075,29 @@ class Generator {
         }
       }
       const Restriction* r = typeRestriction(a.type);
-      if (!r) {
+      if (r == nullptr) {
         return;
       }
       body += buildCheckCode(mem, resolveNamedType(a.type, a.name).cpp, false, *r);
     };
     auto process_element = [&](const Element& el) {
       const std::string mem = detail::sanitize(el.name);
-      if (auto n = finiteMaxOccurs(el)) {
+      if (const auto n = finiteMaxOccurs(el)) {
         body += "    if (v." + mem + ".size() > " + std::to_string(*n) + ") return \"" + mem +
                 ": maxOccurs violation (max=" + std::to_string(*n) + ")\";\n";
       }
-      if (isUnbounded(el) || (el.simpleType && el.simpleType->list)) {
+      if (isUnbounded(el) || (el.simple_type && el.simple_type->list)) {
         return;
       }
       const Restriction* r = elementRestriction(el);
-      if (!r) {
+      if (r == nullptr) {
         return;
       }
       body += buildCheckCode(mem, resolveElementType(el).cpp, minOccursOf(el) == 0, *r);
     };
 
-    if (ct.simpleContent && ct.simpleContent->extension) {
-      const auto& ext = *ct.simpleContent->extension;
+    if (ct.simple_content && ct.simple_content->extension) {
+      const auto& ext = *ct.simple_content->extension;
       if (const Restriction* r = typeRestriction(ext.base)) {
         body += buildCheckCode("value", baseBuiltin(ext.base), false, *r);
       }
@@ -1105,8 +1107,8 @@ class Generator {
       return body;
     }
 
-    if (ct.complexContent && ct.complexContent->extension) {
-      const auto& ext = *ct.complexContent->extension;
+    if (ct.complex_content && ct.complex_content->extension) {
+      const auto& ext = *ct.complex_content->extension;
       for (const auto& a : ext.attributes) {
         process_attr(a);
       }
@@ -1140,7 +1142,7 @@ class Generator {
   }
 
   auto emitStructConstraints(const StructDef& s) -> void {
-    std::string body = structConstraintBody(s);
+    const std::string body = structConstraintBody(s);
     if (body.empty()) {
       return;
     }
@@ -1162,11 +1164,11 @@ class Generator {
 
     std::vector<std::vector<size_t>> deps(structs_.size());
     for (size_t i = 0; i < structs_.size(); ++i) {
-      for (const auto& f : fields_of(structs_[i])) {
+      for (const auto& f : fieldsOf(structs_[i])) {
         if (f.inherited) {
           continue;
         }
-        if (f.member.rfind("std::vector<", 0) == 0 || f.member.rfind("std::unique_ptr<", 0) == 0) {
+        if (f.member.starts_with("std::vector<") || f.member.starts_with("std::unique_ptr<")) {
           continue;
         }
         for (const auto& [name, j] : index) {
@@ -1200,7 +1202,7 @@ class Generator {
 
   static auto memberReferences(const std::string& member, const std::string& type) -> bool {
     const std::string opt = "std::optional<" + type + ">";
-    return member.rfind(type + " ", 0) == 0 || member.rfind(opt, 0) == 0;
+    return member.starts_with(type + " ") || member.starts_with(opt);
   }
 
   const Schema& schema_;
@@ -1234,7 +1236,7 @@ inline auto generate(std::string_view xsd_text, const Options& opts = {}) -> Gen
 
   if (opts.loader) {
     for (const auto& inc : schema.includes) {
-      auto src = opts.loader(inc.schemaLocation);
+      auto src = opts.loader(inc.schema_location);
       if (!src) {
         continue;
       }
@@ -1243,17 +1245,17 @@ inline auto generate(std::string_view xsd_text, const Options& opts = {}) -> Gen
       if (!xml::deserialize(ip, "schema", included)) {
         continue;
       }
-      for (auto& ct : included.complexTypes) {
-        schema.complexTypes.push_back(std::move(ct));
+      for (auto& ct : included.complex_types) {
+        schema.complex_types.push_back(std::move(ct));
       }
-      for (auto& st : included.simpleTypes) {
-        schema.simpleTypes.push_back(std::move(st));
+      for (auto& st : included.simple_types) {
+        schema.simple_types.push_back(std::move(st));
       }
       for (auto& el : included.elements) {
         schema.elements.push_back(std::move(el));
       }
-      for (auto& ag : included.attributeGroups) {
-        schema.attributeGroups.push_back(std::move(ag));
+      for (auto& ag : included.attribute_groups) {
+        schema.attribute_groups.push_back(std::move(ag));
       }
       for (auto& g : included.groups) {
         schema.groups.push_back(std::move(g));

@@ -752,8 +752,7 @@ TEST_F(TurboBasicTests, PreservesWhitespaceInStrings) {
 /// performance target). The document-order (first) match deterministically
 /// wins.
 TEST_F(TurboBasicTests, DuplicateAttributesTakesFirst) {
-  const std::string_view xml_src =
-      R"(<Users><User id="1" id="2"><Name>Bob</Name></User></Users>)";
+  const std::string_view xml_src = R"(<Users><User id="1" id="2"><Name>Bob</Name></User></Users>)";
   xml::Parser parser{xml_src};
   Users users;
   ASSERT_TRUE(xml::deserialize(parser, "Users", users));
@@ -774,8 +773,7 @@ TEST_F(TurboBasicTests, RootTagMismatchFails) {
 /// @brief Verifies that attributes located directly on the root node being
 /// deserialized are parsed and populated correctly.
 TEST_F(TurboBasicTests, ParsesAttributesOnRootElement) {
-  const std::string_view xml_src =
-      R"(<Organization id="999" name="Global Corp"></Organization>)";
+  const std::string_view xml_src = R"(<Organization id="999" name="Global Corp"></Organization>)";
   xml::Parser parser{xml_src};
   Organization org;
   ASSERT_TRUE(xml::deserialize(parser, "Organization", org));
@@ -848,7 +846,7 @@ TEST_F(TurboBasicTests, MalformedTagGarbageFails) {
 }
 
 // Helper to generate perfectly nested XML
-auto generate_nested_xml(const size_t depth) -> std::string {
+auto generateNestedXml(const size_t depth) -> std::string {
   std::string xml;
   xml.reserve(depth * 13);  // "<Node></Node>" is 13 chars
   for (size_t i = 0; i < depth; ++i) {
@@ -862,7 +860,7 @@ auto generate_nested_xml(const size_t depth) -> std::string {
 
 /// @brief Tests that the parser successfully evaluates exactly kMaxDepth
 TEST_F(TurboBasicTests, MaxDepthBoundarySucceeds) {
-  std::string xml_src = generate_nested_xml(xml::Parser::MAX_DEPTH);
+  std::string xml_src = generateNestedXml(xml::Parser::MAX_DEPTH);
 
   xml::Parser parser{xml_src};
   TreeNode root;
@@ -875,7 +873,7 @@ TEST_F(TurboBasicTests, MaxDepthBoundarySucceeds) {
 
 /// @brief Tests that the parser cleanly aborts when depth hits kMaxDepth + 1
 TEST_F(TurboBasicTests, MaxDepthExceededFailsCleanly) {
-  std::string xml_src = generate_nested_xml(xml::Parser::MAX_DEPTH + 1);
+  std::string xml_src = generateNestedXml(xml::Parser::MAX_DEPTH + 1);
 
   xml::Parser parser{xml_src};
   TreeNode root;
@@ -1067,8 +1065,7 @@ TEST_F(TurboBasicTests, VecOfPrimitivesMultiple) {
 
 /// @brief Self-closing primitive element yields empty string_view.
 TEST_F(TurboBasicTests, VecOfPrimitivesSelfClosing) {
-  const std::string_view xml_src =
-      R"(<Skills><Skill>A</Skill><Skill/><Skill>B</Skill></Skills>)";
+  const std::string_view xml_src = R"(<Skills><Skill>A</Skill><Skill/><Skill>B</Skill></Skills>)";
   xml::Parser parser{xml_src};
   Skills skills;
   ASSERT_TRUE(xml::deserialize(parser, "Skills", skills));
@@ -2092,7 +2089,7 @@ TEST_F(TurboBasicTests, StrictParserNormalizes) {
 //
 
 // ---- Enumerations via XmlEnumTraits (string tokens) ----
-enum class Priority { Low, Medium, High };
+enum class Priority : uint8_t { Low, Medium, High };
 template<>
 struct xml::XmlEnumTraits<Priority> {
   static constexpr auto values = xml::enumTable<Priority>(
@@ -2207,7 +2204,7 @@ struct xml::XmlMetadata<Section> {
 
 TEST_F(TurboBasicTests, UniquePtrRecursionChain) {
   const std::string_view src = R"(<Section><title>A</title><sub><title>B</title>)"
-                                   R"(<sub><title>C</title></sub></sub></Section>)";
+                               R"(<sub><title>C</title></sub></sub></Section>)";
   xml::Parser p{src};
   Section s;
   ASSERT_TRUE(xml::deserialize(p, "Section", s));
@@ -2350,7 +2347,7 @@ struct xml::XmlMetadata<Wide72> {
                       xml::attrField("a71", &Wide72::a71, true));
 };
 
-static std::string wide_xml(int omit) {
+static std::string wideXml(int omit) {
   std::string s = "<Wide72";
   for (int i = 0; i < 72; ++i) {
     if (i == omit) {
@@ -2363,7 +2360,7 @@ static std::string wide_xml(int omit) {
 }
 
 TEST_F(TurboBasicTests, MoreThan64FieldsAllPresent) {
-  const std::string src = wide_xml(-1);
+  const std::string src = wideXml(-1);
   xml::Parser p{src};
   Wide72 w;
   ASSERT_TRUE(xml::deserialize(p, "Wide72", w));
@@ -2374,7 +2371,7 @@ TEST_F(TurboBasicTests, MoreThan64FieldsAllPresent) {
 
 TEST_F(TurboBasicTests, MoreThan64FieldsMissingRequiredSecondWord) {
   // a64 is required and lives in the second mask word; dropping it fails.
-  const std::string src = wide_xml(64);
+  const std::string src = wideXml(64);
   xml::Parser p{src};
   Wide72 w;
   EXPECT_FALSE(xml::deserialize(p, "Wide72", w));
@@ -2397,7 +2394,7 @@ struct xml::XmlMetadata<Event> {
 
 TEST_F(TurboBasicTests, DateTimeRoundTripAndChrono) {
   const std::string_view src = R"(<Event day="2026-06-18"><stamp>2026-06-18T09:30:00Z</stamp>)"
-                                   R"(<at>23:59:59.5+02:00</at></Event>)";
+                               R"(<at>23:59:59.5+02:00</at></Event>)";
   xml::Parser p{src};
   Event e;
   ASSERT_TRUE(xml::deserialize(p, "Event", e));
@@ -2417,7 +2414,7 @@ TEST_F(TurboBasicTests, DateTimeRoundTripAndChrono) {
 TEST_F(TurboBasicTests, DateTimeInvalidValue) {
   // Month 13 in an element is a hard parse failure.
   const std::string_view src = R"(<Event day="2026-06-18"><stamp>2026-13-01T00:00:00</stamp>)"
-                                   R"(<at>00:00:00</at></Event>)";
+                               R"(<at>00:00:00</at></Event>)";
   xml::Parser p{src};
   Event e;
   EXPECT_FALSE(xml::deserialize(p, "Event", e));
@@ -2552,7 +2549,7 @@ TEST_F(TurboBasicTests, OptionalAbsentStaysEmptyAndOmitted) {
 }
 
 // xs:list fields (whitespace-separated values in one element / attribute).
-enum class Grade { A, B, C };
+enum class Grade : uint8_t { A, B, C };
 template<>
 struct xml::XmlEnumTraits<Grade> {
   static constexpr auto values =

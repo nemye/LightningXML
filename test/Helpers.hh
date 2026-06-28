@@ -118,8 +118,8 @@ struct xml::XmlMetadata<Person> {
 
 struct FlatItem {
   int id{};
-  std::string_view title{};
-  std::string_view description{};
+  std::string_view title;
+  std::string_view description;
   int status{};
 };
 
