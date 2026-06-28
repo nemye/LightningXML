@@ -10,6 +10,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <memory>
@@ -129,6 +130,16 @@ constexpr FieldHash hashFieldName(std::string_view s) noexcept {
   });
 }
 
+template<typename T>
+struct IsUniquePtr : std::false_type {};
+template<typename U, typename D>
+struct IsUniquePtr<std::unique_ptr<U, D>> : std::true_type {};
+
+template<typename T>
+struct IsOptional : std::false_type {};
+template<typename U>
+struct IsOptional<std::optional<U>> : std::true_type {};
+
 }  // namespace detail
 
 /// @brief Classifies a field as a child element, attribute, or container.
@@ -163,23 +174,13 @@ using ValueField = FieldBase<FieldKind::Value, C, M>;
 template<typename C, typename M>
 using ListField = FieldBase<FieldKind::List, C, M>;
 
-namespace detail {
-
-/// @brief Shared factory behind field/attrField/vecField/arrField.
-template<FieldKind K, typename C, typename M>
-constexpr auto makeField(std::string_view name, M C::*m, bool required) -> FieldBase<K, C, M> {
-  return {.xml_name = name, .member = m, .hash = hashFieldName(name), .required = required};
-}
-
-}  // namespace detail
-
 /// @brief Creates an element field descriptor.
 /// @param name     XML element name.
 /// @param m        Pointer to the target member.
 /// @param required If true, deserialize() fails unless the element is present.
 template<typename C, typename M>
 constexpr auto field(std::string_view name, M C::*m, bool required = false) -> Field<C, M> {
-  return detail::makeField<FieldKind::Element>(name, m, required);
+  return {.xml_name = name, .member = m, .hash = detail::hashFieldName(name), .required = required};
 }
 
 /// @brief Creates an attribute field descriptor.
@@ -189,7 +190,7 @@ constexpr auto field(std::string_view name, M C::*m, bool required = false) -> F
 /// present.
 template<typename C, typename M>
 constexpr auto attrField(std::string_view name, M C::*m, bool required = false) -> AttrField<C, M> {
-  return detail::makeField<FieldKind::Attr>(name, m, required);
+  return {.xml_name = name, .member = m, .hash = detail::hashFieldName(name), .required = required};
 }
 
 /// @brief Creates a container field descriptor for dynamic containers (e.g.,
@@ -201,7 +202,7 @@ constexpr auto attrField(std::string_view name, M C::*m, bool required = false) 
 template<typename C, typename M>
 constexpr auto vecField(std::string_view name, M C::*m,
                         bool required = false) -> ContainerField<C, M> {
-  return detail::makeField<FieldKind::Container>(name, m, required);
+  return {.xml_name = name, .member = m, .hash = detail::hashFieldName(name), .required = required};
 }
 
 /// @brief Creates a container field descriptor for fixed containers (e.g.,
@@ -225,7 +226,7 @@ constexpr auto arrField(std::string_view name, M C::*m,
 /// @param required If true, deserialize() fails unless the element is present.
 template<typename C, typename M>
 constexpr auto listField(std::string_view name, M C::*m, bool required = false) -> ListField<C, M> {
-  return detail::makeField<FieldKind::List>(name, m, required);
+  return {.xml_name = name, .member = m, .hash = detail::hashFieldName(name), .required = required};
 }
 
 // Metadata + concepts
@@ -241,18 +242,6 @@ struct XmlMetadata;
 /// tuple.
 template<typename T>
 concept XmlObject = requires { XmlMetadata<T>::fields; };
-
-namespace detail {
-template<typename T>
-struct IsUniquePtr : std::false_type {};
-template<typename U, typename D>
-struct IsUniquePtr<std::unique_ptr<U, D>> : std::true_type {};
-
-template<typename T>
-struct IsOptional : std::false_type {};
-template<typename U>
-struct IsOptional<std::optional<U>> : std::true_type {};
-}  // namespace detail
 
 /// @brief Satisfied when T is a std::unique_ptr to an XmlObject. Such members
 /// hold an optional (possibly recursive) child element: null when the element
@@ -337,8 +326,8 @@ concept XmlScalar = XmlPrimitive<T> || XmlEnum<T> || XmlCustomValue<T>;
 /// values via the accessors.
 struct Date {
   int year{};           ///< Proleptic Gregorian year (may be negative).
-  unsigned month{};     ///< 1-12.
-  unsigned day{};       ///< 1-31.
+  uint8_t month{};      ///< 1-12.
+  uint8_t day{};        ///< 1-31.
   bool has_tz{};        ///< True if an explicit timezone was present.
   int tz_offset_min{};  ///< Minutes east of UTC (0 for 'Z').
 
@@ -354,10 +343,10 @@ struct Date {
 /// @brief An XSD `time`: time of day with optional fractional seconds and an
 /// optional timezone.
 struct Time {
-  unsigned hour{};             ///< 0-24 (24 only with zero minute/second/fraction).
-  unsigned minute{};           ///< 0-59.
-  unsigned second{};           ///< 0-59.
-  std::uint32_t nanosecond{};  ///< Fractional second, in nanoseconds.
+  uint8_t hour{};         ///< 0-24 (24 only with zero minute/second/fraction).
+  uint8_t minute{};       ///< 0-59.
+  uint8_t second{};       ///< 0-59.
+  uint32_t nanosecond{};  ///< Fractional second, in nanoseconds.
   bool has_tz{};
   int tz_offset_min{};
 
@@ -388,273 +377,6 @@ struct DateTime {
   auto operator<=>(const DateTime&) const = default;
 };
 
-namespace detail {
-
-// ---- Lexical scanners for the date/time types (allocation-free) ----
-
-// Reads exactly `n` decimal digits into `out`, advancing `i`. False if fewer.
-constexpr auto dtDigits(std::string_view s, size_t& i, int n, unsigned& out) -> bool {
-  if (i + static_cast<size_t>(n) > s.size()) {
-    return false;
-  }
-  unsigned v = 0;
-  for (int k = 0; k < n; ++k) {
-    const char c = s[i + static_cast<size_t>(k)];
-    if (c < '0' || c > '9') {
-      return false;
-    }
-    v = v * 10 + static_cast<unsigned>(c - '0');
-  }
-  i += static_cast<size_t>(n);
-  out = v;
-  return true;
-}
-
-// Year: optional '-' then at least four digits.
-constexpr auto dtYear(std::string_view s, size_t& i, int& year) -> bool {
-  int sign = 1;
-  if (i < s.size() && s[i] == '-') {
-    sign = -1;
-    ++i;
-  }
-  const size_t start = i;
-  long v = 0;
-  while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
-    v = v * 10 + (s[i] - '0');
-    ++i;
-  }
-  if (i - start < 4) {
-    return false;
-  }
-  year = sign * static_cast<int>(v);
-  return true;
-}
-
-// Optional timezone suffix: 'Z' or (+|-)hh:mm. Absent (i at end) is allowed.
-constexpr auto dtTz(std::string_view s, size_t& i, bool& has_tz, int& off) -> bool {
-  has_tz = false;
-  off = 0;
-  if (i >= s.size()) {
-    return true;
-  }
-  const char c = s[i];
-  if (c == 'Z') {
-    has_tz = true;
-    ++i;
-    return true;
-  }
-  if (c == '+' || c == '-') {
-    const int sign = (c == '-') ? -1 : 1;
-    ++i;
-    unsigned hh = 0;
-    unsigned mm = 0;
-    if (!dtDigits(s, i, 2, hh) || i >= s.size() || s[i] != ':') {
-      return false;
-    }
-    ++i;
-    if (!dtDigits(s, i, 2, mm) || hh > 14 || mm > 59) {
-      return false;
-    }
-    has_tz = true;
-    off = sign * static_cast<int>(hh * 60 + mm);
-    return true;
-  }
-  return false;
-}
-
-constexpr auto dtDate(std::string_view s, size_t& i, Date& d) -> bool {
-  unsigned mo = 0;
-  unsigned da = 0;
-  if (!dtYear(s, i, d.year) || i >= s.size() || s[i] != '-') {
-    return false;
-  }
-  ++i;
-  if (!dtDigits(s, i, 2, mo) || i >= s.size() || s[i] != '-') {
-    return false;
-  }
-  ++i;
-  if (!dtDigits(s, i, 2, da) || mo < 1 || mo > 12 || da < 1 || da > 31) {
-    return false;
-  }
-  d.month = mo;
-  d.day = da;
-  return true;
-}
-
-constexpr auto dtTime(std::string_view s, size_t& i, Time& t) -> bool {
-  unsigned hh = 0;
-  unsigned mm = 0;
-  unsigned ss = 0;
-  if (!dtDigits(s, i, 2, hh) || i >= s.size() || s[i] != ':') {
-    return false;
-  }
-  ++i;
-  if (!dtDigits(s, i, 2, mm) || i >= s.size() || s[i] != ':') {
-    return false;
-  }
-  ++i;
-  if (!dtDigits(s, i, 2, ss)) {
-    return false;
-  }
-  std::uint32_t nano = 0;
-  if (i < s.size() && s[i] == '.') {
-    ++i;
-    const size_t frac_start = i;
-    std::uint64_t frac = 0;
-    int digits = 0;
-    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
-      if (digits < 9) {
-        frac = frac * 10 + static_cast<unsigned>(s[i] - '0');
-        ++digits;
-      }
-      ++i;
-    }
-    if (i == frac_start) {
-      return false;  // '.' with no digits
-    }
-    while (digits < 9) {
-      frac *= 10;
-      ++digits;
-    }
-    nano = static_cast<std::uint32_t>(frac);
-  }
-  if (hh > 24 || mm > 59 || ss > 59 || (hh == 24 && (mm != 0u || ss != 0u || nano != 0u))) {
-    return false;
-  }
-  t.hour = hh;
-  t.minute = mm;
-  t.second = ss;
-  t.nanosecond = nano;
-  return true;
-}
-
-constexpr auto parseDate(std::string_view s, Date& d) -> bool {
-  size_t i = 0;
-  Date out{};
-  if (!dtDate(s, i, out) || !dtTz(s, i, out.has_tz, out.tz_offset_min) || i != s.size()) {
-    return false;
-  }
-  d = out;
-  return true;
-}
-
-constexpr auto parseTime(std::string_view s, Time& t) -> bool {
-  size_t i = 0;
-  Time out{};
-  if (!dtTime(s, i, out) || !dtTz(s, i, out.has_tz, out.tz_offset_min) || i != s.size()) {
-    return false;
-  }
-  t = out;
-  return true;
-}
-
-constexpr auto parseDatetime(std::string_view s, DateTime& dt) -> bool {
-  size_t i = 0;
-  DateTime out{};
-  if (!dtDate(s, i, out.date) || i >= s.size() || s[i] != 'T') {
-    return false;
-  }
-  ++i;
-  if (!dtTime(s, i, out.time) || !dtTz(s, i, out.time.has_tz, out.time.tz_offset_min) ||
-      i != s.size()) {
-    return false;
-  }
-  dt = out;
-  return true;
-}
-
-// ---- Canonical-form formatters ----
-
-inline auto dtFmtTz(std::string& o, const bool has_tz, const int off) -> void {
-  if (!has_tz) {
-    return;
-  }
-  if (off == 0) {
-    o += 'Z';
-    return;
-  }
-  const int a = off < 0 ? -off : off;
-  o += std::format("{}{:02}:{:02}", off < 0 ? '-' : '+', a / 60, a % 60);
-}
-
-inline auto dtFmtDate(std::string& o, const Date& d) -> void {
-  o += d.year < 0 ? std::format("-{:04}-{:02}-{:02}", -d.year, d.month, d.day)
-                  : std::format("{:04}-{:02}-{:02}", d.year, d.month, d.day);
-}
-
-inline auto dtFmtTime(std::string& o, const Time& t) -> void {
-  o += std::format("{:02}:{:02}:{:02}", t.hour, t.minute, t.second);
-  if (t.nanosecond != 0) {
-    const std::string frac = std::format("{:09}", t.nanosecond);
-    o += '.' + frac.substr(0, frac.find_last_not_of('0') + 1);
-  }
-}
-
-}  // namespace detail
-
-/// @brief Maps xml::Date to/from the XSD `date` lexical form.
-template<>
-struct XmlValueTraits<Date> {
-  [[nodiscard]] static auto parse(std::string_view s, Date& d) -> bool {
-    return detail::parseDate(s, d);
-  }
-  static auto format(std::string& out, const Date& d) -> void {
-    detail::dtFmtDate(out, d);
-    detail::dtFmtTz(out, d.has_tz, d.tz_offset_min);
-  }
-};
-
-/// @brief Maps xml::Time to/from the XSD `time` lexical form.
-template<>
-struct XmlValueTraits<Time> {
-  [[nodiscard]] static auto parse(std::string_view s, Time& t) -> bool {
-    return detail::parseTime(s, t);
-  }
-  static auto format(std::string& out, const Time& t) -> void {
-    detail::dtFmtTime(out, t);
-    detail::dtFmtTz(out, t.has_tz, t.tz_offset_min);
-  }
-};
-
-/// @brief Maps xml::DateTime to/from the XSD `dateTime` lexical form.
-template<>
-struct XmlValueTraits<DateTime> {
-  [[nodiscard]] static auto parse(std::string_view s, DateTime& dt) -> bool {
-    return detail::parseDatetime(s, dt);
-  }
-  static auto format(std::string& out, const DateTime& dt) -> void {
-    detail::dtFmtDate(out, dt.date);
-    out.push_back('T');
-    detail::dtFmtTime(out, dt.time);
-    detail::dtFmtTz(out, dt.time.has_tz, dt.time.tz_offset_min);
-  }
-};
-
-namespace detail {
-
-/// @brief Resolves an XML token to its enumerator via XmlEnumTraits<E>::values.
-/// @return false if no token matches (an undefined enumeration value).
-template<typename E>
-constexpr auto enumFromString(std::string_view s, E& out) noexcept -> bool {
-  const auto& vals = XmlEnumTraits<E>::values;
-  const auto it = std::ranges::find_if(vals, [&](const auto& p) { return p.first == s; });
-  if (it == vals.end()) {
-    return false;
-  }
-  out = it->second;
-  return true;
-}
-
-/// @brief Maps an enumerator back to its XML token, or "" if unmapped.
-template<typename E>
-constexpr auto enumToString(E v) noexcept -> std::string_view {
-  const auto& vals = XmlEnumTraits<E>::values;
-  const auto it = std::ranges::find_if(vals, [v](const auto& p) { return p.second == v; });
-  return it != vals.end() ? it->first : std::string_view{};
-}
-
-}  // namespace detail
-
 /// @brief Creates a value field: binds the enclosing element's own character
 /// data to a member (XSD simpleContent). The element may still carry attribute
 /// fields; it must not also declare child element/container fields. Takes no
@@ -664,7 +386,7 @@ constexpr auto enumToString(E v) noexcept -> std::string_view {
 template<typename C, typename M>
 constexpr auto valueField(M C::*m, bool required = false) -> ValueField<C, M> {
   static_assert(XmlScalar<M>, "valueField target must be a scalar (string/number/enum)");
-  return detail::makeField<FieldKind::Value>(std::string_view{}, m, required);
+  return {.xml_name = {}, .member = m, .hash = {}, .required = required};
 }
 
 /// @brief Adapts a container for use with ContainerField. Specialize for custom
@@ -715,39 +437,6 @@ concept XmlFixedContainer = requires(C& c, size_t i) {
 template<typename C>
 concept XmlListContainer = XmlDynContainer<C> || XmlFixedContainer<C>;
 
-// ---- Variant fields (xs:choice -> std::variant) ----
-namespace detail {
-template<typename T>
-struct IsVariant : std::false_type {};
-template<typename... Ts>
-struct IsVariant<std::variant<Ts...>> : std::true_type {};
-
-// The std::variant underlying a variant field member: the member itself when it
-// is a variant, else the element type of a dynamic container of variant.
-template<typename M, bool = IsVariant<M>::value>
-struct VariantMember {
-  using type = M;
-};
-template<typename M>
-struct VariantMember<M, false> {
-  using type = typename XmlContainerTraits<M>::value_type;
-};
-template<typename M>
-using variant_member_t = typename VariantMember<M>::type;
-
-// Index of alternative T within std::variant V (T must appear exactly once).
-template<typename V, typename T>
-struct variant_index;
-template<typename T, typename... Rest>
-struct variant_index<std::variant<T, Rest...>, T> {
-  static constexpr size_t value = 0;
-};
-template<typename T, typename U, typename... Rest>
-struct variant_index<std::variant<U, Rest...>, T> {
-  static constexpr size_t value = 1 + variant_index<std::variant<Rest...>, T>::value;
-};
-}  // namespace detail
-
 /// @brief One alternative of a variant field: binds element `<name>` to the
 /// std::variant alternative of type T. Build with `xml::alt<T>("name")`.
 template<typename T>
@@ -773,6 +462,256 @@ struct VariantField {
 };
 
 namespace detail {
+
+// ---- Lexical scanners for the date/time types (allocation-free) ----
+
+// Reads exactly `n` decimal digits into `out`, advancing `i`. False if fewer.
+constexpr auto dtDigits(std::string_view s, size_t& i, size_t n, uint32_t& out) -> bool {
+  if (i + n > s.size()) {
+    return false;
+  }
+  uint32_t v = 0;
+  for (size_t k = 0; k < n; ++k) {
+    const char c = s[i + k];
+    if (c < '0' || c > '9') {
+      return false;
+    }
+    v = v * 10 + static_cast<uint32_t>(c - '0');
+  }
+  i += n;
+  out = v;
+  return true;
+}
+
+// Year: optional '-' then at least four digits.
+constexpr auto dtYear(std::string_view s, size_t& i, int& year) -> bool {
+  int sign = 1;
+  if (i < s.size() && s[i] == '-') {
+    sign = -1;
+    ++i;
+  }
+  const size_t start = i;
+  int64_t v = 0;
+  while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+    v = v * 10 + (s[i] - '0');
+    ++i;
+  }
+  if (i - start < 4) {
+    return false;
+  }
+  year = sign * static_cast<int>(v);
+  return true;
+}
+
+// Optional timezone suffix: 'Z' or (+|-)hh:mm. Absent (i at end) is allowed.
+constexpr auto dtTz(std::string_view s, size_t& i, bool& has_tz, int& off) -> bool {
+  has_tz = false;
+  off = 0;
+  if (i >= s.size()) {
+    return true;
+  }
+  const char c = s[i];
+  if (c == 'Z') {
+    has_tz = true;
+    ++i;
+    return true;
+  }
+  if (c == '+' || c == '-') {
+    const int sign = (c == '-') ? -1 : 1;
+    ++i;
+    unsigned hh = 0;
+    unsigned mm = 0;
+    if (!dtDigits(s, i, 2, hh) || i >= s.size() || s[i] != ':') {
+      return false;
+    }
+    ++i;
+    if (!dtDigits(s, i, 2, mm) || hh > 14 || mm > 59) {
+      return false;
+    }
+    has_tz = true;
+    off = sign * static_cast<int>(hh * 60 + mm);
+    return true;
+  }
+  return false;
+}
+
+constexpr auto dtDate(std::string_view s, size_t& i, Date& d) -> bool {
+  uint32_t mo = 0;
+  uint32_t da = 0;
+  if (!dtYear(s, i, d.year) || i >= s.size() || s[i] != '-') {
+    return false;
+  }
+  ++i;
+  if (!dtDigits(s, i, 2, mo) || i >= s.size() || s[i] != '-') {
+    return false;
+  }
+  ++i;
+  if (!dtDigits(s, i, 2, da) || mo < 1 || mo > 12 || da < 1 || da > 31) {
+    return false;
+  }
+  d.month = static_cast<uint8_t>(mo);
+  d.day = static_cast<uint8_t>(da);
+  return true;
+}
+
+constexpr auto dtTime(std::string_view s, size_t& i, Time& t) -> bool {
+  uint32_t hh = 0;
+  uint32_t mm = 0;
+  uint32_t ss = 0;
+  if (!dtDigits(s, i, 2, hh) || i >= s.size() || s[i] != ':') {
+    return false;
+  }
+  ++i;
+  if (!dtDigits(s, i, 2, mm) || i >= s.size() || s[i] != ':') {
+    return false;
+  }
+  ++i;
+  if (!dtDigits(s, i, 2, ss)) {
+    return false;
+  }
+  uint32_t nano = 0;
+  if (i < s.size() && s[i] == '.') {
+    ++i;
+    const size_t frac_start = i;
+    uint64_t frac = 0;
+    int digits = 0;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+      if (digits < 9) {
+        frac = frac * 10 + static_cast<uint32_t>(s[i] - '0');
+        ++digits;
+      }
+      ++i;
+    }
+    if (i == frac_start) {
+      return false;  // '.' with no digits
+    }
+    while (digits < 9) {
+      frac *= 10;
+      ++digits;
+    }
+    nano = static_cast<uint32_t>(frac);
+  }
+  if (hh > 24 || mm > 59 || ss > 59 || (hh == 24 && (mm != 0u || ss != 0u || nano != 0u))) {
+    return false;
+  }
+  t.hour = static_cast<uint8_t>(hh);
+  t.minute = static_cast<uint8_t>(mm);
+  t.second = static_cast<uint8_t>(ss);
+  t.nanosecond = nano;
+  return true;
+}
+
+constexpr auto parseDate(std::string_view s, Date& d) -> bool {
+  size_t i = 0;
+  Date out{};
+  if (!dtDate(s, i, out) || !dtTz(s, i, out.has_tz, out.tz_offset_min) || i != s.size()) {
+    return false;
+  }
+  d = out;
+  return true;
+}
+
+constexpr auto parseTime(std::string_view s, Time& t) -> bool {
+  size_t i = 0;
+  Time out{};
+  if (!dtTime(s, i, out) || !dtTz(s, i, out.has_tz, out.tz_offset_min) || i != s.size()) {
+    return false;
+  }
+  t = out;
+  return true;
+}
+
+constexpr auto parseDatetime(std::string_view s, DateTime& dt) -> bool {
+  size_t i = 0;
+  DateTime out{};
+  if (!dtDate(s, i, out.date) || i >= s.size() || s[i] != 'T') {
+    return false;
+  }
+  ++i;
+  if (!dtTime(s, i, out.time) || !dtTz(s, i, out.time.has_tz, out.time.tz_offset_min) ||
+      i != s.size()) {
+    return false;
+  }
+  dt = out;
+  return true;
+}
+
+// ---- Canonical-form formatters ----
+
+inline auto dtFmtTz(std::string& o, const bool has_tz, const int off) -> void {
+  if (!has_tz) {
+    return;
+  }
+  if (off == 0) {
+    o += 'Z';
+    return;
+  }
+  const int a = std::abs(off);
+  o += std::format("{}{:02}:{:02}", off < 0 ? '-' : '+', a / 60, a % 60);
+}
+
+inline auto dtFmtDate(std::string& o, const Date& d) -> void {
+  o += d.year < 0 ? std::format("-{:04}-{:02}-{:02}", -d.year, d.month, d.day)
+                  : std::format("{:04}-{:02}-{:02}", d.year, d.month, d.day);
+}
+
+inline auto dtFmtTime(std::string& o, const Time& t) -> void {
+  o += std::format("{:02}:{:02}:{:02}", t.hour, t.minute, t.second);
+  if (t.nanosecond != 0) {
+    const std::string frac = std::format("{:09}", t.nanosecond);
+    o += '.' + frac.substr(0, frac.find_last_not_of('0') + 1);
+  }
+}
+
+/// @brief Resolves an XML token to its enumerator via XmlEnumTraits<E>::values.
+/// @return false if no token matches (an undefined enumeration value).
+template<typename E>
+constexpr auto enumFromString(std::string_view s, E& out) noexcept -> bool {
+  const auto& vals = XmlEnumTraits<E>::values;
+  const auto it = std::ranges::find_if(vals, [&](const auto& p) { return p.first == s; });
+  if (it == vals.end()) {
+    return false;
+  }
+  out = it->second;
+  return true;
+}
+
+/// @brief Maps an enumerator back to its XML token, or "" if unmapped.
+template<typename E>
+constexpr auto enumToString(E v) noexcept -> std::string_view {
+  const auto& vals = XmlEnumTraits<E>::values;
+  const auto it = std::ranges::find_if(vals, [v](const auto& p) { return p.second == v; });
+  return it != vals.end() ? it->first : std::string_view{};
+}
+
+// ---- Variant support (xs:choice -> std::variant) ----
+template<typename T>
+struct IsVariant : std::false_type {};
+template<typename... Ts>
+struct IsVariant<std::variant<Ts...>> : std::true_type {};
+
+template<typename M, bool = IsVariant<M>::value>
+struct VariantMember {
+  using type = M;
+};
+template<typename M>
+struct VariantMember<M, false> {
+  using type = typename XmlContainerTraits<M>::value_type;
+};
+template<typename M>
+using variant_member_t = typename VariantMember<M>::type;
+
+template<typename V, typename T>
+struct variant_index;
+template<typename T, typename... Rest>
+struct variant_index<std::variant<T, Rest...>, T> {
+  static constexpr size_t value = 0;
+};
+template<typename T, typename U, typename... Rest>
+struct variant_index<std::variant<U, Rest...>, T> {
+  static constexpr size_t value = 1 + variant_index<std::variant<Rest...>, T>::value;
+};
+
 template<typename V, typename C, typename Member, size_t N, typename T>
 constexpr auto placeVariantAlt(VariantField<C, Member, N>& f, VariantAlt<T> a) -> void {
   constexpr size_t idx = variant_index<V, T>::value;
@@ -791,31 +730,6 @@ constexpr auto makeVariantField(Member C::*m, bool required, VariantAlt<Ts>... a
   (placeVariantAlt<V>(f, alts), ...);
   return f;
 }
-}  // namespace detail
-
-/// @brief Creates an optional variant (xs:choice) field. The member is a
-/// `std::variant<...>` (exactly one branch) or a dynamic container of variant
-/// (a repeated/interleaved choice). Each `alt<T>("name")` binds an element name
-/// to the alternative of type T; alternatives must be distinct types.
-/// @code
-/// std::variant<Circle, Square> shape;  // member
-/// xml::variantField(&Shapes::shape, xml::alt<Circle>("circle"),
-///                                    xml::alt<Square>("square"));
-/// @endcode
-template<typename C, typename Member, typename... Ts>
-constexpr auto variantField(Member C::*m, VariantAlt<Ts>... alts) {
-  return detail::makeVariantField(m, false, alts...);
-}
-
-/// @brief Like variantField, but required: deserialize() fails with
-/// MissingRequiredField if no alternative is matched (xs:choice minOccurs>=1).
-template<typename C, typename Member, typename... Ts>
-constexpr auto requiredVariantField(Member C::*m, VariantAlt<Ts>... alts) {
-  return detail::makeVariantField(m, true, alts...);
-}
-
-// Compile-time field introspection
-namespace detail {
 
 /// @brief Number of XML field descriptors declared for T.
 template<typename T>
@@ -1259,6 +1173,65 @@ inline ErrorCode appendNormalized(std::string& out, std::string_view raw, NormMo
 }
 
 }  // namespace detail
+
+/// @brief Maps xml::Date to/from the XSD `date` lexical form.
+template<>
+struct XmlValueTraits<Date> {
+  [[nodiscard]] static auto parse(std::string_view s, Date& d) -> bool {
+    return detail::parseDate(s, d);
+  }
+  static auto format(std::string& out, const Date& d) -> void {
+    detail::dtFmtDate(out, d);
+    detail::dtFmtTz(out, d.has_tz, d.tz_offset_min);
+  }
+};
+
+/// @brief Maps xml::Time to/from the XSD `time` lexical form.
+template<>
+struct XmlValueTraits<Time> {
+  [[nodiscard]] static auto parse(std::string_view s, Time& t) -> bool {
+    return detail::parseTime(s, t);
+  }
+  static auto format(std::string& out, const Time& t) -> void {
+    detail::dtFmtTime(out, t);
+    detail::dtFmtTz(out, t.has_tz, t.tz_offset_min);
+  }
+};
+
+/// @brief Maps xml::DateTime to/from the XSD `dateTime` lexical form.
+template<>
+struct XmlValueTraits<DateTime> {
+  [[nodiscard]] static auto parse(std::string_view s, DateTime& dt) -> bool {
+    return detail::parseDatetime(s, dt);
+  }
+  static auto format(std::string& out, const DateTime& dt) -> void {
+    detail::dtFmtDate(out, dt.date);
+    out.push_back('T');
+    detail::dtFmtTime(out, dt.time);
+    detail::dtFmtTz(out, dt.time.has_tz, dt.time.tz_offset_min);
+  }
+};
+
+/// @brief Creates an optional variant (xs:choice) field. The member is a
+/// `std::variant<...>` (exactly one branch) or a dynamic container of variant
+/// (a repeated/interleaved choice). Each `alt<T>("name")` binds an element name
+/// to the alternative of type T; alternatives must be distinct types.
+/// @code
+/// std::variant<Circle, Square> shape;  // member
+/// xml::variantField(&Shapes::shape, xml::alt<Circle>("circle"),
+///                                    xml::alt<Square>("square"));
+/// @endcode
+template<typename C, typename Member, typename... Ts>
+constexpr auto variantField(Member C::*m, VariantAlt<Ts>... alts) {
+  return detail::makeVariantField(m, false, alts...);
+}
+
+/// @brief Like variantField, but required: deserialize() fails with
+/// MissingRequiredField if no alternative is matched (xs:choice minOccurs>=1).
+template<typename C, typename Member, typename... Ts>
+constexpr auto requiredVariantField(Member C::*m, VariantAlt<Ts>... alts) {
+  return detail::makeVariantField(m, true, alts...);
+}
 
 /// @brief Pull parser for XML deserialization.
 ///
