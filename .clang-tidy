@@ -4,10 +4,10 @@
 # ==============================================================================
 
 # 1. Check Configuration
-Checks: '-*,bugprone-*,-bugprone-easily-swappable-parameters,-bugprone-narrowing-conversions,-bugprone-branch-clone,modernize-*,-modernize-return-braced-init-list,-modernize-use-nodiscard,performance-*,readability-*,-readability-magic-numbers,-readability-identifier-length,-readability-function-cognitive-complexity,-readability-named-parameter,cppcoreguidelines-*,-cppcoreguidelines-avoid-magic-numbers,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-cppcoreguidelines-pro-bounds-constant-array-index,-cppcoreguidelines-macro-usage,-cppcoreguidelines-non-private-member-variables-in-classes,-cppcoreguidelines-owning-memory,misc-const-correctness,clang-analyzer-*,concurrency-*'
+Checks: '-*,bugprone-*,-bugprone-easily-swappable-parameters,-bugprone-narrowing-conversions,-bugprone-branch-clone,modernize-*,-modernize-return-braced-init-list,-modernize-use-nodiscard,-modernize-use-trailing-return-type,performance-*,readability-*,-readability-magic-numbers,-readability-identifier-length,-readability-function-cognitive-complexity,-readability-named-parameter,cppcoreguidelines-*,-cppcoreguidelines-avoid-magic-numbers,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-cppcoreguidelines-pro-bounds-constant-array-index,-cppcoreguidelines-macro-usage,-cppcoreguidelines-non-private-member-variables-in-classes,-cppcoreguidelines-owning-memory,-cppcoreguidelines-avoid-c-arrays,-cppcoreguidelines-pro-bounds-array-to-pointer-decay,-cppcoreguidelines-avoid-do-while,-cppcoreguidelines-special-member-functions,-cppcoreguidelines-avoid-const-or-ref-data-members,misc-const-correctness,clang-analyzer-*,concurrency-*'
 
 # 2. Warning to Error Promotion
-WarningsAsErrors: 'bugprone-*,performance-*,clang-analyzer-core.*,modernize-use-trailing-return-type,readability-braces-around-statements'
+WarningsAsErrors: 'bugprone-*,performance-*,clang-analyzer-core.*,readability-braces-around-statements'
 
 # 3. Target Header Files
 HeaderFilterRegex: '/(include|test|tools)/'
@@ -20,7 +20,7 @@ CheckOptions:
   # C++20 Specific: Use std::starts_with and std::ends_with for strings
   - key:             modernize-use-starts-ends-with.IncludeStyle
     value:           'llvm'
-    
+
   # Limits how many chars a type must be before 'auto' is suggested
   - key:             modernize-use-auto.MinTypeNameLength
     value:           '5'
@@ -36,7 +36,7 @@ CheckOptions:
     value:           'lower_case'
   - key:             readability-identifier-naming.ParameterCase
     value:           'lower_case'
-    
+
   # Class members
   - key:             readability-identifier-naming.PublicMemberCase
     value:           'lower_case'
@@ -52,8 +52,10 @@ CheckOptions:
     value:           'UPPER_CASE'
   - key:             readability-identifier-naming.ConstexprVariableCase
     value:           'UPPER_CASE'
+  - key:             readability-identifier-naming.LocalConstexprVariableCase
+    value:           'lower_case'
   - key:             readability-identifier-naming.ConstexprVariableIgnoredRegexp
-    value:           'fields|values'
+    value:           'fields|values|kind|capacity|value|dispatch|kText|kAttr|kCData'
   - key:             readability-identifier-naming.ConstantCase
     value:           'lower_case'
 

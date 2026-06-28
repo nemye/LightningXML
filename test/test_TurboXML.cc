@@ -2407,8 +2407,8 @@ TEST_F(TurboBasicTests, DateTimeRoundTripAndChrono) {
   EXPECT_EQ(e.at.nanosecond, 500000000u);
   EXPECT_EQ(e.at.tz_offset_min, 120);
   // chrono accessors
-  EXPECT_EQ(e.day.to_sys_days(), std::chrono::sys_days{std::chrono::year{2026} / 6 / 18});
-  EXPECT_EQ(e.stamp.to_sys_time(),  // UTC instant
+  EXPECT_EQ(e.day.toSysDays(), std::chrono::sys_days{std::chrono::year{2026} / 6 / 18});
+  EXPECT_EQ(e.stamp.toSysTime(),  // UTC instant
             std::chrono::sys_days{std::chrono::year{2026} / 6 / 18} + std::chrono::hours{9} +
                 std::chrono::minutes{30});
   EXPECT_EQ(xml::serialize<false>("Event", e), src);

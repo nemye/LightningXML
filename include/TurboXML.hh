@@ -141,8 +141,8 @@ struct FieldBase {
   static constexpr FieldKind kind = K;
   std::string_view xml_name;
   Member Class::*member;
-  FieldHash hash;
-  bool required;  ///< If true, deserialize() fails when the field is absent.
+  FieldHash hash{};
+  bool required{};  ///< If true, deserialize() fails when the field is absent.
 };
 
 /// @brief Descriptor for a scalar child element field.
@@ -242,27 +242,27 @@ concept XmlObject = requires { XmlMetadata<T>::fields; };
 
 namespace detail {
 template<typename T>
-struct is_unique_ptr : std::false_type {};
+struct IsUniquePtr : std::false_type {};
 template<typename U, typename D>
-struct is_unique_ptr<std::unique_ptr<U, D>> : std::true_type {};
+struct IsUniquePtr<std::unique_ptr<U, D>> : std::true_type {};
 
 template<typename T>
-struct is_optional : std::false_type {};
+struct IsOptional : std::false_type {};
 template<typename U>
-struct is_optional<std::optional<U>> : std::true_type {};
+struct IsOptional<std::optional<U>> : std::true_type {};
 }  // namespace detail
 
 /// @brief Satisfied when T is a std::unique_ptr to an XmlObject. Such members
 /// hold an optional (possibly recursive) child element: null when the element
 /// is absent, heap-allocated and populated when present.
 template<typename T>
-concept XmlUniquePtr = detail::is_unique_ptr<T>::value && XmlObject<typename T::element_type>;
+concept XmlUniquePtr = detail::IsUniquePtr<T>::value && XmlObject<typename T::element_type>;
 
 /// @brief Satisfied when T is a std::optional. Such members hold an optional
 /// leaf value or child element: empty when absent, engaged (in place) when
 /// present. An optional field can never be marked required.
 template<typename T>
-concept XmlOptional = detail::is_optional<T>::value;
+concept XmlOptional = detail::IsOptional<T>::value;
 
 /// @brief Satisfied when T is std::string or std::string_view.
 template<typename T>
@@ -340,11 +340,11 @@ struct Date {
   bool has_tz{};        ///< True if an explicit timezone was present.
   int tz_offset_min{};  ///< Minutes east of UTC (0 for 'Z').
 
-  [[nodiscard]] constexpr auto to_year_month_day() const -> std::chrono::year_month_day {
+  [[nodiscard]] constexpr auto toYearMonthDay() const -> std::chrono::year_month_day {
     return std::chrono::year{year} / std::chrono::month{month} / std::chrono::day{day};
   }
-  [[nodiscard]] constexpr auto to_sys_days() const -> std::chrono::sys_days {
-    return std::chrono::sys_days{to_year_month_day()};
+  [[nodiscard]] constexpr auto toSysDays() const -> std::chrono::sys_days {
+    return std::chrono::sys_days{toYearMonthDay()};
   }
   auto operator==(const Date&) const -> bool = default;
 };
@@ -360,7 +360,7 @@ struct Time {
   int tz_offset_min{};
 
   /// @brief Time elapsed since midnight (ignores any timezone).
-  [[nodiscard]] constexpr auto since_midnight() const -> std::chrono::nanoseconds {
+  [[nodiscard]] constexpr auto sinceMidnight() const -> std::chrono::nanoseconds {
     using namespace std::chrono;
     return hours{hour} + minutes{minute} + seconds{second} + nanoseconds{nanosecond};
   }
@@ -375,9 +375,9 @@ struct DateTime {
 
   /// @brief The instant as a UTC `sys_time` (applies the timezone offset if one
   /// was present; otherwise treats the value as UTC).
-  [[nodiscard]] auto to_sys_time() const -> std::chrono::sys_time<std::chrono::nanoseconds> {
+  [[nodiscard]] auto toSysTime() const -> std::chrono::sys_time<std::chrono::nanoseconds> {
     using namespace std::chrono;
-    sys_time<nanoseconds> t = date.to_sys_days() + time.since_midnight();
+    sys_time<nanoseconds> t = date.toSysDays() + time.sinceMidnight();
     if (time.has_tz) {
       t -= minutes{time.tz_offset_min};
     }
@@ -516,7 +516,7 @@ constexpr auto dtTime(std::string_view s, size_t& i, Time& t) -> bool {
     }
     nano = static_cast<std::uint32_t>(frac);
   }
-  if (hh > 24 || mm > 59 || ss > 59 || (hh == 24 && (mm || ss || nano))) {
+  if (hh > 24 || mm > 59 || ss > 59 || (hh == 24 && (mm != 0u || ss != 0u || nano != 0u))) {
     return false;
   }
   t.hour = hh;
@@ -587,7 +587,7 @@ inline auto dtFmtTz(std::string& o, bool has_tz, int off) -> void {
     return;
   }
   o.push_back(off < 0 ? '-' : '+');
-  const unsigned a = static_cast<unsigned>(off < 0 ? -off : off);
+  const auto a = static_cast<unsigned>(off < 0 ? -off : off);
   dtPad(o, a / 60, 2);
   o.push_back(':');
   dtPad(o, a % 60, 2);
@@ -755,22 +755,22 @@ concept XmlListContainer = XmlDynContainer<C> || XmlFixedContainer<C>;
 // ---- Variant fields (xs:choice -> std::variant) ----
 namespace detail {
 template<typename T>
-struct is_variant : std::false_type {};
+struct IsVariant : std::false_type {};
 template<typename... Ts>
-struct is_variant<std::variant<Ts...>> : std::true_type {};
+struct IsVariant<std::variant<Ts...>> : std::true_type {};
 
 // The std::variant underlying a variant field member: the member itself when it
 // is a variant, else the element type of a dynamic container of variant.
-template<typename M, bool = is_variant<M>::value>
-struct variant_member {
+template<typename M, bool = IsVariant<M>::value>
+struct VariantMember {
   using type = M;
 };
 template<typename M>
-struct variant_member<M, false> {
+struct VariantMember<M, false> {
   using type = typename XmlContainerTraits<M>::value_type;
 };
 template<typename M>
-using variant_member_t = typename variant_member<M>::type;
+using variant_member_t = typename VariantMember<M>::type;
 
 // Index of alternative T within std::variant V (T must appear exactly once).
 template<typename V, typename T>
@@ -818,7 +818,7 @@ constexpr auto placeVariantAlt(VariantField<C, Member, N>& f, VariantAlt<T> a) -
 }
 
 template<typename C, typename Member, typename... Ts>
-constexpr auto make_variantField(Member C::*m, bool required, VariantAlt<Ts>... alts) {
+constexpr auto makeVariantField(Member C::*m, bool required, VariantAlt<Ts>... alts) {
   using V = variant_member_t<Member>;
   constexpr size_t N = std::variant_size_v<V>;
   static_assert(sizeof...(Ts) == N,
@@ -841,14 +841,14 @@ constexpr auto make_variantField(Member C::*m, bool required, VariantAlt<Ts>... 
 /// @endcode
 template<typename C, typename Member, typename... Ts>
 constexpr auto variantField(Member C::*m, VariantAlt<Ts>... alts) {
-  return detail::make_variantField(m, false, alts...);
+  return detail::makeVariantField(m, false, alts...);
 }
 
 /// @brief Like variantField, but required: deserialize() fails with
 /// MissingRequiredField if no alternative is matched (xs:choice minOccurs>=1).
 template<typename C, typename Member, typename... Ts>
 constexpr auto requiredVariantField(Member C::*m, VariantAlt<Ts>... alts) {
-  return detail::make_variantField(m, true, alts...);
+  return detail::makeVariantField(m, true, alts...);
 }
 
 // Compile-time field introspection
@@ -930,15 +930,10 @@ struct FieldMask {
 
   constexpr auto set(size_t i) noexcept -> void { words[i / 64] |= uint64_t{1} << (i % 64); }
   [[nodiscard]] constexpr bool any() const noexcept {
-    for (uint64_t w : words) {
-      if (w != 0) {
-        return true;
-      }
-    }
-    return false;
+    return std::ranges::any_of(words, [](uint64_t w) { return w != 0; });
   }
   /// @brief True when every bit set in `required` is also set in *this.
-  [[nodiscard]] constexpr bool contains_all(const FieldMask& required) const noexcept {
+  [[nodiscard]] constexpr bool containsAll(const FieldMask& required) const noexcept {
     for (size_t i = 0; i < WORDS; ++i) {
       if ((words[i] & required.words[i]) != required.words[i]) {
         return false;
@@ -975,7 +970,7 @@ constexpr bool isElementKind(FieldKind k) noexcept {
 
 /// @brief True if any field of T is an attribute field.
 template<typename T>
-constexpr bool has_attrFields() noexcept {
+constexpr bool hasAttrFields() noexcept {
   constexpr auto kinds = makeFieldKinds<T>();
   return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Attr; });
 }
@@ -989,21 +984,21 @@ constexpr bool hasElementFields() noexcept {
 
 /// @brief True if T declares a value field (binds the element's own text).
 template<typename T>
-constexpr bool has_valueField() noexcept {
+constexpr bool hasValueField() noexcept {
   constexpr auto kinds = makeFieldKinds<T>();
   return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Value; });
 }
 
 /// @brief True if T declares a variant (xs:choice) field.
 template<typename T>
-constexpr bool has_variantFields() noexcept {
+constexpr bool hasVariantFields() noexcept {
   constexpr auto kinds = makeFieldKinds<T>();
   return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Variant; });
 }
 
 /// @brief Index of T's first value field (only meaningful when one exists).
 template<typename T>
-constexpr auto valueField_index() noexcept -> size_t {
+constexpr auto valueFieldIndex() noexcept -> size_t {
   constexpr auto kinds = makeFieldKinds<T>();
   for (size_t i = 0; i < kinds.size(); ++i) {
     if (kinds[i] == FieldKind::Value) {
@@ -1134,7 +1129,7 @@ constexpr bool optionalsNotRequired() noexcept {
     ([&] {
       constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
       using M = std::remove_cvref_t<decltype(std::declval<T&>().*(f.member))>;
-      if constexpr (is_optional<M>::value) {
+      if constexpr (IsOptional<M>::value) {
         if (f.required) {
           ok = false;
         }
@@ -1380,13 +1375,13 @@ class BasicParser {
     end_ = src_.data() + src_.size();
     has_peek_ = false;
     attributes_.clear();
-    errorCode_ = ErrorCode::None;
+    error_code_ = ErrorCode::None;
     last_self_closing_ = false;
     skipBom();
   }
 
   /// @brief Reason the most recent parse failed, or None if it succeeded.
-  [[nodiscard]] auto errorCode() const noexcept -> ErrorCode { return errorCode_; }
+  [[nodiscard]] auto errorCode() const noexcept -> ErrorCode { return error_code_; }
 
  private:
   static constexpr auto SPACE_TABLE = [] {
@@ -1498,7 +1493,8 @@ class BasicParser {
           break;
         case '"':
         case '\'':
-          while (cur_ < end_ && *cur_++ != c) {
+          while (cur_ < end_) {
+            if (*cur_++ == c) { break; }
           }
           break;
         case '<':
@@ -1561,7 +1557,7 @@ class BasicParser {
     return true;
   }
 
-  [[nodiscard]] auto starts_with(std::string_view s) const noexcept -> bool {
+  [[nodiscard]] auto startsWith(std::string_view s) const noexcept -> bool {
     return std::string_view{cur_, static_cast<size_t>(end_ - cur_)}.starts_with(s);
   }
 
@@ -1569,7 +1565,7 @@ class BasicParser {
   // flags the parser stopped. Returns false so callers can `return fail(code)`.
   auto fail(ErrorCode code) noexcept -> bool {
     if (!error()) [[likely]] {
-      errorCode_ = code;
+      error_code_ = code;
     }
     return false;
   }
@@ -1757,8 +1753,8 @@ class BasicParser {
   }
 
   /// @brief Whether the parser has encountered an error.
-  /// @return true if `errorCode_` is not `ErrorCode::None`.
-  auto error() const noexcept -> bool { return errorCode_ != ErrorCode::None; }
+  /// @return true if `error_code_` is not `ErrorCode::None`.
+  auto error() const noexcept -> bool { return error_code_ != ErrorCode::None; }
 
   // Record self-closing state after consuming an ElementOpen.
   auto updateSelfClosing() noexcept -> void {
@@ -1822,7 +1818,7 @@ class BasicParser {
       if (cur_ == end_) {
         break;
       }
-      if (starts_with(delim)) {
+      if (startsWith(delim)) {
         token.data = {start, static_cast<size_t>(cur_ - start)};
         cur_ += delim.size();
         return true;
@@ -1840,7 +1836,7 @@ class BasicParser {
       if (cur_ == end_) {
         break;
       }
-      if (starts_with(delim)) {
+      if (startsWith(delim)) {
         cur_ += delim.size();
         return;
       }
@@ -1852,7 +1848,7 @@ class BasicParser {
   // Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'
   // The WFC forbids "--" in content, so the first "--" must begin the "-->"
   // terminator; any other "--" is a fatal error.
-  auto parse_comment(Token& token) -> bool {
+  auto parseComment(Token& token) -> bool {
     token.type = TokenType::Comment;
     const char* start = cur_;
     while (cur_ < end_) {
@@ -1878,12 +1874,12 @@ class BasicParser {
     return makeError(token, ErrorCode::UnterminatedComment);
   }
 
-  auto parse_cdata(Token& token) -> bool {
+  auto parseCdata(Token& token) -> bool {
     token.type = TokenType::CData;
     return scanToDelimiter(token, "]]>", ErrorCode::UnterminatedCData);
   }
 
-  auto parse_pi(Token& token) -> bool {
+  auto parsePi(Token& token) -> bool {
     parseName(token.prefix, token.name, token.name_hash);
     if (token.name.empty()) {
       return makeError(token, ErrorCode::ExpectedPiTarget);
@@ -1915,7 +1911,7 @@ class BasicParser {
   // Returns false to fall through to normal tokenisation path.
   [[nodiscard]] auto tryBeginElement(std::string_view name) noexcept -> bool {
     const size_t name_len = name.size();
-    const size_t avail = static_cast<size_t>(end_ - cur_);
+    const auto avail = static_cast<size_t>(end_ - cur_);
     if (avail < name_len + 2 || cur_[0] != '<') {
       return false;
     }
@@ -2023,7 +2019,7 @@ class BasicParser {
     if constexpr (detail::makeRequiredMask<T>().any()) {
       parsed.set(FieldI);
     }
-    if constexpr (detail::is_variant<Member>::value) {
+    if constexpr (detail::IsVariant<Member>::value) {
       auto& var = obj.*(f.member);
       var.template emplace<AltJ>();
       return p.readElement(f.names[AltJ], std::get<AltJ>(var), depth + 1);
@@ -2066,7 +2062,7 @@ class BasicParser {
   std::string_view src_;
   const char* cur_;
   const char* end_;
-  ErrorCode errorCode_{ErrorCode::None};
+  ErrorCode error_code_{ErrorCode::None};
   bool last_self_closing_{};
   bool has_peek_{false};
 };
@@ -2172,20 +2168,20 @@ inline auto BasicParser<Opts>::parseMarkup(Token& token) -> bool {
   }
   if (c == '!') {
     ++cur_;
-    if (starts_with("--")) {
+    if (startsWith("--")) {
       cur_ += 2;
-      return parse_comment(token);
+      return parseComment(token);
     }
-    if (starts_with("[CDATA[")) {
+    if (startsWith("[CDATA[")) {
       cur_ += 7;
-      return parse_cdata(token);
+      return parseCdata(token);
     }
     skipBangDecl();
     return nextFromSource(token);
   }
   if (c == '?') {
     ++cur_;
-    return parse_pi(token);
+    return parsePi(token);
   }
   if (isNameStart(c)) {
     return parseElementOpen(token);
@@ -2268,7 +2264,7 @@ inline auto BasicParser<Opts>::parseElementOpen(Token& token) -> bool {
 template<ParserOptions Opts>
 inline auto BasicParser<Opts>::parseElementClose(Token& token) -> bool {
   token.type = TokenType::ElementClose;
-  FieldHash name_hash;
+  FieldHash name_hash{};
   parseName(token.prefix, token.name, name_hash);
   if (token.name.empty()) {
     return makeError(token, ErrorCode::ExpectedNameInCloseTag);
@@ -2309,7 +2305,7 @@ inline auto BasicParser<Opts>::parseNumeric(std::string_view text, T& out) noexc
 template<ParserOptions Opts>
 template<typename T>
 inline auto BasicParser<Opts>::attr(const FieldHash hash, T& out, size_t& pos) -> bool {
-  size_t idx;
+  size_t idx{};
   if (pos < attributes_.size() && attributes_[pos].name_hash == hash) {
     idx = pos++;
   } else {
@@ -2361,7 +2357,7 @@ inline auto BasicParser<Opts>::endElement(std::string_view expected_name) -> boo
     skipWhitespace();
     const auto name_len = expected_name.size();
     const size_t required = name_len + 3;  // "</" + name + ">"
-    const size_t remaining = static_cast<size_t>(end_ - cur_);
+    const auto remaining = static_cast<size_t>(end_ - cur_);
     if (remaining >= required) {
       const char* p = cur_;
       if (p[0] == '<' && p[1] == '/' && std::memcmp(p + 2, expected_name.data(), name_len) == 0) {
@@ -2424,10 +2420,10 @@ inline auto BasicParser<Opts>::skipElement() -> void {
       --depth;
     } else if (c == '!') {
       ++cur_;
-      if (starts_with("--")) {
+      if (startsWith("--")) {
         cur_ += 2;
         skipPast("-->");
-      } else if (starts_with("[CDATA[")) {
+      } else if (startsWith("[CDATA[")) {
         cur_ += 7;
         skipPast("]]>");
       } else {
@@ -2504,7 +2500,7 @@ inline auto BasicParser<Opts>::readElement(std::string_view expected_name, T& ou
     if (found != end_ && found + 3 + expected_name.size() <= end_ && found[1] == '/' &&
         std::memcmp(found + 2, expected_name.data(), expected_name.size()) == 0 &&
         found[2 + expected_name.size()] == '>') {
-      std::string_view text{cur_, static_cast<size_t>(found - cur_)};
+      const std::string_view text{cur_, static_cast<size_t>(found - cur_)};
       if constexpr (STRICT) {
         if (containsCdataEnd(cur_, found)) {
           return fail(ErrorCode::CDataEndInContent);
@@ -2555,7 +2551,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   [[maybe_unused]] detail::RequiredMaskT<T> parsed{};
   const auto check_required = [&]() -> bool {
     if constexpr (HAS_REQUIRED) {
-      if (!parsed.contains_all(REQUIRED_MASK)) {
+      if (!parsed.containsAll(REQUIRED_MASK)) {
         return fail(ErrorCode::MissingRequiredField);
       }
     }
@@ -2563,7 +2559,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   };
 
   // Apply attribute fields only when the type actually has some.
-  constexpr bool HAS_ATTRS = detail::has_attrFields<T>();
+  constexpr bool HAS_ATTRS = detail::hasAttrFields<T>();
   if constexpr (HAS_ATTRS) {
     dispatchAttrs<T>(*this, object, parsed, IDX_SEQ);
     if constexpr (NORMALIZE) {
@@ -2579,11 +2575,11 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   // simpleContent: the element's own text feeds a value field (its attributes
   // were handled above). Such a type has no child element fields, so capturing
   // the text and checking required fields completes it.
-  if constexpr (detail::has_valueField<T>()) {
+  if constexpr (detail::hasValueField<T>()) {
     static_assert(!detail::hasElementFields<T>(),
                   "a valueField cannot coexist with child element/container "
                   "fields (XSD simpleContent has no element children)");
-    constexpr size_t VALUE_IDX = detail::valueField_index<T>();
+    constexpr size_t VALUE_IDX = detail::valueFieldIndex<T>();
     constexpr auto& vf = std::get<VALUE_IDX>(XmlMetadata<T>::fields);
     using M = std::decay_t<decltype(object.*(vf.member))>;
     // A value field counts as present only when it carries non-empty text
@@ -2617,7 +2613,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   // XML hits the memcmp fast path below on every element; out-of-order
   // documents miss once, re-sync at the dispatch site, and stay correct.
   constexpr bool HAS_ELEMS = detail::hasElementFields<T>();
-  constexpr bool HAS_VARIANTS = detail::has_variantFields<T>();
+  constexpr bool HAS_VARIANTS = detail::hasVariantFields<T>();
   static constexpr auto dispatch = buildElemDispatch<T>(IDX_SEQ);
   static constexpr auto NAMES = detail::makeFieldNames<T>();
   static constexpr auto NEXT_ELEM = detail::makeNextElemTable<T>();
@@ -2736,7 +2732,7 @@ class Serializer {
   // text content escapes '>'.
   template<bool kAttr>
   static auto escape(std::string& out, std::string_view s) -> void {
-    for (char c : s) {
+    for (const char c : s) {
       if (c == '&') {
         out += "&amp;";
       } else if (c == '<') {
@@ -2895,7 +2891,7 @@ class Serializer {
       doNewline();
     } else if constexpr (f.kind == FieldKind::Variant) {
       using M = std::decay_t<decltype(obj.*(f.member))>;
-      if constexpr (detail::is_variant<M>::value) {
+      if constexpr (detail::IsVariant<M>::value) {
         writeVariantActive(f, obj.*(f.member), depth);
       } else {
         for (const auto& item : obj.*(f.member)) {
@@ -2934,9 +2930,9 @@ class Serializer {
     out_ += tag;
     writeAttrs<T>(obj, Seq{});
 
-    if constexpr (detail::has_valueField<T>()) {
+    if constexpr (detail::hasValueField<T>()) {
       // simpleContent: <tag attrs>text</tag> on a single line.
-      constexpr size_t VI = detail::valueField_index<T>();
+      constexpr size_t VI = detail::valueFieldIndex<T>();
       constexpr auto& vf = std::get<VI>(XmlMetadata<T>::fields);
       out_ += '>';
       writeScalar<false>(obj.*(vf.member));
@@ -2944,7 +2940,7 @@ class Serializer {
       out_ += tag;
       out_ += '>';
       doNewline();
-    } else if constexpr (detail::hasElementFields<T>() || detail::has_variantFields<T>()) {
+    } else if constexpr (detail::hasElementFields<T>() || detail::hasVariantFields<T>()) {
       out_ += '>';
       doNewline();
       writeChildren<T>(obj, depth + 1, Seq{});

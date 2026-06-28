@@ -261,8 +261,8 @@ struct Event {
   xml::DateTime stamp;   // xml::field("stamp", &Event::stamp)
 };
 // ... after deserialize:
-std::chrono::sys_days d = event.day.to_sys_days();
-std::chrono::sys_time<std::chrono::nanoseconds> t = event.stamp.to_sys_time(); // UTC
+std::chrono::sys_days d = event.day.toSysDays();
+std::chrono::sys_time<std::chrono::nanoseconds> t = event.stamp.toSysTime(); // UTC
 ```
 
 Any other leaf type with a known text form can be supported by specializing
