@@ -325,11 +325,10 @@ concept XmlScalar = XmlPrimitive<T> || XmlEnum<T> || XmlCustomValue<T>;
 /// timezone. Construct from XML via a field typed `xml::Date`; obtain chrono
 /// values via the accessors.
 struct Date {
-  int year{};           ///< Proleptic Gregorian year (may be negative).
-  uint8_t month{};      ///< 1-12.
-  uint8_t day{};        ///< 1-31.
-  bool has_tz{};        ///< True if an explicit timezone was present.
-  int tz_offset_min{};  ///< Minutes east of UTC (0 for 'Z').
+  int year{};       ///< Proleptic Gregorian year (may be negative).
+  uint8_t month{};  ///< 1-12.
+  uint8_t day{};    ///< 1-31.
+  std::optional<std::chrono::minutes> tz{};  ///< Offset east of UTC, if explicit (0 for 'Z').
 
   [[nodiscard]] constexpr auto toYearMonthDay() const -> std::chrono::year_month_day {
     return std::chrono::year{year} / std::chrono::month{month} / std::chrono::day{day};
@@ -347,8 +346,7 @@ struct Time {
   uint8_t minute{};       ///< 0-59.
   uint8_t second{};       ///< 0-59.
   uint32_t nanosecond{};  ///< Fractional second, in nanoseconds.
-  bool has_tz{};
-  int tz_offset_min{};
+  std::optional<std::chrono::minutes> tz{};  ///< Offset east of UTC, if explicit (0 for 'Z').
 
   /// @brief Time elapsed since midnight (ignores any timezone).
   [[nodiscard]] constexpr auto sinceMidnight() const -> std::chrono::nanoseconds {
@@ -369,8 +367,8 @@ struct DateTime {
   [[nodiscard]] auto toSysTime() const -> std::chrono::sys_time<std::chrono::nanoseconds> {
     using namespace std::chrono;
     sys_time<nanoseconds> t = date.toSysDays() + time.sinceMidnight();
-    if (time.has_tz) {
-      t -= minutes{time.tz_offset_min};
+    if (time.tz) {
+      t -= *time.tz;
     }
     return t;
   }
@@ -463,90 +461,122 @@ struct VariantField {
 
 namespace detail {
 
-// ---- Lexical scanners for the date/time types (allocation-free) ----
+// ---- Lexical scanning for the XSD date/time types (allocation-free) ----
 
-// Reads exactly `n` decimal digits into `out`, advancing `i`. False if fewer.
-constexpr auto dtDigits(std::string_view s, size_t& i, size_t n, uint32_t& out) -> bool {
-  if (i + n > s.size()) {
-    return false;
+/// @brief A forward cursor over a date/time lexical form. Each scan method
+/// advances past what it consumed on success and leaves the cursor unchanged on
+/// failure, so grammar rules compose as a short-circuiting boolean chain.
+class DtCursor {
+public:
+  constexpr explicit DtCursor(std::string_view s) : s_{s} {}
+
+  [[nodiscard]] constexpr auto atEnd() const -> bool { return pos_ == s_.size(); }
+
+  /// @brief Consumes the literal character c.
+  [[nodiscard]] constexpr auto eat(char c) -> bool {
+    const bool ok = pos_ < s_.size() && s_[pos_] == c;
+    pos_ += ok ? 1 : 0;
+    return ok;
   }
-  uint32_t v = 0;
-  for (size_t k = 0; k < n; ++k) {
-    const char c = s[i + k];
-    if (c < '0' || c > '9') {
+
+  /// @brief Reads exactly n decimal digits as an unsigned integer.
+  [[nodiscard]] constexpr auto fixed(size_t n, uint32_t& out) -> bool {
+    if (pos_ + n > s_.size()) {
       return false;
     }
-    v = v * 10 + static_cast<uint32_t>(c - '0');
-  }
-  i += n;
-  out = v;
-  return true;
-}
-
-// Year: optional '-' then at least four digits.
-constexpr auto dtYear(std::string_view s, size_t& i, int& year) -> bool {
-  int sign = 1;
-  if (i < s.size() && s[i] == '-') {
-    sign = -1;
-    ++i;
-  }
-  const size_t start = i;
-  int64_t v = 0;
-  while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
-    v = v * 10 + (s[i] - '0');
-    ++i;
-  }
-  if (i - start < 4) {
-    return false;
-  }
-  year = sign * static_cast<int>(v);
-  return true;
-}
-
-// Optional timezone suffix: 'Z' or (+|-)hh:mm. Absent (i at end) is allowed.
-constexpr auto dtTz(std::string_view s, size_t& i, bool& has_tz, int& off) -> bool {
-  has_tz = false;
-  off = 0;
-  if (i >= s.size()) {
+    uint32_t v = 0;
+    for (size_t k = 0; k < n; ++k) {
+      const char c = s_[pos_ + k];
+      if (!isDigit(c)) {
+        return false;
+      }
+      v = v * 10 + static_cast<uint32_t>(c - '0');
+    }
+    pos_ += n;
+    out = v;
     return true;
   }
-  const char c = s[i];
-  if (c == 'Z') {
-    has_tz = true;
-    ++i;
-    return true;
-  }
-  if (c == '+' || c == '-') {
-    const int sign = (c == '-') ? -1 : 1;
-    ++i;
-    unsigned hh = 0;
-    unsigned mm = 0;
-    if (!dtDigits(s, i, 2, hh) || i >= s.size() || s[i] != ':') {
+
+  /// @brief Reads a year: an optional leading '-' then four or more digits.
+  [[nodiscard]] constexpr auto year(int& out) -> bool {
+    const int sign = eat('-') ? -1 : 1;
+    const size_t start = pos_;
+    int64_t v = 0;
+    while (pos_ < s_.size() && isDigit(s_[pos_])) {
+      v = v * 10 + (s_[pos_++] - '0');
+    }
+    if (pos_ - start < 4) {
       return false;
     }
-    ++i;
-    if (!dtDigits(s, i, 2, mm) || hh > 14 || mm > 59) {
-      return false;
-    }
-    has_tz = true;
-    off = sign * static_cast<int>(hh * 60 + mm);
+    out = sign * static_cast<int>(v);
     return true;
   }
-  return false;
-}
 
-constexpr auto dtDate(std::string_view s, size_t& i, Date& d) -> bool {
+  /// @brief Reads an optional fractional second ('.' then digits) as
+  /// nanoseconds, truncating precision beyond nine digits.
+  [[nodiscard]] constexpr auto fraction(uint32_t& nanos) -> bool {
+    nanos = 0;
+    if (!eat('.')) {
+      return true;
+    }
+    const size_t start = pos_;
+    uint64_t v = 0;
+    int digits = 0;
+    for (; pos_ < s_.size() && isDigit(s_[pos_]); ++pos_) {
+      if (digits < 9) {
+        v = v * 10 + static_cast<uint32_t>(s_[pos_] - '0');
+        ++digits;
+      }
+    }
+    if (pos_ == start) {
+      return false;  // '.' with no digits
+    }
+    for (; digits < 9; ++digits) {
+      v *= 10;
+    }
+    nanos = static_cast<uint32_t>(v);
+    return true;
+  }
+
+  /// @brief Reads an optional timezone ('Z' or (+|-)hh:mm); absence is allowed
+  /// only at end of input.
+  [[nodiscard]] constexpr auto timezone(std::optional<std::chrono::minutes>& tz) -> bool {
+    tz.reset();
+    if (atEnd()) {
+      return true;
+    }
+    if (eat('Z')) {
+      tz = std::chrono::minutes{0};
+      return true;
+    }
+    const int sign = eat('+') ? 1 : (eat('-') ? -1 : 0);
+    if (sign == 0) {
+      return false;
+    }
+    uint32_t hh = 0;
+    uint32_t mm = 0;
+    if (!fixed(2, hh) || !eat(':') || !fixed(2, mm) || hh > 14 || mm > 59) {
+      return false;
+    }
+    tz = std::chrono::minutes{sign * static_cast<int>(hh * 60 + mm)};
+    return true;
+  }
+
+private:
+  static constexpr auto isDigit(char c) -> bool { return c >= '0' && c <= '9'; }
+
+  std::string_view s_;
+  size_t pos_ = 0;
+};
+
+// Scans a 'CCYY-MM-DD' date body (no timezone) into d.
+constexpr auto scanDate(DtCursor& c, Date& d) -> bool {
   uint32_t mo = 0;
   uint32_t da = 0;
-  if (!dtYear(s, i, d.year) || i >= s.size() || s[i] != '-') {
+  if (!c.year(d.year) || !c.eat('-') || !c.fixed(2, mo) || !c.eat('-') || !c.fixed(2, da)) {
     return false;
   }
-  ++i;
-  if (!dtDigits(s, i, 2, mo) || i >= s.size() || s[i] != '-') {
-    return false;
-  }
-  ++i;
-  if (!dtDigits(s, i, 2, da) || mo < 1 || mo > 12 || da < 1 || da > 31) {
+  if (mo < 1 || mo > 12 || da < 1 || da > 31) {
     return false;
   }
   d.month = static_cast<uint8_t>(mo);
@@ -554,57 +584,30 @@ constexpr auto dtDate(std::string_view s, size_t& i, Date& d) -> bool {
   return true;
 }
 
-constexpr auto dtTime(std::string_view s, size_t& i, Time& t) -> bool {
+// Scans an 'hh:mm:ss(.fraction)?' time body (no timezone) into t.
+constexpr auto scanTime(DtCursor& c, Time& t) -> bool {
   uint32_t hh = 0;
   uint32_t mm = 0;
   uint32_t ss = 0;
-  if (!dtDigits(s, i, 2, hh) || i >= s.size() || s[i] != ':') {
+  uint32_t nanos = 0;
+  if (!c.fixed(2, hh) || !c.eat(':') || !c.fixed(2, mm) || !c.eat(':') || !c.fixed(2, ss) ||
+      !c.fraction(nanos)) {
     return false;
   }
-  ++i;
-  if (!dtDigits(s, i, 2, mm) || i >= s.size() || s[i] != ':') {
-    return false;
-  }
-  ++i;
-  if (!dtDigits(s, i, 2, ss)) {
-    return false;
-  }
-  uint32_t nano = 0;
-  if (i < s.size() && s[i] == '.') {
-    ++i;
-    const size_t frac_start = i;
-    uint64_t frac = 0;
-    int digits = 0;
-    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
-      if (digits < 9) {
-        frac = frac * 10 + static_cast<uint32_t>(s[i] - '0');
-        ++digits;
-      }
-      ++i;
-    }
-    if (i == frac_start) {
-      return false;  // '.' with no digits
-    }
-    while (digits < 9) {
-      frac *= 10;
-      ++digits;
-    }
-    nano = static_cast<uint32_t>(frac);
-  }
-  if (hh > 24 || mm > 59 || ss > 59 || (hh == 24 && (mm != 0u || ss != 0u || nano != 0u))) {
+  if (hh > 24 || mm > 59 || ss > 59 || (hh == 24 && (mm != 0 || ss != 0 || nanos != 0))) {
     return false;
   }
   t.hour = static_cast<uint8_t>(hh);
   t.minute = static_cast<uint8_t>(mm);
   t.second = static_cast<uint8_t>(ss);
-  t.nanosecond = nano;
+  t.nanosecond = nanos;
   return true;
 }
 
 constexpr auto parseDate(std::string_view s, Date& d) -> bool {
-  size_t i = 0;
+  DtCursor c{s};
   Date out{};
-  if (!dtDate(s, i, out) || !dtTz(s, i, out.has_tz, out.tz_offset_min) || i != s.size()) {
+  if (!scanDate(c, out) || !c.timezone(out.tz) || !c.atEnd()) {
     return false;
   }
   d = out;
@@ -612,9 +615,9 @@ constexpr auto parseDate(std::string_view s, Date& d) -> bool {
 }
 
 constexpr auto parseTime(std::string_view s, Time& t) -> bool {
-  size_t i = 0;
+  DtCursor c{s};
   Time out{};
-  if (!dtTime(s, i, out) || !dtTz(s, i, out.has_tz, out.tz_offset_min) || i != s.size()) {
+  if (!scanTime(c, out) || !c.timezone(out.tz) || !c.atEnd()) {
     return false;
   }
   t = out;
@@ -622,14 +625,10 @@ constexpr auto parseTime(std::string_view s, Time& t) -> bool {
 }
 
 constexpr auto parseDatetime(std::string_view s, DateTime& dt) -> bool {
-  size_t i = 0;
+  DtCursor c{s};
   DateTime out{};
-  if (!dtDate(s, i, out.date) || i >= s.size() || s[i] != 'T') {
-    return false;
-  }
-  ++i;
-  if (!dtTime(s, i, out.time) || !dtTz(s, i, out.time.has_tz, out.time.tz_offset_min) ||
-      i != s.size()) {
+  if (!scanDate(c, out.date) || !c.eat('T') || !scanTime(c, out.time) || !c.timezone(out.time.tz) ||
+      !c.atEnd()) {
     return false;
   }
   dt = out;
@@ -638,10 +637,11 @@ constexpr auto parseDatetime(std::string_view s, DateTime& dt) -> bool {
 
 // ---- Canonical-form formatters ----
 
-inline auto dtFmtTz(std::string& o, const bool has_tz, const int off) -> void {
-  if (!has_tz) {
+inline auto dtFmtTz(std::string& o, const std::optional<std::chrono::minutes> tz) -> void {
+  if (!tz) {
     return;
   }
+  const int off = static_cast<int>(tz->count());
   if (off == 0) {
     o += 'Z';
     return;
@@ -1182,7 +1182,7 @@ struct XmlValueTraits<Date> {
   }
   static auto format(std::string& out, const Date& d) -> void {
     detail::dtFmtDate(out, d);
-    detail::dtFmtTz(out, d.has_tz, d.tz_offset_min);
+    detail::dtFmtTz(out, d.tz);
   }
 };
 
@@ -1194,7 +1194,7 @@ struct XmlValueTraits<Time> {
   }
   static auto format(std::string& out, const Time& t) -> void {
     detail::dtFmtTime(out, t);
-    detail::dtFmtTz(out, t.has_tz, t.tz_offset_min);
+    detail::dtFmtTz(out, t.tz);
   }
 };
 
@@ -1208,7 +1208,7 @@ struct XmlValueTraits<DateTime> {
     detail::dtFmtDate(out, dt.date);
     out.push_back('T');
     detail::dtFmtTime(out, dt.time);
-    detail::dtFmtTz(out, dt.time.has_tz, dt.time.tz_offset_min);
+    detail::dtFmtTz(out, dt.time.tz);
   }
 };
 

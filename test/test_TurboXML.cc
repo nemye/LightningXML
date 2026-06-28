@@ -2399,11 +2399,11 @@ TEST_F(TurboBasicTests, DateTimeRoundTripAndChrono) {
   xml::Parser p{src};
   Event e;
   ASSERT_TRUE(xml::deserialize(p, "Event", e));
-  EXPECT_EQ(e.day, (xml::Date{2026, 6, 18, false, 0}));
+  EXPECT_EQ(e.day, (xml::Date{2026, 6, 18}));
   EXPECT_EQ(e.stamp.time.hour, 9u);
-  EXPECT_TRUE(e.stamp.time.has_tz);
+  EXPECT_TRUE(e.stamp.time.tz.has_value());
   EXPECT_EQ(e.at.nanosecond, 500000000u);
-  EXPECT_EQ(e.at.tz_offset_min, 120);
+  EXPECT_EQ(e.at.tz, std::chrono::minutes{120});
   // chrono accessors
   EXPECT_EQ(e.day.toSysDays(), std::chrono::sys_days{std::chrono::year{2026} / 6 / 18});
   EXPECT_EQ(e.stamp.toSysTime(),  // UTC instant
