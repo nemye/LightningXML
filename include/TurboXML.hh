@@ -1635,27 +1635,40 @@ class BasicParser {
   auto splitInto(Container& out, std::string_view text) -> bool {
     using Traits = XmlContainerTraits<Container>;
     size_t i = 0;
-    size_t fill = 0;
-    while (i < text.size()) {
-      while (i < text.size() && isSpace(text[i])) {
-        ++i;
-      }
-      const size_t start = i;
-      while (i < text.size() && !isSpace(text[i])) {
-        ++i;
-      }
-      if (i == start) {
-        break;
-      }
-      const std::string_view tok = text.substr(start, i - start);
-      if constexpr (XmlFixedContainer<Container>) {
+    if constexpr (XmlFixedContainer<Container>) {
+      size_t fill = 0;
+      while (i < text.size()) {
+        while (i < text.size() && isSpace(text[i])) {
+          ++i;
+        }
+        const size_t start = i;
+        while (i < text.size() && !isSpace(text[i])) {
+          ++i;
+        }
+        if (i == start) {
+          break;
+        }
+        const std::string_view tok = text.substr(start, i - start);
         if (fill < Traits::capacity) {
           if (!assignToken(Traits::at(out, fill), tok)) {
             return false;
           }
           ++fill;
         }
-      } else {
+      }
+    } else {
+      while (i < text.size()) {
+        while (i < text.size() && isSpace(text[i])) {
+          ++i;
+        }
+        const size_t start = i;
+        while (i < text.size() && !isSpace(text[i])) {
+          ++i;
+        }
+        if (i == start) {
+          break;
+        }
+        const std::string_view tok = text.substr(start, i - start);
         auto& slot = Traits::emplace(out);
         if (!assignToken(slot, tok)) {
           Traits::pop(out);
@@ -2558,7 +2571,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   // it is dead-store eliminated and check_required() compiles to `return true`.
   constexpr auto REQUIRED_MASK = detail::makeRequiredMask<T>();
   constexpr bool HAS_REQUIRED = REQUIRED_MASK.any();
-  [[maybe_unused]] detail::RequiredMaskT<T> parsed{};
+  [[maybe_unused]] detail::RequiredMaskT<T> parsed{};  // NOLINT(misc-const-correctness)
   const auto check_required = [&]() -> bool {
     if constexpr (HAS_REQUIRED) {
       if (!parsed.containsAll(REQUIRED_MASK)) {
@@ -2627,7 +2640,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   static constexpr auto dispatch = buildElemDispatch<T>(IDX_SEQ);
   static constexpr auto NAMES = detail::makeFieldNames<T>();
   static constexpr auto NEXT_ELEM = detail::makeNextElemTable<T>();
-  [[maybe_unused]] size_t hint = detail::firstElemIndex<T>();
+  [[maybe_unused]] size_t hint = detail::firstElemIndex<T>();  // NOLINT(misc-const-correctness)
 
   while (true) {
     if (!has_peek_) {
@@ -2678,7 +2691,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
     if (idx >= N) {
       // No named field matched. A variant (xs:choice) alternative might; this
       // path is compiled out entirely for types with no variant field.
-      bool handled = false;
+      bool handled = false;  // NOLINT(misc-const-correctness)
       if constexpr (HAS_VARIANTS) {
         static constexpr auto VARIANT_MATCH = detail::makeVariantMatchers<T>();
         static constexpr auto variant_dispatch =

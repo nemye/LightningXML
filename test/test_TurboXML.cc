@@ -471,7 +471,7 @@ TEST_F(TurboBasicTests, ParserCanBeResetAndReused) {
 
 TEST_F(TurboBasicTests, PrimitiveFastPathTruncatedCloseTag) {
   // Truncated close tag: `</name` with no `>`.
-  std::string xml = "<person><name>Alice</name";
+  const std::string xml = "<person><name>Alice</name";
   xml::Parser parser{xml};
   Person person;
   EXPECT_FALSE(xml::deserialize(parser, "person", person));
@@ -860,7 +860,7 @@ auto generateNestedXml(const size_t depth) -> std::string {
 
 /// @brief Tests that the parser successfully evaluates exactly kMaxDepth
 TEST_F(TurboBasicTests, MaxDepthBoundarySucceeds) {
-  std::string xml_src = generateNestedXml(xml::Parser::MAX_DEPTH);
+  const std::string xml_src = generateNestedXml(xml::Parser::MAX_DEPTH);
 
   xml::Parser parser{xml_src};
   TreeNode root;
@@ -873,7 +873,7 @@ TEST_F(TurboBasicTests, MaxDepthBoundarySucceeds) {
 
 /// @brief Tests that the parser cleanly aborts when depth hits kMaxDepth + 1
 TEST_F(TurboBasicTests, MaxDepthExceededFailsCleanly) {
-  std::string xml_src = generateNestedXml(xml::Parser::MAX_DEPTH + 1);
+  const std::string xml_src = generateNestedXml(xml::Parser::MAX_DEPTH + 1);
 
   xml::Parser parser{xml_src};
   TreeNode root;
@@ -1159,7 +1159,7 @@ TEST_F(TurboBasicTests, FlatListParsing) {
 
 /// @brief Reset after a failed parse must allow a clean retry.
 TEST_F(TurboBasicTests, ResetAfterFailedParse) {
-  std::string xml = R"(<person><name>Alice</name><age>30</age></person>)";
+  const std::string xml = R"(<person><name>Alice</name><age>30</age></person>)";
   xml::Parser parser{xml};
 
   Person p1;
@@ -1265,7 +1265,7 @@ TEST_F(TurboBasicTests, StringFieldsMaterializeData) {
   OwnedPerson person;
   {
     // Source buffer scoped - will be destroyed before assertions.
-    std::string xml =
+    const std::string xml =
         "<person><name>Alice</name><age>30</age>"
         "<email>alice@example.com</email></person>";
     xml::Parser parser{xml};
@@ -1281,7 +1281,7 @@ TEST_F(TurboBasicTests, StringFieldsMaterializeData) {
 TEST_F(TurboBasicTests, StringAttrsMaterializeData) {
   OwnedUser user;
   {
-    std::string xml = R"(<OwnedUser id="42" role="admin"><Name>Bob</Name></OwnedUser>)";
+    const std::string xml = R"(<OwnedUser id="42" role="admin"><Name>Bob</Name></OwnedUser>)";
     xml::Parser parser{xml};
     ASSERT_TRUE(xml::deserialize(parser, "OwnedUser", user));
   }
@@ -1294,7 +1294,7 @@ TEST_F(TurboBasicTests, StringAttrsMaterializeData) {
 TEST_F(TurboBasicTests, VecOfStringMaterializesData) {
   OwnedList list;
   {
-    std::string xml =
+    const std::string xml =
         "<OwnedList><Tag>Alpha</Tag><Tag>Beta</Tag><Tag>Gamma</Tag></"
         "OwnedList>";
     xml::Parser parser{xml};
@@ -1309,7 +1309,7 @@ TEST_F(TurboBasicTests, VecOfStringMaterializesData) {
 /// @brief Self-closing element yields empty std::string.
 TEST_F(TurboBasicTests, SelfClosingStringFieldIsEmpty) {
   OwnedPerson person;
-  std::string xml = "<person><name/><age>25</age><email/></person>";
+  const std::string xml = "<person><name/><age>25</age><email/></person>";
   xml::Parser parser{xml};
   ASSERT_TRUE(xml::deserialize(parser, "person", person));
   EXPECT_TRUE(person.name.empty());
@@ -1627,7 +1627,7 @@ TEST_F(TurboBasicTests, SerializerArrField) {
 }
 
 TEST_F(TurboBasicTests, SerializerEmptyVec) {
-  Users users;
+  const Users users;
   const std::string xml = xml::serialize("Users", users);
 
   xml::Parser parser{xml};
@@ -2182,8 +2182,9 @@ TEST_F(TurboBasicTests, ValueFieldStringNormalized) {
 
 TEST_F(TurboBasicTests, ValueFieldRequiredEmptyFails) {
   // Self-closing and empty both lack text -> required value field is missing.
-  for (std::string_view src : {std::string_view(R"(<MeasureDoc><m unit="kg"/></MeasureDoc>)"),
-                               std::string_view(R"(<MeasureDoc><m unit="kg"></m></MeasureDoc>)")}) {
+  for (const std::string_view src :
+       {std::string_view(R"(<MeasureDoc><m unit="kg"/></MeasureDoc>)"),
+        std::string_view(R"(<MeasureDoc><m unit="kg"></m></MeasureDoc>)")}) {
     xml::Parser p{src};
     MeasureDoc d;
     EXPECT_FALSE(xml::deserialize(p, "MeasureDoc", d));

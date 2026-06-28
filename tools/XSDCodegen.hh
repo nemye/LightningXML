@@ -554,7 +554,7 @@ class Generator {
     bool is_list{};
   };
 
-  auto resolveListItem(std::string_view item_type) -> std::string {
+  auto resolveListItem(std::string_view item_type) const -> std::string {
     if (std::string b = detail::builtinType(item_type); !b.empty()) {
       return b;
     }
@@ -581,7 +581,7 @@ class Generator {
       if (el.simple_type->list) {
         return {resolveListItem(el.simple_type->list->item_type), false, true};
       }
-      if (std::string e = enumNameForInline(el); !e.empty()) {
+      if (const std::string e = enumNameForInline(el); !e.empty()) {
         return {e, false, false};
       }
       if (el.simple_type->restriction) {
@@ -601,7 +601,7 @@ class Generator {
     return detail::capitalize(el.name);
   }
 
-  auto baseBuiltin(std::string_view base) -> std::string {
+  auto baseBuiltin(std::string_view base) const -> std::string {
     if (std::string b = detail::builtinType(base); !b.empty()) {
       return b;
     }
@@ -620,7 +620,7 @@ class Generator {
     if (builtinList(type)) {
       return {"std::string", false, true};
     }
-    if (std::string b = detail::builtinType(type); !b.empty()) {
+    if (const std::string b = detail::builtinType(type); !b.empty()) {
       return {b, false, false};
     }
     const std::string key{detail::localName(type)};
@@ -989,7 +989,7 @@ class Generator {
     return out;
   }
 
-  auto typeRestriction(std::string_view type) -> const Restriction* {
+  auto typeRestriction(std::string_view type) const -> const Restriction* {
     const std::string key{detail::localName(type)};
     if (auto it = named_simple_.find(key); it != named_simple_.end()) {
       if (it->second->restriction && hasValueFacets(*it->second->restriction)) {
@@ -999,7 +999,7 @@ class Generator {
     return nullptr;
   }
 
-  auto elementRestriction(const Element& el) -> const Restriction* {
+  auto elementRestriction(const Element& el) const -> const Restriction* {
     if (el.simple_type && el.simple_type->restriction &&
         hasValueFacets(*el.simple_type->restriction)) {
       return &*el.simple_type->restriction;
@@ -1188,7 +1188,7 @@ class Generator {
         return;
       }  // cycle: forward decl covers it
       state[i] = 1;
-      for (size_t j : deps[i]) {
+      for (const size_t j : deps[i]) {
         self(self, j);
       }
       state[i] = 2;
