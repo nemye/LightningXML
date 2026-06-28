@@ -1224,7 +1224,8 @@ class Generator {
 /// @brief Generates TurboXML metadata source from XSD schema text.
 /// @param xsd_text Full text of the XSD document.
 /// @param opts Options including an optional include-file loader callback.
-inline auto generate(std::string_view xsd_text, const Options& opts = {}) -> GenResult {
+[[nodiscard]] inline auto generate(std::string_view xsd_text,
+                                   const Options& opts = {}) -> GenResult {
   xml::Parser parser{xsd_text};
   Schema schema;
   if (!xml::deserialize(parser, "schema", schema)) {

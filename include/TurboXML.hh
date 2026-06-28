@@ -564,17 +564,20 @@ constexpr auto parseDatetime(std::string_view s, DateTime& dt) -> bool {
 // ---- Canonical-form formatters ----
 
 inline auto dtPad(std::string& o, unsigned v, int width) -> void {
-  char tmp[10];
+  std::array<char, 10> tmp{};
   int n = 0;
-  do {
-    tmp[n++] = static_cast<char>('0' + v % 10);
+  while (true) {
+    tmp[static_cast<size_t>(n++)] = static_cast<char>('0' + v % 10);
     v /= 10;
-  } while (v != 0);
+    if (v == 0) {
+      break;
+    }
+  }
   for (int k = n; k < width; ++k) {
     o.push_back('0');
   }
   while (n != 0) {
-    o.push_back(tmp[--n]);
+    o.push_back(tmp[static_cast<size_t>(--n)]);
   }
 }
 
@@ -613,18 +616,18 @@ inline auto dtFmtTime(std::string& o, const Time& t) -> void {
   o.push_back(':');
   dtPad(o, t.second, 2);
   if (t.nanosecond != 0) {
-    char d[9];
+    std::array<char, 9> d{};
     std::uint32_t n = t.nanosecond;
     for (int k = 8; k >= 0; --k) {
-      d[k] = static_cast<char>('0' + n % 10);
+      d[static_cast<size_t>(k)] = static_cast<char>('0' + n % 10);
       n /= 10;
     }
     int len = 9;
-    while (len > 1 && d[len - 1] == '0') {
+    while (len > 1 && d[static_cast<size_t>(len - 1)] == '0') {
       --len;
     }
     o.push_back('.');
-    o.append(d, static_cast<size_t>(len));
+    o.append(d.data(), static_cast<size_t>(len));
   }
 }
 
@@ -633,7 +636,9 @@ inline auto dtFmtTime(std::string& o, const Time& t) -> void {
 /// @brief Maps xml::Date to/from the XSD `date` lexical form.
 template<>
 struct XmlValueTraits<Date> {
-  static auto parse(std::string_view s, Date& d) -> bool { return detail::parseDate(s, d); }
+  [[nodiscard]] static auto parse(std::string_view s, Date& d) -> bool {
+    return detail::parseDate(s, d);
+  }
   static auto format(std::string& out, const Date& d) -> void {
     detail::dtFmtDate(out, d);
     detail::dtFmtTz(out, d.has_tz, d.tz_offset_min);
@@ -643,7 +648,9 @@ struct XmlValueTraits<Date> {
 /// @brief Maps xml::Time to/from the XSD `time` lexical form.
 template<>
 struct XmlValueTraits<Time> {
-  static auto parse(std::string_view s, Time& t) -> bool { return detail::parseTime(s, t); }
+  [[nodiscard]] static auto parse(std::string_view s, Time& t) -> bool {
+    return detail::parseTime(s, t);
+  }
   static auto format(std::string& out, const Time& t) -> void {
     detail::dtFmtTime(out, t);
     detail::dtFmtTz(out, t.has_tz, t.tz_offset_min);
@@ -653,7 +660,7 @@ struct XmlValueTraits<Time> {
 /// @brief Maps xml::DateTime to/from the XSD `dateTime` lexical form.
 template<>
 struct XmlValueTraits<DateTime> {
-  static auto parse(std::string_view s, DateTime& dt) -> bool {
+  [[nodiscard]] static auto parse(std::string_view s, DateTime& dt) -> bool {
     return detail::parseDatetime(s, dt);
   }
   static auto format(std::string& out, const DateTime& dt) -> void {
@@ -714,7 +721,7 @@ struct XmlContainerTraits;
 template<typename T, typename A>
 struct XmlContainerTraits<std::vector<T, A>> {
   using value_type = T;
-  static T& emplace(std::vector<T, A>& c) { return c.emplace_back(); }
+  static auto emplace(std::vector<T, A>& c) -> T& { return c.emplace_back(); }
   static auto pop(std::vector<T, A>& c) -> void { c.pop_back(); }
 };
 
@@ -723,8 +730,8 @@ template<typename T, size_t N>
 struct XmlContainerTraits<std::array<T, N>> {
   using value_type = T;
   static constexpr size_t capacity = N;
-  static T& at(std::array<T, N>& c, size_t i) { return c[i]; }
-  static const T& at(const std::array<T, N>& c, size_t i) { return c[i]; }
+  static auto at(std::array<T, N>& c, size_t i) -> T& { return c[i]; }
+  static auto at(const std::array<T, N>& c, size_t i) -> const T& { return c[i]; }
 };
 
 /// @brief Satisfied when C supports dynamic insertion via XmlContainerTraits
@@ -881,7 +888,7 @@ constexpr auto makeFieldHashes() noexcept {
     if constexpr (requires { f.hash; }) {
       return f.hash;
     } else {
-      return FieldHash{0};
+      return FieldHash{};
     }
   });
 }
@@ -905,7 +912,7 @@ constexpr auto makeFieldKinds() noexcept {
 /// @brief Kinds matched against a child element by their own single name/hash
 /// in findFieldIndex (element/attribute/container/list). Value and Variant
 /// fields are matched by other means and excluded here.
-constexpr bool isNamedField(FieldKind k) noexcept {
+constexpr auto isNamedField(FieldKind k) noexcept -> bool {
   return k == FieldKind::Element || k == FieldKind::Attr || k == FieldKind::Container ||
          k == FieldKind::List;
 }
@@ -964,34 +971,34 @@ constexpr auto makeRequiredMask() noexcept -> RequiredMaskT<T> {
 /// @brief True for the kinds matched against child element tags in pull()'s
 /// element loop: child elements, containers, and list elements (not attributes,
 /// not the nameless value field).
-constexpr bool isElementKind(FieldKind k) noexcept {
+constexpr auto isElementKind(FieldKind k) noexcept -> bool {
   return k == FieldKind::Element || k == FieldKind::Container || k == FieldKind::List;
 }
 
 /// @brief True if any field of T is an attribute field.
 template<typename T>
-constexpr bool hasAttrFields() noexcept {
+constexpr auto hasAttrFields() noexcept -> bool {
   constexpr auto kinds = makeFieldKinds<T>();
   return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Attr; });
 }
 
 /// @brief True if any field of T is a child element or container field.
 template<typename T>
-constexpr bool hasElementFields() noexcept {
+constexpr auto hasElementFields() noexcept -> bool {
   constexpr auto kinds = makeFieldKinds<T>();
   return std::ranges::any_of(kinds, isElementKind);
 }
 
 /// @brief True if T declares a value field (binds the element's own text).
 template<typename T>
-constexpr bool hasValueField() noexcept {
+constexpr auto hasValueField() noexcept -> bool {
   constexpr auto kinds = makeFieldKinds<T>();
   return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Value; });
 }
 
 /// @brief True if T declares a variant (xs:choice) field.
 template<typename T>
-constexpr bool hasVariantFields() noexcept {
+constexpr auto hasVariantFields() noexcept -> bool {
   constexpr auto kinds = makeFieldKinds<T>();
   return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Variant; });
 }
@@ -1091,7 +1098,7 @@ constexpr auto makeVariantMatchers() noexcept {
 // named (element/attribute/container) fields, and across variant alternatives
 // (which must be unique among themselves and disjoint from named fields).
 template<typename T>
-constexpr bool allNamesUnique() noexcept {
+constexpr auto allNamesUnique() noexcept -> bool {
   constexpr auto hashes = makeFieldHashes<T>();
   constexpr auto kinds = makeFieldKinds<T>();
   for (size_t i = 0; i < hashes.size(); ++i) {
@@ -1123,7 +1130,7 @@ constexpr bool allNamesUnique() noexcept {
 // Compile-time check that no std::optional member is marked required: an
 // optional field is inherently optional, so the combination is rejected.
 template<typename T>
-constexpr bool optionalsNotRequired() noexcept {
+constexpr auto optionalsNotRequired() noexcept -> bool {
   bool ok = true;
   [&]<size_t... I>(std::index_sequence<I...>) {
     ([&] {
@@ -1153,7 +1160,7 @@ enum class NormMode : uint8_t {
 /// @brief Appends the UTF-8 encoding of code point cp to out. Returns false if
 /// cp is not a valid XML character (out of range, a surrogate, or a forbidden
 /// control character), per the Char production [2].
-inline bool encodeUtf8(std::string& out, uint32_t cp) {
+inline auto encodeUtf8(std::string& out, uint32_t cp) -> bool {
   const bool valid = cp == 0x9 || cp == 0xA || cp == 0xD || (cp >= 0x20 && cp <= 0xD7FF) ||
                      (cp >= 0xE000 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0x10FFFF);
   if (!valid) {
@@ -1225,7 +1232,7 @@ inline ErrorCode expandReference(std::string& out, std::string_view s, size_t& i
 /// the marked bytes need per-character handling: '&' (reference expansion, not
 /// in CData), '\r' (EOL folding, all modes), and literal '\n'/'\t' (folded to a
 /// space, Attr only).
-inline const std::array<bool, 256>& normSpecialTable(NormMode mode) noexcept {
+inline auto normSpecialTable(NormMode mode) noexcept -> const std::array<bool, 256>& {
   constexpr auto make = [](bool amp, bool ws) {
     std::array<bool, 256> t{};
     t[static_cast<unsigned char>('\r')] = true;
@@ -1494,7 +1501,9 @@ class BasicParser {
         case '"':
         case '\'':
           while (cur_ < end_) {
-            if (*cur_++ == c) { break; }
+            if (*cur_++ == c) {
+              break;
+            }
           }
           break;
         case '<':
@@ -1939,8 +1948,8 @@ class BasicParser {
   // Post-consume dispatch: opening tag already consumed, route to the correct
   // readElement. arr_fill tracks fill position for fixed containers.
   template<typename T, size_t I>
-  static bool readField(BasicParser& p, T& obj, uint16_t depth, std::span<size_t> arr_fill,
-                        detail::RequiredMaskT<T>& parsed) {
+  static auto readField(BasicParser& p, T& obj, uint16_t depth, std::span<size_t> arr_fill,
+                        detail::RequiredMaskT<T>& parsed) -> bool {
     // Reaching here means field I's element matched, so it is present. Record
     // it for the required-field check; gated so types with no required field
     // never touch parsed (the arg dead-codes away). Failure paths below still
@@ -2012,8 +2021,8 @@ class BasicParser {
   // alternative AltJ. Emplaces that alternative (into the variant, or into a
   // freshly pushed slot for a repeated/container choice) and reads into it.
   template<typename T, size_t FieldI, size_t AltJ>
-  static bool readVariant(BasicParser& p, T& obj, uint16_t depth,
-                          detail::RequiredMaskT<T>& parsed) {
+  static auto readVariant(BasicParser& p, T& obj, uint16_t depth,
+                          detail::RequiredMaskT<T>& parsed) -> bool {
     constexpr auto& f = std::get<FieldI>(XmlMetadata<T>::fields);
     using Member = std::decay_t<decltype(obj.*(f.member))>;
     if constexpr (detail::makeRequiredMask<T>().any()) {
@@ -2091,7 +2100,8 @@ using StrictParser = BasicParser<ParserOptions{.normalize = true, .strict = true
 /// @param object    Output object to populate.
 /// @return True on success, false on any parse or structure error.
 template<ParserOptions Opts, typename T>
-auto deserialize(BasicParser<Opts>& parser, std::string_view root_name, T& object) -> bool {
+[[nodiscard]] auto deserialize(BasicParser<Opts>& parser, std::string_view root_name,
+                               T& object) -> bool {
   if (!parser.beginElement(root_name)) [[unlikely]] {
     // beginElement() may have hit a tokenizer error (code already set); only
     // attribute a plain "root missing/mismatched" when nothing else did.
@@ -2752,10 +2762,10 @@ class Serializer {
     if constexpr (std::same_as<V, bool>) {
       out += v ? "true" : "false";
     } else {
-      char buf[32];
-      const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v);
+      std::array<char, 32> buf{};
+      const auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), v);
       if (ec == std::errc()) {
-        out.append(buf, static_cast<size_t>(ptr - buf));
+        out.append(buf.data(), static_cast<size_t>(ptr - buf.data()));
       }
     }
   }
@@ -2963,7 +2973,7 @@ class Serializer {
 /// @param object    Object to serialize.
 /// @return XML string containing the serialized data.
 template<bool PRETTY = true, typename T>
-auto serialize(std::string_view root_name, const T& object) -> std::string {
+[[nodiscard]] auto serialize(std::string_view root_name, const T& object) -> std::string {
   std::string out;
   Serializer<PRETTY> s{out};
   s.write(root_name, object);
@@ -2977,18 +2987,18 @@ auto serialize(std::string_view root_name, const T& object) -> std::string {
 /// @return nullopt if all constraints pass, or a violation message.
 template<typename T>
 struct XmlConstraints {
-  static auto check(const T&) noexcept -> std::optional<std::string> { return {}; }
+  [[nodiscard]] static auto check(const T&) noexcept -> std::optional<std::string> { return {}; }
 };
 
 /// @brief Validates obj against its XmlConstraints<T> specialization.
 /// @return nullopt if valid, or a ValidationError describing the first violation.
 template<typename T>
-auto validate(const T& obj) -> std::optional<ValidationError> {
+[[nodiscard]] auto validate(const T& obj) -> std::optional<ValidationError> {
   auto msg = XmlConstraints<T>::check(obj);
   if (!msg) {
     return {};
   }
-  return ValidationError{std::move(*msg)};
+  return {std::move(*msg)};
 }
 
 }  // namespace xml

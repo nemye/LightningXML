@@ -17,7 +17,7 @@
 
 namespace {
 
-auto readFile(const std::string& path, std::string& out) -> bool {
+[[nodiscard]] auto readFile(const std::string& path, std::string& out) -> bool {
   const std::ifstream in(path, std::ios::binary);
   if (!in) {
     return false;
@@ -28,7 +28,7 @@ auto readFile(const std::string& path, std::string& out) -> bool {
   return true;
 }
 
-auto dirOf(const std::string& path) -> std::string {
+[[nodiscard]] auto dirOf(const std::string& path) -> std::string {
   const auto sep = path.rfind('/');
   return sep == std::string::npos ? "." : path.substr(0, sep);
 }

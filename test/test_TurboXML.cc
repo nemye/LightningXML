@@ -2347,7 +2347,7 @@ struct xml::XmlMetadata<Wide72> {
                       xml::attrField("a71", &Wide72::a71, true));
 };
 
-static std::string wideXml(int omit) {
+static auto wideXml(int omit) -> std::string {
   std::string s = "<Wide72";
   for (int i = 0; i < 72; ++i) {
     if (i == omit) {
