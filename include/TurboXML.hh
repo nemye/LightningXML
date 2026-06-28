@@ -319,15 +319,15 @@ concept XmlCustomValue = requires(std::string_view s, T& v, const T& cv, std::st
 template<typename T>
 concept XmlScalar = XmlPrimitive<T> || XmlEnum<T> || XmlCustomValue<T>;
 
-// ---- Built-in date/time value types (XSD date / dateTime / time) ----
+// Built-in date/time value types (XSD date / dateTime / time)
 
 /// @brief An XSD `date`: a proleptic Gregorian calendar date with an optional
 /// timezone. Construct from XML via a field typed `xml::Date`; obtain chrono
 /// values via the accessors.
 struct Date {
-  int year{};       ///< Proleptic Gregorian year (may be negative).
-  uint8_t month{};  ///< 1-12.
-  uint8_t day{};    ///< 1-31.
+  int year{};                                ///< Proleptic Gregorian year (may be negative).
+  uint8_t month{};                           ///< 1-12.
+  uint8_t day{};                             ///< 1-31.
   std::optional<std::chrono::minutes> tz{};  ///< Offset east of UTC, if explicit (0 for 'Z').
 
   [[nodiscard]] constexpr auto toYearMonthDay() const -> std::chrono::year_month_day {
@@ -342,10 +342,10 @@ struct Date {
 /// @brief An XSD `time`: time of day with optional fractional seconds and an
 /// optional timezone.
 struct Time {
-  uint8_t hour{};         ///< 0-24 (24 only with zero minute/second/fraction).
-  uint8_t minute{};       ///< 0-59.
-  uint8_t second{};       ///< 0-59.
-  uint32_t nanosecond{};  ///< Fractional second, in nanoseconds.
+  uint8_t hour{};                            ///< 0-24 (24 only with zero minute/second/fraction).
+  uint8_t minute{};                          ///< 0-59.
+  uint8_t second{};                          ///< 0-59.
+  uint32_t nanosecond{};                     ///< Fractional second, in nanoseconds.
   std::optional<std::chrono::minutes> tz{};  ///< Offset east of UTC, if explicit (0 for 'Z').
 
   /// @brief Time elapsed since midnight (ignores any timezone).
@@ -461,26 +461,26 @@ struct VariantField {
 
 namespace detail {
 
-// ---- Lexical scanning for the XSD date/time types (allocation-free) ----
+// Support for XSD date/time types
 
 /// @brief A forward cursor over a date/time lexical form. Each scan method
 /// advances past what it consumed on success and leaves the cursor unchanged on
 /// failure, so grammar rules compose as a short-circuiting boolean chain.
 class DtCursor {
-public:
-  constexpr explicit DtCursor(std::string_view s) : s_{s} {}
+ public:
+  explicit DtCursor(std::string_view s) : s_{s} {}
 
-  [[nodiscard]] constexpr auto atEnd() const -> bool { return pos_ == s_.size(); }
+  [[nodiscard]] auto atEnd() const -> bool { return pos_ == s_.size(); }
 
   /// @brief Consumes the literal character c.
-  [[nodiscard]] constexpr auto eat(char c) -> bool {
+  [[nodiscard]] auto eat(char c) -> bool {
     const bool ok = pos_ < s_.size() && s_[pos_] == c;
     pos_ += ok ? 1 : 0;
     return ok;
   }
 
   /// @brief Reads exactly n decimal digits as an unsigned integer.
-  [[nodiscard]] constexpr auto fixed(size_t n, uint32_t& out) -> bool {
+  [[nodiscard]] auto fixed(size_t n, uint32_t& out) -> bool {
     if (pos_ + n > s_.size()) {
       return false;
     }
@@ -498,7 +498,7 @@ public:
   }
 
   /// @brief Reads a year: an optional leading '-' then four or more digits.
-  [[nodiscard]] constexpr auto year(int& out) -> bool {
+  [[nodiscard]] auto year(int& out) -> bool {
     const int sign = eat('-') ? -1 : 1;
     const size_t start = pos_;
     int64_t v = 0;
@@ -514,7 +514,7 @@ public:
 
   /// @brief Reads an optional fractional second ('.' then digits) as
   /// nanoseconds, truncating precision beyond nine digits.
-  [[nodiscard]] constexpr auto fraction(uint32_t& nanos) -> bool {
+  [[nodiscard]] auto fraction(uint32_t& nanos) -> bool {
     nanos = 0;
     if (!eat('.')) {
       return true;
@@ -540,7 +540,7 @@ public:
 
   /// @brief Reads an optional timezone ('Z' or (+|-)hh:mm); absence is allowed
   /// only at end of input.
-  [[nodiscard]] constexpr auto timezone(std::optional<std::chrono::minutes>& tz) -> bool {
+  [[nodiscard]] auto timezone(std::optional<std::chrono::minutes>& tz) -> bool {
     tz.reset();
     if (atEnd()) {
       return true;
@@ -562,80 +562,47 @@ public:
     return true;
   }
 
-private:
-  static constexpr auto isDigit(char c) -> bool { return c >= '0' && c <= '9'; }
+  /// @brief Reads a 'CCYY-MM-DD' date body (no timezone) into d.
+  [[nodiscard]] auto date(Date& d) -> bool {
+    uint32_t mo = 0;
+    uint32_t da = 0;
+    if (!year(d.year) || !eat('-') || !fixed(2, mo) || !eat('-') || !fixed(2, da)) {
+      return false;
+    }
+    if (mo < 1 || mo > 12 || da < 1 || da > 31) {
+      return false;
+    }
+    d.month = static_cast<uint8_t>(mo);
+    d.day = static_cast<uint8_t>(da);
+    return true;
+  }
+
+  /// @brief Reads an 'hh:mm:ss(.fraction)?' time body (no timezone) into t.
+  [[nodiscard]] auto time(Time& t) -> bool {
+    uint32_t hh = 0;
+    uint32_t mm = 0;
+    uint32_t ss = 0;
+    uint32_t nanos = 0;
+    if (!fixed(2, hh) || !eat(':') || !fixed(2, mm) || !eat(':') || !fixed(2, ss) ||
+        !fraction(nanos)) {
+      return false;
+    }
+    if (hh > 24 || mm > 59 || ss > 59 || (hh == 24 && (mm != 0 || ss != 0 || nanos != 0))) {
+      return false;
+    }
+    t.hour = static_cast<uint8_t>(hh);
+    t.minute = static_cast<uint8_t>(mm);
+    t.second = static_cast<uint8_t>(ss);
+    t.nanosecond = nanos;
+    return true;
+  }
+
+ private:
+  static auto isDigit(char c) -> bool { return c >= '0' && c <= '9'; }
 
   std::string_view s_;
   size_t pos_ = 0;
 };
-
-// Scans a 'CCYY-MM-DD' date body (no timezone) into d.
-constexpr auto scanDate(DtCursor& c, Date& d) -> bool {
-  uint32_t mo = 0;
-  uint32_t da = 0;
-  if (!c.year(d.year) || !c.eat('-') || !c.fixed(2, mo) || !c.eat('-') || !c.fixed(2, da)) {
-    return false;
-  }
-  if (mo < 1 || mo > 12 || da < 1 || da > 31) {
-    return false;
-  }
-  d.month = static_cast<uint8_t>(mo);
-  d.day = static_cast<uint8_t>(da);
-  return true;
-}
-
-// Scans an 'hh:mm:ss(.fraction)?' time body (no timezone) into t.
-constexpr auto scanTime(DtCursor& c, Time& t) -> bool {
-  uint32_t hh = 0;
-  uint32_t mm = 0;
-  uint32_t ss = 0;
-  uint32_t nanos = 0;
-  if (!c.fixed(2, hh) || !c.eat(':') || !c.fixed(2, mm) || !c.eat(':') || !c.fixed(2, ss) ||
-      !c.fraction(nanos)) {
-    return false;
-  }
-  if (hh > 24 || mm > 59 || ss > 59 || (hh == 24 && (mm != 0 || ss != 0 || nanos != 0))) {
-    return false;
-  }
-  t.hour = static_cast<uint8_t>(hh);
-  t.minute = static_cast<uint8_t>(mm);
-  t.second = static_cast<uint8_t>(ss);
-  t.nanosecond = nanos;
-  return true;
-}
-
-constexpr auto parseDate(std::string_view s, Date& d) -> bool {
-  DtCursor c{s};
-  Date out{};
-  if (!scanDate(c, out) || !c.timezone(out.tz) || !c.atEnd()) {
-    return false;
-  }
-  d = out;
-  return true;
-}
-
-constexpr auto parseTime(std::string_view s, Time& t) -> bool {
-  DtCursor c{s};
-  Time out{};
-  if (!scanTime(c, out) || !c.timezone(out.tz) || !c.atEnd()) {
-    return false;
-  }
-  t = out;
-  return true;
-}
-
-constexpr auto parseDatetime(std::string_view s, DateTime& dt) -> bool {
-  DtCursor c{s};
-  DateTime out{};
-  if (!scanDate(c, out.date) || !c.eat('T') || !scanTime(c, out.time) || !c.timezone(out.time.tz) ||
-      !c.atEnd()) {
-    return false;
-  }
-  dt = out;
-  return true;
-}
-
-// ---- Canonical-form formatters ----
 
 inline auto dtFmtTz(std::string& o, const std::optional<std::chrono::minutes> tz) -> void {
   if (!tz) {
@@ -684,7 +651,7 @@ constexpr auto enumToString(E v) noexcept -> std::string_view {
   return it != vals.end() ? it->first : std::string_view{};
 }
 
-// ---- Variant support (xs:choice -> std::variant) ----
+// Variant support (xs:choice -> std::variant)
 template<typename T>
 struct IsVariant : std::false_type {};
 template<typename... Ts>
@@ -914,7 +881,7 @@ constexpr auto makeNextElemTable() noexcept {
   return next;
 }
 
-// ---- Variant (xs:choice) matcher tables ----
+// Variant (xs:choice) matcher tables
 
 /// @brief A single (variant field, alternative) match target: the alternative's
 /// element-name hash, the field's index, and the std::variant alternative
@@ -1012,7 +979,7 @@ constexpr auto optionalsNotRequired() noexcept -> bool {
   return ok;
 }
 
-// ---- Text normalization (owning std::string fields, opt-in) ----
+// Text normalization (owning std::string fields, opt-in)
 
 /// @brief How a run of character data is normalized when appended to an owning
 /// std::string field. Reference expansion and line-ending normalization only
@@ -1178,7 +1145,13 @@ inline ErrorCode appendNormalized(std::string& out, std::string_view raw, NormMo
 template<>
 struct XmlValueTraits<Date> {
   [[nodiscard]] static auto parse(std::string_view s, Date& d) -> bool {
-    return detail::parseDate(s, d);
+    detail::DtCursor c{s};
+    Date out{};
+    if (!c.date(out) || !c.timezone(out.tz) || !c.atEnd()) {
+      return false;
+    }
+    d = out;
+    return true;
   }
   static auto format(std::string& out, const Date& d) -> void {
     detail::dtFmtDate(out, d);
@@ -1190,7 +1163,13 @@ struct XmlValueTraits<Date> {
 template<>
 struct XmlValueTraits<Time> {
   [[nodiscard]] static auto parse(std::string_view s, Time& t) -> bool {
-    return detail::parseTime(s, t);
+    detail::DtCursor c{s};
+    Time out{};
+    if (!c.time(out) || !c.timezone(out.tz) || !c.atEnd()) {
+      return false;
+    }
+    t = out;
+    return true;
   }
   static auto format(std::string& out, const Time& t) -> void {
     detail::dtFmtTime(out, t);
@@ -1202,7 +1181,14 @@ struct XmlValueTraits<Time> {
 template<>
 struct XmlValueTraits<DateTime> {
   [[nodiscard]] static auto parse(std::string_view s, DateTime& dt) -> bool {
-    return detail::parseDatetime(s, dt);
+    detail::DtCursor c{s};
+    DateTime out{};
+    if (!c.date(out.date) || !c.eat('T') || !c.time(out.time) || !c.timezone(out.time.tz) ||
+        !c.atEnd()) {
+      return false;
+    }
+    dt = out;
+    return true;
   }
   static auto format(std::string& out, const DateTime& dt) -> void {
     detail::dtFmtDate(out, dt.date);

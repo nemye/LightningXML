@@ -3,6 +3,7 @@
 #include <array>
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -199,8 +200,11 @@ TEST_F(TurboBasicTests, EmptyStringAttribute) {
 
 /// @brief Tests that empty numeric attributes and empty child elements
 /// fall back to default values safely without failing the parse.
-TEST_F(TurboBasicTests, EmptyNumericAttributeAndEmptyElement) {
-  // 'id' is an empty attribute. 'Email' is an empty child element.
+TEST_F(TurboBasicTests, EmptyNumericAttributeErrors) {
+  // An empty value on a non-optional numeric attribute ("") is not valid
+  // lexical space for the type, so it is a hard error rather than a silently
+  // dropped default. (Use std::optional<int> to allow an empty/absent value.)
+  // This mirrors how an empty numeric *element* is already rejected.
   const std::string_view xml_src = R"(
 <Users>
   <User id="">
@@ -213,13 +217,8 @@ TEST_F(TurboBasicTests, EmptyNumericAttributeAndEmptyElement) {
   xml::Parser parser{xml_src};
   Users users;
 
-  ASSERT_TRUE(xml::deserialize(parser, "Users", users));
-  ASSERT_EQ(users.items.size(), 1U);
-
-  // std::from_chars fails on "", so it leaves the default initialized value (0)
-  EXPECT_EQ(users.items[0].id, 0);
-  EXPECT_EQ(users.items[0].name, "Ghost");
-  EXPECT_TRUE(users.items[0].email.empty());
+  EXPECT_FALSE(xml::deserialize(parser, "Users", users));
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::InvalidNumericValue);
 }
 
 /// @brief Tests that malformed numeric data fails gracefully rather than
@@ -439,7 +438,9 @@ TEST_F(TurboBasicTests, WhitespaceOnlyNumericFieldFails) {
 /// @brief Tests that a numeric field with whitespace padding around a valid
 /// number fails to parse, because std::from_chars does not accept leading
 /// whitespace or trailing characters after the number.
-TEST_F(TurboBasicTests, WhitespacePaddedNumericFieldFails) {
+TEST_F(TurboBasicTests, WhitespacePaddedNumericFieldCollapses) {
+  // XSD whitespace `collapse` applies to numeric leaves, so surrounding
+  // whitespace is trimmed before the value is parsed.
   const std::string_view xml_src = R"(
 <person>
   <name>Test</name>
@@ -448,8 +449,8 @@ TEST_F(TurboBasicTests, WhitespacePaddedNumericFieldFails) {
 )";
   xml::Parser parser{xml_src};
   Person person;
-  EXPECT_FALSE(xml::deserialize(parser, "person", person));
-  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::InvalidNumericValue);
+  ASSERT_TRUE(xml::deserialize(parser, "person", person));
+  EXPECT_EQ(person.age, 30);
 }
 
 TEST_F(TurboBasicTests, ParserCanBeResetAndReused) {
@@ -881,7 +882,7 @@ TEST_F(TurboBasicTests, MaxDepthExceededFailsCleanly) {
   EXPECT_EQ(parser.errorCode(), xml::ErrorCode::DepthExceeded);
 }
 
-// ---- try_begin_element fast-path coverage ----
+// try_begin_element fast-path coverage
 
 /// @brief Compact deep XML with zero whitespace between tags.
 /// Every open tag hits try_begin_element directly.
@@ -974,7 +975,7 @@ TEST_F(TurboBasicTests, DeepNestingWithUnknownSiblings) {
   EXPECT_EQ(list.items[1].next.next.next.next.value, 2);
 }
 
-// ---- AttrField / element-name collision ----
+// AttrField / element-name collision
 
 /// @brief A child element whose name matches an AttrField hash must be
 /// skipped without disrupting the parse (exercises the FieldKind::Attr dispatch
@@ -997,7 +998,7 @@ TEST_F(TurboBasicTests, ElementNameCollidesWithAttrField) {
   EXPECT_EQ(users.items[0].email, "c@c.com");
 }
 
-// ---- Container edge cases ----
+// Container edge cases
 
 /// @brief Empty vector container: root element with no matching children.
 TEST_F(TurboBasicTests, EmptyVectorContainer) {
@@ -1033,7 +1034,7 @@ TEST_F(TurboBasicTests, ConsecutiveSelfClosingInVector) {
   }
 }
 
-// ---- Vec of primitives ----
+// Vec of primitives
 
 /// @brief Empty Skills (vec of string_view primitives).
 TEST_F(TurboBasicTests, VecOfPrimitivesEmpty) {
@@ -1075,7 +1076,7 @@ TEST_F(TurboBasicTests, VecOfPrimitivesSelfClosing) {
   EXPECT_EQ(skills.items[2], "B");
 }
 
-// ---- AttrItem / FlatItem coverage ----
+// AttrItem / FlatItem coverage
 
 /// @brief All 10 attributes populated on AttrItem.
 TEST_F(TurboBasicTests, FullAttrItemAllAttributesParsed) {
@@ -1155,7 +1156,7 @@ TEST_F(TurboBasicTests, FlatListParsing) {
   EXPECT_EQ(list.items[1].status, 1);
 }
 
-// ---- Parser resilience ----
+// Parser resilience
 
 /// @brief Reset after a failed parse must allow a clean retry.
 TEST_F(TurboBasicTests, ResetAfterFailedParse) {
@@ -1426,7 +1427,7 @@ TEST_F(TurboBasicTests, ArrFieldMixedOverflow) {
   EXPECT_EQ(rec.scores[3], 4);
 }
 
-// ---- document-order hint fast path ----
+// document-order hint fast path
 
 /// @brief An unknown element whose name extends a mapped field's name
 /// ("titles" vs "title") must not be matched by the document-order fast
@@ -1488,7 +1489,7 @@ TEST_F(TurboBasicTests, OutOfOrderThenInOrderItems) {
   EXPECT_EQ(list.items[2].status, 7);
 }
 
-// ---- bool fields ----
+// bool fields
 
 /// @brief Bool fields accept the XML Schema boolean lexical space
 /// ("true", "false", "1", "0") as both attributes and elements.
@@ -1527,15 +1528,15 @@ TEST_F(TurboBasicTests, BoolFieldRejectsInvalidText) {
 
 /// @brief An unparseable bool attribute leaves the default value, consistent
 /// with how numeric attributes fail silently.
-TEST_F(TurboBasicTests, BoolAttrInvalidLeavesDefault) {
+TEST_F(TurboBasicTests, BoolAttrInvalidErrors) {
+  // A malformed non-optional boolean attribute is a hard error rather than a
+  // silently dropped default.
   const std::string_view xml_src =
       R"(<Toggle enabled="maybe"><active>1</active><verbose>0</verbose></Toggle>)";
   xml::Parser parser{xml_src};
   Toggle t;
-  ASSERT_TRUE(xml::deserialize(parser, "Toggle", t));
-  EXPECT_FALSE(t.enabled);
-  EXPECT_TRUE(t.active);
-  EXPECT_FALSE(t.verbose);
+  EXPECT_FALSE(xml::deserialize(parser, "Toggle", t));
+  EXPECT_EQ(parser.errorCode(), xml::ErrorCode::InvalidNumericValue);
 }
 
 /// @brief Bools serialize as "true"/"false" and round-trip.
@@ -1557,7 +1558,7 @@ TEST_F(TurboBasicTests, SerializerBoolRoundTrip) {
   EXPECT_TRUE(out.verbose);
 }
 
-// ---- Serializer ----
+// Serializer
 
 TEST_F(TurboBasicTests, SerializerPrimitiveFields) {
   Person person;
@@ -1717,7 +1718,7 @@ TEST_F(TurboBasicTests, SerializerRoundTripOrganization) {
   EXPECT_EQ(out.departments[0].teams[0].members[0].skills.items[0], "C++");
 }
 
-// ---- Required fields (optional by default) ----
+// Required fields (optional by default)
 
 struct ReqRecord {
   int id{};               // required attribute
@@ -1860,7 +1861,7 @@ TEST_F(TurboBasicTests, RequiredNestedObjectCompleteSucceeds) {
   EXPECT_EQ(p.child.name, "Ada");
 }
 
-// ---- Resource bounds (untrusted input) ----
+// Resource bounds (untrusted input)
 
 /// @brief Exactly kMaxAttributesPerElement attributes is accepted (boundary).
 TEST_F(TurboBasicTests, MaxAttributesBoundaryAccepted) {
@@ -1908,7 +1909,7 @@ TEST_F(TurboBasicTests, UnknownSubtreeDepthLimited) {
   EXPECT_EQ(parser.errorCode(), xml::ErrorCode::DepthExceeded);
 }
 
-// ---- Normalization & reference expansion (NormalizingParser, opt-in) ----
+// Normalization & reference expansion (NormalizingParser, opt-in)
 //
 // Normalization is gated on BasicParser<true> (xml::NormalizingParser) and only
 // applies to owning std::string fields; std::string_view fields stay raw and
@@ -2047,7 +2048,7 @@ TEST_F(TurboBasicTests, NormalizeForbiddenCodePointFails) {
   EXPECT_EQ(p.errorCode(), xml::ErrorCode::InvalidCharRef);
 }
 
-// ---- Strict (fully-conforming) parser: no false positives ----
+// Strict (fully-conforming) parser: no false positives
 //
 // StrictParser enforces the three WFCs (rejection cases live in the
 // conformance suite). These guard against false positives and confirm it still
@@ -2088,7 +2089,7 @@ TEST_F(TurboBasicTests, StrictParserNormalizes) {
 // Library extensions: lifted field ceiling, enums, value fields, recursion.
 //
 
-// ---- Enumerations via XmlEnumTraits (string tokens) ----
+// Enumerations via XmlEnumTraits (string tokens)
 enum class Priority : uint8_t { Low, Medium, High };
 template<>
 struct xml::XmlEnumTraits<Priority> {
@@ -2125,7 +2126,7 @@ TEST_F(TurboBasicTests, EnumUnknownTokenFails) {
   EXPECT_EQ(p.errorCode(), xml::ErrorCode::InvalidEnumValue);
 }
 
-// ---- Value field (XSD simpleContent) ----
+// Value field (XSD simpleContent)
 struct Money {
   std::string_view currency;  // attribute
   double amount{};            // element's own text
@@ -2192,7 +2193,7 @@ TEST_F(TurboBasicTests, ValueFieldRequiredEmptyFails) {
   }
 }
 
-// ---- Recursion via std::unique_ptr ----
+// Recursion via std::unique_ptr
 struct Section {
   std::string_view title;
   std::unique_ptr<Section> sub;  // optional, recursive
@@ -2231,7 +2232,7 @@ TEST_F(TurboBasicTests, UniquePtrAbsentChildOmitted) {
   EXPECT_EQ(out, R"(<Section><title>solo</title></Section>)");  // no <sub>
 }
 
-// ---- More than 64 fields (multiword required mask) ----
+// More than 64 fields (multiword required mask)
 struct Wide72 {
   int a0{};
   int a1{};
@@ -2380,7 +2381,6 @@ TEST_F(TurboBasicTests, MoreThan64FieldsMissingRequiredSecondWord) {
 }
 
 // Date/time value types and variant (xs:choice) fields.
-// ---- Date / Time / DateTime (XmlValueTraits leaf types) ----
 struct Event {
   xml::Date day;        // attribute
   xml::DateTime stamp;  // element
@@ -2422,7 +2422,7 @@ TEST_F(TurboBasicTests, DateTimeInvalidValue) {
   EXPECT_EQ(p.errorCode(), xml::ErrorCode::InvalidValue);
 }
 
-// ---- Variant (xs:choice) ----
+// Variant (xs:choice)
 struct VCircle {
   int r{};
 };
@@ -2616,4 +2616,166 @@ TEST_F(TurboBasicTests, ListExtraWhitespaceIgnored) {
   ListRec r;
   ASSERT_TRUE(xml::deserialize(p, "ListRec", r));
   EXPECT_EQ(r.dims, (std::vector<int>{1, 2, 3, 4}));
+}
+
+// Robustness / XSD-conformance for typed leaf & attribute values
+
+namespace {
+struct RobScalars {
+  int count{};
+  double ratio{};
+  bool flag{};
+};
+struct RobDate {
+  xml::Date date{};
+};
+struct RobAttr {
+  int n{};
+};
+struct RobOptAttr {
+  std::optional<int> n{};
+};
+}  // namespace
+
+template<>
+struct xml::XmlMetadata<RobScalars> {
+  static constexpr auto fields = std::make_tuple(xml::field("count", &RobScalars::count),
+                                                 xml::field("ratio", &RobScalars::ratio),
+                                                 xml::field("flag", &RobScalars::flag));
+};
+template<>
+struct xml::XmlMetadata<RobDate> {
+  static constexpr auto fields = std::make_tuple(xml::field("date", &RobDate::date));
+};
+template<>
+struct xml::XmlMetadata<RobAttr> {
+  static constexpr auto fields = std::make_tuple(xml::attrField("n", &RobAttr::n));
+};
+template<>
+struct xml::XmlMetadata<RobOptAttr> {
+  static constexpr auto fields = std::make_tuple(xml::attrField("n", &RobOptAttr::n));
+};
+
+template<typename P>
+static void expectCount(std::string_view xml, int want) {
+  P p{xml};
+  RobScalars o{};
+  ASSERT_TRUE(xml::deserialize(p, "RobScalars", o)) << "ec=" << static_cast<int>(p.errorCode());
+  EXPECT_EQ(o.count, want);
+}
+template<typename P>
+static void expectCountError(std::string_view xml, xml::ErrorCode want) {
+  P p{xml};
+  RobScalars o{};
+  EXPECT_FALSE(xml::deserialize(p, "RobScalars", o));
+  EXPECT_EQ(p.errorCode(), want);
+}
+
+// All three modes collapse XSD whitespace around a typed leaf.
+TEST_F(TurboBasicTests, RobustNumericSurroundingWhitespace) {
+  const std::string_view xml = "<RobScalars><count> 42 </count></RobScalars>";
+  expectCount<xml::Parser>(xml, 42);
+  expectCount<xml::NormalizingParser>(xml, 42);
+  expectCount<xml::StrictParser>(xml, 42);
+}
+
+TEST_F(TurboBasicTests, RobustNumericNewlineIndentation) {
+  const std::string_view xml = "<RobScalars><count>\n    42\n  </count></RobScalars>";
+  expectCount<xml::Parser>(xml, 42);
+  expectCount<xml::NormalizingParser>(xml, 42);
+  expectCount<xml::StrictParser>(xml, 42);
+}
+
+// XSD numeric lexical space allows a leading '+'.
+TEST_F(TurboBasicTests, RobustLeadingPlus) {
+  expectCount<xml::Parser>("<RobScalars><count>+42</count></RobScalars>", 42);
+  xml::Parser p{"<RobScalars><ratio>+3.5</ratio></RobScalars>"};
+  RobScalars o{};
+  ASSERT_TRUE(xml::deserialize(p, "RobScalars", o));
+  EXPECT_DOUBLE_EQ(o.ratio, 3.5);
+}
+
+// A value split by a comment/PI is read whole, not just its last fragment
+// (previously a silent-corruption bug yielding "2" / "3").
+TEST_F(TurboBasicTests, RobustCommentSplitNumericReadWhole) {
+  expectCount<xml::Parser>("<RobScalars><count>4<!--x-->2</count></RobScalars>", 42);
+  expectCount<xml::NormalizingParser>("<RobScalars><count>4<!--x-->2</count></RobScalars>", 42);
+  expectCount<xml::StrictParser>("<RobScalars><count>4<!--x-->2</count></RobScalars>", 42);
+  expectCount<xml::Parser>("<RobScalars><count>1<!--a-->2<!--b-->3</count></RobScalars>", 123);
+  expectCount<xml::Parser>("<RobScalars><count>1<?pi ?>2</count></RobScalars>", 12);
+}
+
+TEST_F(TurboBasicTests, RobustNumericInCData) {
+  expectCount<xml::Parser>("<RobScalars><count><![CDATA[42]]></count></RobScalars>", 42);
+  expectCount<xml::NormalizingParser>("<RobScalars><count><![CDATA[42]]></count></RobScalars>", 42);
+}
+
+// Reference expansion reaches typed leaves only under the normalizing modes;
+// the raw zero-copy parser leaves the reference literal and so rejects it.
+TEST_F(TurboBasicTests, RobustCharRefInTypedLeaf) {
+  const std::string_view xml = "<RobScalars><count>4&#50;</count></RobScalars>";
+  expectCount<xml::NormalizingParser>(xml, 42);
+  expectCount<xml::StrictParser>(xml, 42);
+  expectCountError<xml::Parser>(xml, xml::ErrorCode::InvalidNumericValue);
+}
+
+TEST_F(TurboBasicTests, RobustBoolSurroundingWhitespace) {
+  xml::Parser p{"<RobScalars><flag> true </flag></RobScalars>"};
+  RobScalars o{};
+  ASSERT_TRUE(xml::deserialize(p, "RobScalars", o));
+  EXPECT_TRUE(o.flag);
+}
+
+TEST_F(TurboBasicTests, RobustDateSurroundingWhitespace) {
+  xml::Parser p{"<RobDate><date> 2026-06-28 </date></RobDate>"};
+  RobDate o{};
+  ASSERT_TRUE(xml::deserialize(p, "RobDate", o));
+  EXPECT_EQ(o.date, (xml::Date{2026, 6, 28}));
+}
+
+// A non-optional typed attribute: whitespace collapses; malformed/empty values
+// are hard errors rather than silently dropped defaults.
+TEST_F(TurboBasicTests, RobustTypedAttribute) {
+  {
+    xml::Parser p{"<RobAttr n=' 42 '/>"};
+    RobAttr o{};
+    ASSERT_TRUE(xml::deserialize(p, "RobAttr", o));
+    EXPECT_EQ(o.n, 42);
+  }
+  {
+    xml::Parser p{"<RobAttr n='abc'/>"};
+    RobAttr o{};
+    EXPECT_FALSE(xml::deserialize(p, "RobAttr", o));
+    EXPECT_EQ(p.errorCode(), xml::ErrorCode::InvalidNumericValue);
+  }
+  {
+    xml::Parser p{"<RobAttr n=''/>"};
+    RobAttr o{};
+    EXPECT_FALSE(xml::deserialize(p, "RobAttr", o));
+    EXPECT_EQ(p.errorCode(), xml::ErrorCode::InvalidNumericValue);
+  }
+}
+
+// An optional typed attribute keeps the "leave empty on bad/empty value"
+// contract: no hard error, the optional stays disengaged.
+TEST_F(TurboBasicTests, RobustOptionalTypedAttribute) {
+  {
+    xml::Parser p{"<RobOptAttr n=' 42 '/>"};
+    RobOptAttr o{};
+    ASSERT_TRUE(xml::deserialize(p, "RobOptAttr", o));
+    ASSERT_TRUE(o.n.has_value());
+    EXPECT_EQ(*o.n, 42);
+  }
+  {
+    xml::Parser p{"<RobOptAttr n='abc'/>"};
+    RobOptAttr o{};
+    ASSERT_TRUE(xml::deserialize(p, "RobOptAttr", o));
+    EXPECT_FALSE(o.n.has_value());
+  }
+  {
+    xml::Parser p{"<RobOptAttr n=''/>"};
+    RobOptAttr o{};
+    ASSERT_TRUE(xml::deserialize(p, "RobOptAttr", o));
+    EXPECT_FALSE(o.n.has_value());
+  }
 }
