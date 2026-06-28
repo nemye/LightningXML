@@ -4,7 +4,7 @@ A high-performance, header-only XML pull-parser, deserializer, and serializer fo
 
 Define your structs, declare the field mapping, and deserialize or serialize without any dependencies. The intent of TurboXML is to trade compile-time work for runtime performance. The goal is not to be feature-rich, but to provide a simple API for getting XML-formatted data into your applications for processing as quickly as possible.
 
-There are varying levels of parser implementations (Basic, Normalizing, Strict), each with increasing conformance to XML 1.0 (Fifth Edition) at the cost of performance. 
+Three parser tiers trade performance for conformance to XML 1.0 (Fifth Edition). `xml::StrictParser` is the fully-conforming configuration. The default `xml::Parser` makes documented trade-offs for speed: it does not expand entities or normalize text, but does handle structural well-formedness including DOCTYPE internal subset skipping and UTF-8 BOM stripping. DTD processing and external entity resolution are intentionally omitted across all tiers (non-validating processor).
 
 ## Performance
 
@@ -253,7 +253,9 @@ struct xml::XmlMetadata<Shape> {
 `xml::Date`, `xml::Time`, and `xml::DateTime` parse the XSD `date` / `time` /
 `dateTime` lexical forms (optional `Z` / `±hh:mm` timezone, fractional seconds)
 and round-trip through the serializer. Bad input fails with
-`ErrorCode::InvalidValue`. Each exposes `std::chrono` accessors.
+`ErrorCode::InvalidValue`. Each exposes `std::chrono` accessors and supports all
+comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`), so they work directly
+in `std::set`, `std::map`, and sorted ranges.
 
 ```cpp
 struct Event {
@@ -263,6 +265,7 @@ struct Event {
 // ... after deserialize:
 std::chrono::sys_days d = event.day.toSysDays();
 std::chrono::sys_time<std::chrono::nanoseconds> t = event.stamp.toSysTime(); // UTC
+std::set<xml::Date> seen;   // ordering works out of the box
 ```
 
 Any other leaf type with a known text form can be supported by specializing
@@ -403,7 +406,16 @@ Supported XSD constructs:
 | Built-in types | `std::string`, `int`, `double`, `bool`, `xml::Date`, `xml::Time`, `xml::DateTime`, … |
 | Recursive types | `std::unique_ptr<T>` (optional self-reference) or `std::vector<T>` (repeated) |
 
-Constructs outside this set (e.g. `xs:any`, mixed content, `xs:union`, `xs:import`) are reported as notes on stderr rather than causing a failure. Built with `TURBOXML_BUILD_CODEGEN` (on by default).
+Unsupported constructs are reported as notes on `stderr` rather than causing a failure; the generator produces the best output it can for the rest of the schema.
+
+**Not supported (out of scope for 2.0):**
+- `xs:union` — no C++ type mapping without boxing
+- `xs:import` — cross-namespace schema merging requires a resolver not in scope
+- `xs:complexContent restriction` — high complexity, rare in practice
+- `xs:any` / `xs:anyAttribute` — wildcards have no static type
+- External entity resolution — requires file I/O, incompatible with the zero-copy design
+
+Built with `TURBOXML_BUILD_CODEGEN` (on by default).
 
 ### Constraint Validation
 

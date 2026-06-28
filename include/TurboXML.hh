@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <format>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -564,71 +565,28 @@ constexpr auto parseDatetime(std::string_view s, DateTime& dt) -> bool {
 
 // ---- Canonical-form formatters ----
 
-inline auto dtPad(std::string& o, unsigned v, int width) -> void {
-  std::array<char, 10> tmp{};
-  int n = 0;
-  while (true) {
-    tmp[static_cast<size_t>(n++)] = static_cast<char>('0' + v % 10);
-    v /= 10;
-    if (v == 0) {
-      break;
-    }
-  }
-  for (int k = n; k < width; ++k) {
-    o.push_back('0');
-  }
-  while (n != 0) {
-    o.push_back(tmp[static_cast<size_t>(--n)]);
-  }
-}
-
-inline auto dtFmtTz(std::string& o, bool has_tz, int off) -> void {
+inline auto dtFmtTz(std::string& o, const bool has_tz, const int off) -> void {
   if (!has_tz) {
     return;
   }
   if (off == 0) {
-    o.push_back('Z');
+    o += 'Z';
     return;
   }
-  o.push_back(off < 0 ? '-' : '+');
-  const auto a = static_cast<unsigned>(off < 0 ? -off : off);
-  dtPad(o, a / 60, 2);
-  o.push_back(':');
-  dtPad(o, a % 60, 2);
+  const int a = off < 0 ? -off : off;
+  o += std::format("{}{:02}:{:02}", off < 0 ? '-' : '+', a / 60, a % 60);
 }
 
 inline auto dtFmtDate(std::string& o, const Date& d) -> void {
-  if (d.year < 0) {
-    o.push_back('-');
-    dtPad(o, static_cast<unsigned>(-d.year), 4);
-  } else {
-    dtPad(o, static_cast<unsigned>(d.year), 4);
-  }
-  o.push_back('-');
-  dtPad(o, d.month, 2);
-  o.push_back('-');
-  dtPad(o, d.day, 2);
+  o += d.year < 0 ? std::format("-{:04}-{:02}-{:02}", -d.year, d.month, d.day)
+                  : std::format("{:04}-{:02}-{:02}", d.year, d.month, d.day);
 }
 
 inline auto dtFmtTime(std::string& o, const Time& t) -> void {
-  dtPad(o, t.hour, 2);
-  o.push_back(':');
-  dtPad(o, t.minute, 2);
-  o.push_back(':');
-  dtPad(o, t.second, 2);
+  o += std::format("{:02}:{:02}:{:02}", t.hour, t.minute, t.second);
   if (t.nanosecond != 0) {
-    std::array<char, 9> d{};
-    std::uint32_t n = t.nanosecond;
-    for (int k = 8; k >= 0; --k) {
-      d[static_cast<size_t>(k)] = static_cast<char>('0' + n % 10);
-      n /= 10;
-    }
-    int len = 9;
-    while (len > 1 && d[static_cast<size_t>(len - 1)] == '0') {
-      --len;
-    }
-    o.push_back('.');
-    o.append(d.data(), static_cast<size_t>(len));
+    const std::string frac = std::format("{:09}", t.nanosecond);
+    o += '.' + frac.substr(0, frac.find_last_not_of('0') + 1);
   }
 }
 

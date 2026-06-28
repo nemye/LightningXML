@@ -1034,9 +1034,9 @@ class Generator {
       }
       if (r.pattern && !r.pattern->value.empty()) {
         needs_regex_ = true;
-        out += "    if (" + g + "!std::regex_match(" + val + ", std::regex(\"" +
-               escapeStrLiteral(r.pattern->value) + "\"))) return \"" + mem +
-               ": pattern violation\";\n";
+        out += "    { static const std::regex pat(\"" + escapeStrLiteral(r.pattern->value) +
+               "\"); if (" + g + "!std::regex_match(" + val + ", pat)) return \"" + mem +
+               ": pattern violation\"; }\n";
       }
     } else {
       if (r.min_inclusive && !r.min_inclusive->value.empty()) {
