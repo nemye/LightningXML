@@ -39,6 +39,7 @@ jobs:
             -G Ninja \
             -DTURBOXML_BUILD_BENCHMARKS=OFF \
             -DTURBOXML_BUILD_TESTS=ON \
+            -DTURBOXML_BUILD_CODEGEN=ON \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build test targets
