@@ -461,6 +461,58 @@ struct VariantField {
 
 namespace detail {
 
+// define common lookup tables for parsing
+static constexpr auto SPACE_TABLE = [] {
+  std::array<bool, 256> t{false};
+  t[' '] = t['\t'] = t['\n'] = t['\r'] = true;
+  return t;
+}();
+
+static constexpr auto NAME_START_TABLE = [] {
+  std::array<bool, 256> t{false};
+  for (unsigned i = 'a'; i <= 'z'; ++i) {
+    t[i] = true;
+  }
+  for (unsigned i = 'A'; i <= 'Z'; ++i) {
+    t[i] = true;
+  }
+  for (unsigned i = 128; i < 256; ++i) {
+    t[i] = true;
+  }
+  t['_'] = t[':'] = true;
+  return t;
+}();
+
+static constexpr auto NAME_CHAR_TABLE = [] {
+  std::array<bool, 256> t = detail::NAME_START_TABLE;
+  for (unsigned i = '0'; i <= '9'; ++i) {
+    t[i] = true;
+  }
+  t['-'] = t['.'] = true;
+  return t;
+}();
+
+// helpers for parsing
+static constexpr void trimWhitespace(std::string_view& text) noexcept {
+  while (!text.empty() && detail::SPACE_TABLE[static_cast<unsigned char>(text.front())]) {
+    text.remove_prefix(1);
+  }
+
+  while (!text.empty() && detail::SPACE_TABLE[static_cast<unsigned char>(text.back())]) {
+    text.remove_suffix(1);
+  }
+}
+
+[[nodiscard]] static constexpr auto isSpace(char c) noexcept -> bool {
+  return detail::SPACE_TABLE[static_cast<unsigned char>(c)];
+}
+[[nodiscard]] static constexpr auto isNameStart(char c) noexcept -> bool {
+  return detail::NAME_START_TABLE[static_cast<unsigned char>(c)];
+}
+[[nodiscard]] static constexpr auto isNameChar(char c) noexcept -> bool {
+  return detail::NAME_CHAR_TABLE[static_cast<unsigned char>(c)];
+}
+
 // Support for XSD date/time types
 
 /// @brief A forward cursor over a date/time lexical form. Each scan method
@@ -1145,6 +1197,7 @@ inline ErrorCode appendNormalized(std::string& out, std::string_view raw, NormMo
 template<>
 struct XmlValueTraits<Date> {
   [[nodiscard]] static auto parse(std::string_view s, Date& d) -> bool {
+    detail::trimWhitespace(s);
     detail::DtCursor c{s};
     Date out{};
     if (!c.date(out) || !c.timezone(out.tz) || !c.atEnd()) {
@@ -1163,6 +1216,7 @@ struct XmlValueTraits<Date> {
 template<>
 struct XmlValueTraits<Time> {
   [[nodiscard]] static auto parse(std::string_view s, Time& t) -> bool {
+    detail::trimWhitespace(s);
     detail::DtCursor c{s};
     Time out{};
     if (!c.time(out) || !c.timezone(out.tz) || !c.atEnd()) {
@@ -1181,6 +1235,7 @@ struct XmlValueTraits<Time> {
 template<>
 struct XmlValueTraits<DateTime> {
   [[nodiscard]] static auto parse(std::string_view s, DateTime& dt) -> bool {
+    detail::trimWhitespace(s);
     detail::DtCursor c{s};
     DateTime out{};
     if (!c.date(out.date) || !c.eat('T') || !c.time(out.time) || !c.timezone(out.time.tz) ||
@@ -1302,36 +1357,6 @@ class BasicParser {
   [[nodiscard]] auto errorCode() const noexcept -> ErrorCode { return error_code_; }
 
  private:
-  static constexpr auto SPACE_TABLE = [] {
-    std::array<bool, 256> t{false};
-    t[' '] = t['\t'] = t['\n'] = t['\r'] = true;
-    return t;
-  }();
-
-  static constexpr auto NAME_START_TABLE = [] {
-    std::array<bool, 256> t{false};
-    for (unsigned i = 'a'; i <= 'z'; ++i) {
-      t[i] = true;
-    }
-    for (unsigned i = 'A'; i <= 'Z'; ++i) {
-      t[i] = true;
-    }
-    for (unsigned i = 128; i < 256; ++i) {
-      t[i] = true;
-    }
-    t['_'] = t[':'] = true;
-    return t;
-  }();
-
-  static constexpr auto NAME_CHAR_TABLE = [] {
-    std::array<bool, 256> t = NAME_START_TABLE;
-    for (unsigned i = '0'; i <= '9'; ++i) {
-      t[i] = true;
-    }
-    t['-'] = t['.'] = true;
-    return t;
-  }();
-
   [[nodiscard]] auto next() -> const Token*;
   [[nodiscard]] auto peek() -> const Token*;
 
@@ -1374,7 +1399,7 @@ class BasicParser {
   [[nodiscard]] auto peekChar() const noexcept -> char { return atEnd() ? '\0' : *cur_; }
 
   auto skipWhitespace() noexcept -> void {
-    while (!atEnd() && isSpace(*cur_)) [[likely]] {
+    while (!atEnd() && detail::isSpace(*cur_)) [[likely]] {
       ++cur_;
     }
   }
@@ -1433,20 +1458,10 @@ class BasicParser {
     cur_ = end_;
   }
 
-  [[nodiscard]] static constexpr auto isSpace(char c) noexcept -> bool {
-    return SPACE_TABLE[static_cast<unsigned char>(c)];
-  }
-  [[nodiscard]] static constexpr auto isNameStart(char c) noexcept -> bool {
-    return NAME_START_TABLE[static_cast<unsigned char>(c)];
-  }
-  [[nodiscard]] static constexpr auto isNameChar(char c) noexcept -> bool {
-    return NAME_CHAR_TABLE[static_cast<unsigned char>(c)];
-  }
-
   auto parseName(std::string_view& prefix, std::string_view& local,
                  FieldHash& local_hash) noexcept -> void {
     prefix = {};
-    if (atEnd() || !isNameStart(*cur_)) [[unlikely]] {
+    if (atEnd() || !detail::isNameStart(*cur_)) [[unlikely]] {
       local = {};
       local_hash = detail::FNV_OFFSET;
       return;
@@ -1455,7 +1470,7 @@ class BasicParser {
     const char* local_start = start;
     FieldHash hash = detail::FNV_OFFSET;
 
-    while (!atEnd() && isNameChar(*cur_)) {
+    while (!atEnd() && detail::isNameChar(*cur_)) {
       if (*cur_ == ':') {
         prefix = {start, static_cast<size_t>(cur_ - start)};
         local_start = cur_ + 1;
@@ -1548,11 +1563,11 @@ class BasicParser {
     auto eachToken = [&](auto handle) -> bool {
       size_t i = 0;
       while (i < text.size()) {
-        while (i < text.size() && isSpace(text[i])) {
+        while (i < text.size() && detail::isSpace(text[i])) {
           ++i;
         }
         const size_t start = i;
-        while (i < text.size() && !isSpace(text[i])) {
+        while (i < text.size() && !detail::isSpace(text[i])) {
           ++i;
         }
         if (i == start) {
@@ -2096,7 +2111,7 @@ inline auto BasicParser<Opts>::parseMarkup(Token& token) -> bool {
     ++cur_;
     return parsePi(token);
   }
-  if (isNameStart(c)) {
+  if (detail::isNameStart(c)) {
     return parseElementOpen(token);
   }
   return makeError(token, ErrorCode::UnexpectedCharAfterLt);
@@ -2127,7 +2142,7 @@ inline auto BasicParser<Opts>::parseElementOpen(Token& token) -> bool {
       token.self_closing = true;
       return true;
     }
-    if (!isNameStart(c)) {
+    if (!detail::isNameStart(c)) {
       return makeError(token, ErrorCode::ExpectedAttributeName);
     }
     if (attributes_.size() >= MAX_ATTRIBUTES_PER_ELEMENT) [[unlikely]] {
@@ -2193,7 +2208,7 @@ template<ParserOptions Opts>
 template<typename T>
 inline auto BasicParser<Opts>::parseNumeric(std::string_view text, T& out) noexcept -> bool {
   if constexpr (std::same_as<T, bool>) {
-    // XML Schema boolean lexical space; std::from_chars has no bool overload.
+    detail::trimWhitespace(text);
     if (text == "true" || text == "1") {
       out = true;
       return true;
@@ -2204,9 +2219,20 @@ inline auto BasicParser<Opts>::parseNumeric(std::string_view text, T& out) noexc
     }
     return false;
   } else {
+    detail::trimWhitespace(text);
+
     if (text.empty()) {
       return false;
     }
+
+    // protect from_chars from leading +
+    if (text.front() == '+') {
+      text.remove_prefix(1);
+      if (text.empty()) {
+        return false;
+      }
+    }
+
     const auto result = std::from_chars(text.data(), text.data() + text.size(), out);
     return result.ec == std::errc() && result.ptr == text.data() + text.size();
   }
@@ -2234,7 +2260,6 @@ inline auto BasicParser<Opts>::attr(const FieldHash hash, T& out, size_t& pos) -
   const Attribute& a = attributes_[idx];
   if constexpr (XmlOptional<T>) {
     // Parse into a temporary so a parse failure leaves the optional empty
-    // (rather than engaged with a half-parsed value).
     typename T::value_type tmp{};
     if (!assignAttrValue(tmp, a)) {
       return false;
@@ -2242,7 +2267,12 @@ inline auto BasicParser<Opts>::attr(const FieldHash hash, T& out, size_t& pos) -
     out = std::move(tmp);
     return true;
   } else {
-    return assignAttrValue(out, a);
+    // The attribute is present; a parse failure here is a malformed value
+    if (!assignAttrValue(out, a)) {
+      fail(scalarError<T>());
+      return false;
+    }
+    return true;
   }
 }
 
@@ -2275,7 +2305,7 @@ inline auto BasicParser<Opts>::endElement(std::string_view expected_name) -> boo
       const char* p = cur_;
       if (p[0] == '<' && p[1] == '/' && std::memcmp(p + 2, expected_name.data(), name_len) == 0) {
         p += 2 + name_len;
-        while (p < end_ && isSpace(*p)) {
+        while (p < end_ && detail::isSpace(*p)) {
           ++p;
         }
         if (p < end_ && *p == '>') {
@@ -2345,7 +2375,7 @@ inline auto BasicParser<Opts>::skipElement() -> void {
     } else if (c == '?') {
       ++cur_;
       skipPast("?>");
-    } else if (isNameStart(c)) {
+    } else if (detail::isNameStart(c)) {
       // Open tag: find the closing '>' outside quoted attribute values.
       bool closed = false;
       bool self_closing = false;
@@ -2475,13 +2505,9 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   constexpr bool HAS_ATTRS = detail::hasAttrFields<T>();
   if constexpr (HAS_ATTRS) {
     dispatchAttrs<T>(*this, object, parsed, IDX_SEQ);
-    if constexpr (NORMALIZE) {
-      // A string attribute may have carried a malformed/undefined reference;
-      // attr() recorded the code but reports "absent". Surface it as a hard
-      // failure now (only compiled in for the normalizing parser).
-      if (error()) [[unlikely]] {
-        return false;
-      }
+    // A string attribute may have carried a malformed/undefined reference
+    if (error()) [[unlikely]] {
+      return false;
     }
   }
 
