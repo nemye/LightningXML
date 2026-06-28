@@ -213,7 +213,7 @@ constexpr auto vecField(std::string_view name, M C::*m,
 template<typename C, typename M>
 constexpr auto arrField(std::string_view name, M C::*m,
                         bool required = false) -> ContainerField<C, M> {
-  return detail::makeField<FieldKind::Container>(name, m, required);
+  return vecField(name, m, required);
 }
 
 /// @brief Creates a list field: a single element whose text is a
@@ -636,24 +636,21 @@ namespace detail {
 /// @return false if no token matches (an undefined enumeration value).
 template<typename E>
 constexpr auto enumFromString(std::string_view s, E& out) noexcept -> bool {
-  for (const auto& [name, value] : XmlEnumTraits<E>::values) {
-    if (name == s) {
-      out = value;
-      return true;
-    }
+  const auto& vals = XmlEnumTraits<E>::values;
+  const auto it = std::ranges::find_if(vals, [&](const auto& p) { return p.first == s; });
+  if (it == vals.end()) {
+    return false;
   }
-  return false;
+  out = it->second;
+  return true;
 }
 
 /// @brief Maps an enumerator back to its XML token, or "" if unmapped.
 template<typename E>
 constexpr auto enumToString(E v) noexcept -> std::string_view {
-  for (const auto& [name, value] : XmlEnumTraits<E>::values) {
-    if (value == v) {
-      return name;
-    }
-  }
-  return {};
+  const auto& vals = XmlEnumTraits<E>::values;
+  const auto it = std::ranges::find_if(vals, [v](const auto& p) { return p.second == v; });
+  return it != vals.end() ? it->first : std::string_view{};
 }
 
 }  // namespace detail
@@ -922,7 +919,11 @@ template<typename T>
 constexpr auto makeRequiredMask() noexcept -> RequiredMaskT<T> {
   RequiredMaskT<T> mask{};
   [&]<size_t... I>(std::index_sequence<I...>) {
-    ((void)(std::get<I>(XmlMetadata<T>::fields).required && (mask.set(I), true)), ...);
+    ([&] {
+      if (std::get<I>(XmlMetadata<T>::fields).required) {
+        mask.set(I);
+      }
+    }(), ...);
   }(FIELD_SEQ<T>);
   return mask;
 }
@@ -966,24 +967,16 @@ constexpr auto hasVariantFields() noexcept -> bool {
 template<typename T>
 constexpr auto valueFieldIndex() noexcept -> size_t {
   constexpr auto kinds = makeFieldKinds<T>();
-  for (size_t i = 0; i < kinds.size(); ++i) {
-    if (kinds[i] == FieldKind::Value) {
-      return i;
-    }
-  }
-  return 0;
+  const auto it = std::ranges::find(kinds, FieldKind::Value);
+  return static_cast<size_t>(std::distance(kinds.begin(), it));
 }
 
 /// @brief Index of the first child-element field, or 0 if none.
 template<typename T>
 constexpr auto firstElemIndex() noexcept -> size_t {
   constexpr auto kinds = makeFieldKinds<T>();
-  for (size_t i = 0; i < kinds.size(); ++i) {
-    if (isElementKind(kinds[i])) {
-      return i;
-    }
-  }
-  return 0;
+  const auto it = std::ranges::find_if(kinds, isElementKind);
+  return it != kinds.end() ? static_cast<size_t>(std::distance(kinds.begin(), it)) : 0;
 }
 
 /// @brief Cyclic successor table over child-element fields: entry i holds
@@ -1593,9 +1586,8 @@ class BasicParser {
   template<typename Container>
   auto splitInto(Container& out, std::string_view text) -> bool {
     using Traits = XmlContainerTraits<Container>;
-    size_t i = 0;
-    if constexpr (XmlFixedContainer<Container>) {
-      size_t fill = 0;
+    auto eachToken = [&](auto handle) -> bool {
+      size_t i = 0;
       while (i < text.size()) {
         while (i < text.size() && isSpace(text[i])) {
           ++i;
@@ -1607,59 +1599,39 @@ class BasicParser {
         if (i == start) {
           break;
         }
-        const std::string_view tok = text.substr(start, i - start);
-        if (fill < Traits::capacity) {
-          if (!assignToken(Traits::at(out, fill), tok)) {
-            return false;
-          }
-          ++fill;
+        if (!handle(text.substr(start, i - start))) {
+          return false;
         }
       }
+      return true;
+    };
+    if constexpr (XmlFixedContainer<Container>) {
+      size_t fill = 0;
+      return eachToken([&](std::string_view tok) {
+        if (fill < Traits::capacity) {
+          if (!assignToken(Traits::at(out, fill++), tok)) {
+            return false;
+          }
+        }
+        return true;
+      });
     } else {
-      while (i < text.size()) {
-        while (i < text.size() && isSpace(text[i])) {
-          ++i;
-        }
-        const size_t start = i;
-        while (i < text.size() && !isSpace(text[i])) {
-          ++i;
-        }
-        if (i == start) {
-          break;
-        }
-        const std::string_view tok = text.substr(start, i - start);
+      return eachToken([&](std::string_view tok) {
         auto& slot = Traits::emplace(out);
         if (!assignToken(slot, tok)) {
           Traits::pop(out);
           return false;
         }
-      }
+        return true;
+      });
     }
-    return true;
   }
 
   // Reads a list element's text, then splits it into the container member.
-  // Mirrors readChardata's raw branch but tokenizes the value.
   template<typename Container>
   auto readList(Container& out, std::string_view expected_name) -> bool {
     std::string_view text;
-    while (const Token* tok = peek()) {
-      if (tok->type == TokenType::Text || tok->type == TokenType::CData) {
-        text = tok->data;
-        consumePeeked();
-      } else if (tok->type == TokenType::ElementClose) {
-        if (tok->name != expected_name) {
-          return fail(ErrorCode::ElementMismatch);
-        }
-        consumePeeked();
-        return splitInto(out, text);
-      } else if (tok->type == TokenType::Error) {
-        return false;
-      } else {
-        consumePeeked();
-      }
-    }
-    return fail(ErrorCode::UnexpectedEof);
+    return readChardata<true>(text, expected_name) && splitInto(out, text);
   }
 
   // Validates and consumes a readChardata closing tag. ConsumeClose drives the
@@ -2711,21 +2683,48 @@ class Serializer {
   }
 
   // Escapes '&' and '<' always; attribute values additionally escape '"',
-  // text content escapes '>'.
+  // text content escapes '>'. Copies safe byte runs in bulk via append().
   template<bool kAttr>
   static auto escape(std::string& out, std::string_view s) -> void {
-    for (const char c : s) {
-      if (c == '&') {
-        out += "&amp;";
-      } else if (c == '<') {
-        out += "&lt;";
-      } else if (!kAttr && c == '>') {
-        out += "&gt;";
-      } else if (kAttr && c == '"') {
-        out += "&quot;";
-      } else {
-        out += c;
+    static constexpr auto kSpecial = [] {
+      std::array<bool, 256> t{};
+      t[static_cast<unsigned char>('&')] = true;
+      t[static_cast<unsigned char>('<')] = true;
+      if constexpr (!kAttr) {
+        t[static_cast<unsigned char>('>')] = true;
       }
+      if constexpr (kAttr) {
+        t[static_cast<unsigned char>('"')] = true;
+      }
+      return t;
+    }();
+    out.reserve(out.size() + s.size());
+    const char* p = s.data();
+    const char* const e = p + s.size();
+    while (p < e) {
+      const char* q = p;
+      while (q < e && !kSpecial[static_cast<unsigned char>(*q)]) {
+        ++q;
+      }
+      out.append(p, q);
+      if (q == e) {
+        break;
+      }
+      switch (*q) {
+        case '&':
+          out += "&amp;";
+          break;
+        case '<':
+          out += "&lt;";
+          break;
+        case '>':
+          out += "&gt;";
+          break;
+        default:
+          out += "&quot;";
+          break;
+      }
+      p = q + 1;
     }
   }
 
