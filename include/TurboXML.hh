@@ -6,6 +6,7 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <compare>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -166,7 +167,7 @@ namespace detail {
 /// @brief Shared factory behind field/attrField/vecField/arrField.
 template<FieldKind K, typename C, typename M>
 constexpr auto makeField(std::string_view name, M C::*m, bool required) -> FieldBase<K, C, M> {
-  return {name, m, hashFieldName(name), required};
+  return {.xml_name = name, .member = m, .hash = hashFieldName(name), .required = required};
 }
 
 }  // namespace detail
@@ -346,7 +347,7 @@ struct Date {
   [[nodiscard]] constexpr auto toSysDays() const -> std::chrono::sys_days {
     return std::chrono::sys_days{toYearMonthDay()};
   }
-  auto operator==(const Date&) const -> bool = default;
+  auto operator<=>(const Date&) const = default;
 };
 
 /// @brief An XSD `time`: time of day with optional fractional seconds and an
@@ -364,7 +365,7 @@ struct Time {
     using namespace std::chrono;
     return hours{hour} + minutes{minute} + seconds{second} + nanoseconds{nanosecond};
   }
-  auto operator==(const Time&) const -> bool = default;
+  auto operator<=>(const Time&) const = default;
 };
 
 /// @brief An XSD `dateTime`: a `Date` and `Time`; any timezone is carried on
@@ -383,7 +384,7 @@ struct DateTime {
     }
     return t;
   }
-  auto operator==(const DateTime&) const -> bool = default;
+  auto operator<=>(const DateTime&) const = default;
 };
 
 namespace detail {

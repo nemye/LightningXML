@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <format>
 #include <functional>
 #include <optional>
 #include <string>
@@ -540,7 +541,7 @@ class Generator {
     std::string name = base;
     int n = 2;
     while (used_names_.contains(name)) {
-      name = base + std::to_string(n++);
+      name = std::format("{}{}", base, n++);
     }
     used_names_.insert(name);
     return name;
@@ -1083,8 +1084,9 @@ class Generator {
     auto process_element = [&](const Element& el) {
       const std::string mem = detail::sanitize(el.name);
       if (const auto n = finiteMaxOccurs(el)) {
-        body += "    if (v." + mem + ".size() > " + std::to_string(*n) + ") return \"" + mem +
-                ": maxOccurs violation (max=" + std::to_string(*n) + ")\";\n";
+        body +=
+            std::format("    if (v.{}.size() > {}) return \"{}: maxOccurs violation (max={})\";\n",
+                        mem, *n, mem, *n);
       }
       if (isUnbounded(el) || (el.simple_type && el.simple_type->list)) {
         return;

@@ -5,6 +5,7 @@
 
 #include <charconv>
 #include <cstring>
+#include <format>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -110,9 +111,9 @@ static auto generateLargeXml(size_t count) -> std::string {
   std::string xml = "<?xml version=\"1.0\"?>\n<Users>\n";
   xml.reserve(count * 100 + 30);
   for (size_t i = 0; i < count; ++i) {
-    xml += "  <User id=\"" + std::to_string(i) + "\">\n";
-    xml += "    <Name>Benchmark User " + std::to_string(i) + "</Name>\n";
-    xml += "    <Email>user" + std::to_string(i) + "@example.com</Email>\n";
+    xml += std::format("  <User id=\"{}\">\n", i);
+    xml += std::format("    <Name>Benchmark User {}</Name>\n", i);
+    xml += std::format("    <Email>user{}@example.com</Email>\n", i);
     xml += "  </User>\n";
   }
   xml += "</Users>";
@@ -123,9 +124,8 @@ static auto generateFlatXml(size_t count) -> std::string {
   std::string xml = "<?xml version=\"1.0\"?>\n<FlatList>\n";
   xml.reserve(count * 150 + 50);
   for (size_t i = 0; i < count; ++i) {
-    const std::string idx = std::to_string(i);
-    xml += "  <Item id=\"" + idx + "\">\n";
-    xml += "    <title>Item Title " + idx + "</title>\n";
+    xml += std::format("  <Item id=\"{}\">\n", i);
+    xml += std::format("    <title>Item Title {}</title>\n", i);
     xml += "    <desc>Some relatively short description text here.</desc>\n";
     xml += "    <status>1</status>\n";
     xml += "  </Item>\n";
@@ -139,7 +139,7 @@ static auto generateDeepXml(size_t count) -> std::string {
   xml.reserve(count * 150 + 50);
   for (size_t i = 0; i < count; ++i) {
     xml += "  <L1><L2><L3><L4><L5>\n";
-    xml += "    <v>" + std::to_string(i) + "</v>\n";
+    xml += std::format("    <v>{}</v>\n", i);
     xml += "  </L5></L4></L3></L2></L1>\n";
   }
   xml += "</DeepList>";
@@ -150,8 +150,7 @@ static auto generateAttrXml(size_t count) -> std::string {
   std::string xml = "<?xml version=\"1.0\"?>\n<AttrList>\n";
   xml.reserve(count * 200 + 50);
   for (size_t i = 0; i < count; ++i) {
-    const std::string idx = std::to_string(i);
-    xml += "  <Item a1=\"" + idx + "\" a2=\"2\" a3=\"3\" a4=\"4\" a5=\"5\" ";
+    xml += std::format("  <Item a1=\"{}\" a2=\"2\" a3=\"3\" a4=\"4\" a5=\"5\" ", i);
     xml += "s1=\"str1\" s2=\"str2\" s3=\"str3\" s4=\"str4\" s5=\"str5\"/>\n";
   }
   xml += "</AttrList>";
@@ -163,17 +162,15 @@ static auto generateOrgXml(size_t teams, size_t members) -> std::string {
   xml += R"(<Organization id="1" name="Acme Corp">)"
          "\n";
   for (size_t d = 0; d < 2; ++d) {
-    xml +=
-        "  <Department id=\"" + std::to_string(d) + "\" name=\"Dept" + std::to_string(d) + "\">\n";
+    xml += std::format("  <Department id=\"{}\" name=\"Dept{}\">\n", d, d);
     for (size_t t = 0; t < teams; ++t) {
       size_t tid = d * teams + t;
-      xml += "    <Team id=\"" + std::to_string(tid) + "\" name=\"Team" + std::to_string(tid) +
-             "\">\n";
+      xml += std::format("    <Team id=\"{}\" name=\"Team{}\">\n", tid, tid);
       for (size_t m = 0; m < members; ++m) {
-        std::string mid = std::to_string(tid * members + m);
-        xml += "      <Member id=\"" + mid + "\" role=\"Engineer\">\n";
-        xml += "        <FullName>Member " + mid + "</FullName>\n";
-        xml += "        <Email>m" + mid + "@acme.com</Email>\n";
+        const size_t mid = tid * members + m;
+        xml += std::format("      <Member id=\"{}\" role=\"Engineer\">\n", mid);
+        xml += std::format("        <FullName>Member {}</FullName>\n", mid);
+        xml += std::format("        <Email>m{}@acme.com</Email>\n", mid);
         xml +=
             "        <Skills><Skill>C++</Skill><Skill>Python</Skill>"
             "<Skill>Rust</Skill></Skills>\n";
@@ -200,10 +197,10 @@ static auto generateCommentHeavyXml(size_t count) -> std::string {
   std::string xml = "<?xml version=\"1.0\"?>\n<Users>\n";
   xml.reserve(count * 700);
   for (size_t i = 0; i < count; ++i) {
-    xml += "  <!-- comment " + std::to_string(i) + " " + filler + " -->\n";
-    xml += "  <User id=\"" + std::to_string(i) + "\">\n";
-    xml += "    <Name>User " + std::to_string(i) + "</Name>\n";
-    xml += "    <Email>u" + std::to_string(i) + "@e.com</Email>\n";
+    xml += std::format("  <!-- comment {} {} -->\n", i, filler);
+    xml += std::format("  <User id=\"{}\">\n", i);
+    xml += std::format("    <Name>User {}</Name>\n", i);
+    xml += std::format("    <Email>u{}@e.com</Email>\n", i);
     xml += "  </User>\n";
   }
   xml += "</Users>";
@@ -216,9 +213,8 @@ static auto generateUnknownHeavyXml(size_t count) -> std::string {
   std::string xml = "<?xml version=\"1.0\"?>\n<Users>\n";
   xml.reserve(count * 700);
   for (size_t i = 0; i < count; ++i) {
-    const std::string idx = std::to_string(i);
-    xml += "  <User id=\"" + idx + "\">\n";
-    xml += "    <Name>User " + idx + "</Name>\n";
+    xml += std::format("  <User id=\"{}\">\n", i);
+    xml += std::format("    <Name>User {}</Name>\n", i);
     xml += "    <Meta source=\"import\" rev=\"4\">\n";
     xml += "      <Created by=\"sys\">2026-01-01T00:00:00Z</Created>\n";
     xml += "      <Tags><Tag v=\"a\"/><Tag v=\"b\"/><Tag v=\"c\"/></Tags>\n";
@@ -229,7 +225,7 @@ static auto generateUnknownHeavyXml(size_t count) -> std::string {
     xml += "      <Nested><Deep><Deeper attr=\"q\">zzz</Deeper></Deep>";
     xml += "</Nested>\n";
     xml += "    </Meta>\n";
-    xml += "    <Email>u" + idx + "@e.com</Email>\n";
+    xml += std::format("    <Email>u{}@e.com</Email>\n", i);
     xml += "  </User>\n";
   }
   xml += "</Users>";
