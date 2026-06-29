@@ -47,8 +47,7 @@ enum class TokenType : uint8_t {
 /// Query via Parser::errorCode() after deserialize() returns false. The
 /// first error encountered wins; later cascading failures do not overwrite it.
 enum class ErrorCode : uint8_t {
-  None = 0,  ///< No error.
-  // Start-tag / attribute structure
+  None = 0,                    ///< No error.
   UnexpectedEndAfterLt,        ///< "<" with nothing after it.
   UnexpectedCharAfterLt,       ///< Char after "<" cannot begin markup.
   ExpectedElementName,         ///< Missing element name in a start-tag.
@@ -60,31 +59,28 @@ enum class ErrorCode : uint8_t {
   UnterminatedAttributeValue,  ///< No closing quote on an attribute value.
   ExpectedNameInCloseTag,      ///< Empty name in an end-tag ("</>").
   ExpectedCloseTagEnd,         ///< Missing '>' in an end-tag.
-  // Unterminated / malformed constructs
-  ExpectedPiTarget,     ///< Missing PI target name.
-  ReservedPiTarget,     ///< PI target is a reserved case-variant of "xml".
-  UnterminatedComment,  ///< Comment with no "-->".
-  MalformedComment,     ///< "--" appears inside a comment's content.
-  UnterminatedCData,    ///< CDATA section with no "]]>".
-  UnterminatedPi,       ///< PI with no "?>".
-  // Content / structure
-  InvalidNumericValue,   ///< Numeric/bool field text failed to parse.
-  InvalidEnumValue,      ///< Enum field text matched no XmlEnumTraits token.
-  InvalidValue,          ///< Custom-value (e.g. date/time) text failed to parse.
-  RootElementNotFound,   ///< Requested root element not present.
-  ElementMismatch,       ///< End-tag name does not match its start-tag.
-  UnexpectedEof,         ///< Input ended mid-element.
-  DepthExceeded,         ///< Nesting deeper than MAX_DEPTH.
-  MissingRequiredField,  ///< A field marked required was absent from the
-                         ///< element.
-  UndefinedEntity,       ///< Reference to an entity that is not one of the five
-                         ///< predefined entities (no DTD is processed).
-  InvalidCharRef,        ///< Malformed or out-of-range character reference
-                         ///< (e.g. "&#;", "&#xZZ;", or a non-XML code point).
-  // Strict well-formedness (StrictParser only)
-  CDataEndInContent,   ///< "]]>" appears in character data (Production [14]).
-  LtInAttributeValue,  ///< '<' appears in an attribute value (Production [10]).
-  DuplicateAttribute,  ///< Two attributes share a name (WFC: Unique Att Spec).
+  ExpectedPiTarget,            ///< Missing PI target name.
+  ReservedPiTarget,            ///< PI target is a reserved case-variant of "xml".
+  UnterminatedComment,         ///< Comment with no "-->".
+  MalformedComment,            ///< "--" appears inside a comment's content.
+  UnterminatedCData,           ///< CDATA section with no "]]>".
+  UnterminatedPi,              ///< PI with no "?>".
+  InvalidNumericValue,         ///< Numeric/bool field text failed to parse.
+  InvalidEnumValue,            ///< Enum field text matched no XmlEnumTraits token.
+  InvalidValue,                ///< Custom-value (e.g. date/time) text failed to parse.
+  RootElementNotFound,         ///< Requested root element not present.
+  ElementMismatch,             ///< End-tag name does not match its start-tag.
+  UnexpectedEof,               ///< Input ended mid-element.
+  DepthExceeded,               ///< Nesting deeper than MAX_DEPTH.
+  MissingRequiredField,        ///< A field marked required was absent from the
+                               ///< element.
+  UndefinedEntity,             ///< Reference to an entity that is not one of the five
+                               ///< predefined entities (no DTD is processed).
+  InvalidCharRef,              ///< Malformed or out-of-range character reference
+                               ///< (e.g. "&#;", "&#xZZ;", or a non-XML code point).
+  CDataEndInContent,           ///< "]]>" appears in character data (Production [14]).
+  LtInAttributeValue,          ///< '<' appears in an attribute value (Production [10]).
+  DuplicateAttribute,          ///< Two attributes share a name (WFC: Unique Att Spec).
 };
 
 /// @brief Returned by xml::validate() when an XmlConstraints check fails.
@@ -112,7 +108,6 @@ struct Token {
   bool self_closing{};      ///< True for self-closing elements (<foo/>).
 };
 
-// FNV-1a helpers
 namespace detail {
 
 static constexpr FieldHash FNV_OFFSET = 14695981039346656037ULL;
@@ -229,7 +224,6 @@ constexpr auto listField(std::string_view name, M C::*m, bool required = false) 
   return {.xml_name = name, .member = m, .hash = detail::hashFieldName(name), .required = required};
 }
 
-// Metadata + concepts
 /// @brief Specialize this to register XML field mappings for type T.
 ///
 /// The specialization must provide `static constexpr auto fields` as a tuple
@@ -318,8 +312,6 @@ concept XmlCustomValue = requires(std::string_view s, T& v, const T& cv, std::st
 /// XmlObject.
 template<typename T>
 concept XmlScalar = XmlPrimitive<T> || XmlEnum<T> || XmlCustomValue<T>;
-
-// Built-in date/time value types (XSD date / dateTime / time)
 
 /// @brief An XSD `date`: a proleptic Gregorian calendar date with an optional
 /// timezone. Construct from XML via a field typed `xml::Date`; obtain chrono
@@ -461,7 +453,6 @@ struct VariantField {
 
 namespace detail {
 
-// define common lookup tables for parsing
 static constexpr auto SPACE_TABLE = [] {
   std::array<bool, 256> t{false};
   t[' '] = t['\t'] = t['\n'] = t['\r'] = true;
@@ -492,7 +483,6 @@ static constexpr auto NAME_CHAR_TABLE = [] {
   return t;
 }();
 
-// helpers for parsing
 static constexpr void trimWhitespace(std::string_view& text) noexcept {
   while (!text.empty() && detail::SPACE_TABLE[static_cast<unsigned char>(text.front())]) {
     text.remove_prefix(1);
@@ -512,8 +502,6 @@ static constexpr void trimWhitespace(std::string_view& text) noexcept {
 [[nodiscard]] static constexpr auto isNameChar(char c) noexcept -> bool {
   return detail::NAME_CHAR_TABLE[static_cast<unsigned char>(c)];
 }
-
-// Support for XSD date/time types
 
 /// @brief A forward cursor over a date/time lexical form. Each scan method
 /// advances past what it consumed on success and leaves the cursor unchanged on
@@ -703,7 +691,6 @@ constexpr auto enumToString(E v) noexcept -> std::string_view {
   return it != vals.end() ? it->first : std::string_view{};
 }
 
-// Variant support (xs:choice -> std::variant)
 template<typename T>
 struct IsVariant : std::false_type {};
 template<typename... Ts>
@@ -933,8 +920,6 @@ constexpr auto makeNextElemTable() noexcept {
   return next;
 }
 
-// Variant (xs:choice) matcher tables
-
 /// @brief A single (variant field, alternative) match target: the alternative's
 /// element-name hash, the field's index, and the std::variant alternative
 /// index.
@@ -979,9 +964,8 @@ constexpr auto makeVariantMatchers() noexcept {
   return out;
 }
 
-// Compile-time check that no two element names collide under FNV-1a: among the
-// named (element/attribute/container) fields, and across variant alternatives
-// (which must be unique among themselves and disjoint from named fields).
+// Rejects FNV-1a collisions among named fields and variant alternatives, which
+// would otherwise alias during hash dispatch.
 template<typename T>
 constexpr auto allNamesUnique() noexcept -> bool {
   constexpr auto hashes = makeFieldHashes<T>();
@@ -1012,8 +996,6 @@ constexpr auto allNamesUnique() noexcept -> bool {
   return true;
 }
 
-// Compile-time check that no std::optional member is marked required: an
-// optional field is inherently optional, so the combination is rejected.
 template<typename T>
 constexpr auto optionalsNotRequired() noexcept -> bool {
   bool ok = true;
@@ -1030,8 +1012,6 @@ constexpr auto optionalsNotRequired() noexcept -> bool {
   }(FIELD_SEQ<T>);
   return ok;
 }
-
-// Text normalization (owning std::string fields, opt-in)
 
 /// @brief How a run of character data is normalized when appended to an owning
 /// std::string field. Reference expansion and line-ending normalization only
@@ -1369,8 +1349,6 @@ class BasicParser {
   template<typename T>
   static auto parseNumeric(std::string_view text, T& out) noexcept -> bool;
 
-  // Parse a non-string scalar (arithmetic/bool, a mapped enum, or a custom
-  // value type such as a date) from text.
   template<typename T>
   static auto parseScalar(std::string_view text, T& out) -> bool {
     if constexpr (XmlEnum<T>) {
@@ -1382,7 +1360,6 @@ class BasicParser {
     }
   }
 
-  // Error code reported when parseScalar<T> fails on element text.
   template<typename T>
   static constexpr auto scalarError() noexcept -> ErrorCode {
     if constexpr (XmlEnum<T>) {
@@ -1601,7 +1578,6 @@ class BasicParser {
     }
   }
 
-  // Reads a list element's text, then splits it into the container member.
   template<typename Container>
   auto readList(Container& out, std::string_view expected_name) -> bool {
     std::string_view text;
@@ -1678,9 +1654,8 @@ class BasicParser {
       while (const Token* tok = peek()) {
         if (tok->type == TokenType::Text || tok->type == TokenType::CData) {
           if constexpr (NORMALIZE) {
-            const detail::NormMode mode = tok->type == TokenType::CData
-                                              ? detail::NormMode::CData
-                                              : detail::NormMode::Text;
+            const detail::NormMode mode =
+                tok->type == TokenType::CData ? detail::NormMode::CData : detail::NormMode::Text;
             if (const ErrorCode ec = detail::appendNormalized(scalar_buf_, tok->data, mode);
                 ec != ErrorCode::None) {
               return fail(ec);
@@ -1749,8 +1724,7 @@ class BasicParser {
   auto nextFromSource(Token& token) -> bool;
   auto skipElement() -> void;
 
-  // First occurrence of `c` in [from, end_), or end_ if absent - std::find
-  // semantics over the parse range.
+  // First occurrence of `c` in [from, end_), or end_ if absent.
   [[nodiscard]] auto findByte(const char* from, char c) const noexcept -> const char* {
     const char* hit =
         static_cast<const char*>(std::memchr(from, c, static_cast<size_t>(end_ - from)));
@@ -1794,7 +1768,6 @@ class BasicParser {
     return makeError(token, ec);
   }
 
-  // Advances past the next occurrence of delim; cur_ = end_ if absent.
   auto skipPast(std::string_view delim) noexcept -> void {
     const char first = delim[0];
     while (cur_ < end_) {
@@ -2075,7 +2048,6 @@ template<ParserOptions Opts, typename T>
   return true;
 }
 
-// Parser method implementations
 template<ParserOptions Opts>
 inline auto BasicParser<Opts>::peek() -> const Token* {
   if (!has_peek_) {

@@ -846,7 +846,6 @@ TEST_F(TurboBasicTests, MalformedTagGarbageFails) {
   EXPECT_EQ(parser.errorCode(), xml::ErrorCode::ExpectedAttributeName);
 }
 
-// Helper to generate perfectly nested XML
 auto generateNestedXml(const size_t depth) -> std::string {
   std::string xml;
   xml.reserve(depth * 13);  // "<Node></Node>" is 13 chars
@@ -881,8 +880,6 @@ TEST_F(TurboBasicTests, MaxDepthExceededFailsCleanly) {
   EXPECT_FALSE(xml::deserialize(parser, "Node", root));
   EXPECT_EQ(parser.errorCode(), xml::ErrorCode::DepthExceeded);
 }
-
-// try_begin_element fast-path coverage
 
 /// @brief Compact deep XML with zero whitespace between tags.
 /// Every open tag hits try_begin_element directly.
@@ -975,8 +972,6 @@ TEST_F(TurboBasicTests, DeepNestingWithUnknownSiblings) {
   EXPECT_EQ(list.items[1].next.next.next.next.value, 2);
 }
 
-// AttrField / element-name collision
-
 /// @brief A child element whose name matches an AttrField hash must be
 /// skipped without disrupting the parse (exercises the FieldKind::Attr dispatch
 /// arm).
@@ -997,8 +992,6 @@ TEST_F(TurboBasicTests, ElementNameCollidesWithAttrField) {
   EXPECT_EQ(users.items[0].name, "Collider");
   EXPECT_EQ(users.items[0].email, "c@c.com");
 }
-
-// Container edge cases
 
 /// @brief Empty vector container: root element with no matching children.
 TEST_F(TurboBasicTests, EmptyVectorContainer) {
@@ -1033,8 +1026,6 @@ TEST_F(TurboBasicTests, ConsecutiveSelfClosingInVector) {
     EXPECT_TRUE(users.items[i].name.empty());
   }
 }
-
-// Vec of primitives
 
 /// @brief Empty Skills (vec of string_view primitives).
 TEST_F(TurboBasicTests, VecOfPrimitivesEmpty) {
@@ -1075,8 +1066,6 @@ TEST_F(TurboBasicTests, VecOfPrimitivesSelfClosing) {
   EXPECT_TRUE(skills.items[1].empty());
   EXPECT_EQ(skills.items[2], "B");
 }
-
-// AttrItem / FlatItem coverage
 
 /// @brief All 10 attributes populated on AttrItem.
 TEST_F(TurboBasicTests, FullAttrItemAllAttributesParsed) {
@@ -1155,8 +1144,6 @@ TEST_F(TurboBasicTests, FlatListParsing) {
   EXPECT_EQ(list.items[1].description, "Description two");
   EXPECT_EQ(list.items[1].status, 1);
 }
-
-// Parser resilience
 
 /// @brief Reset after a failed parse must allow a clean retry.
 TEST_F(TurboBasicTests, ResetAfterFailedParse) {
@@ -1427,8 +1414,6 @@ TEST_F(TurboBasicTests, ArrFieldMixedOverflow) {
   EXPECT_EQ(rec.scores[3], 4);
 }
 
-// document-order hint fast path
-
 /// @brief An unknown element whose name extends a mapped field's name
 /// ("titles" vs "title") must not be matched by the document-order fast
 /// path; it is skipped and all mapped siblings parse correctly.
@@ -1488,8 +1473,6 @@ TEST_F(TurboBasicTests, OutOfOrderThenInOrderItems) {
   EXPECT_EQ(list.items[2].description, "dc");
   EXPECT_EQ(list.items[2].status, 7);
 }
-
-// bool fields
 
 /// @brief Bool fields accept the XML Schema boolean lexical space
 /// ("true", "false", "1", "0") as both attributes and elements.
@@ -1557,8 +1540,6 @@ TEST_F(TurboBasicTests, SerializerBoolRoundTrip) {
   EXPECT_FALSE(out.active);
   EXPECT_TRUE(out.verbose);
 }
-
-// Serializer
 
 TEST_F(TurboBasicTests, SerializerPrimitiveFields) {
   Person person;
@@ -1718,8 +1699,6 @@ TEST_F(TurboBasicTests, SerializerRoundTripOrganization) {
   EXPECT_EQ(out.departments[0].teams[0].members[0].skills.items[0], "C++");
 }
 
-// Required fields (optional by default)
-
 struct ReqRecord {
   int id{};               // required attribute
   std::string_view name;  // required element
@@ -1860,8 +1839,6 @@ TEST_F(TurboBasicTests, RequiredNestedObjectCompleteSucceeds) {
   EXPECT_EQ(p.child.id, 1);
   EXPECT_EQ(p.child.name, "Ada");
 }
-
-// Resource bounds (untrusted input)
 
 /// @brief Exactly kMaxAttributesPerElement attributes is accepted (boundary).
 TEST_F(TurboBasicTests, MaxAttributesBoundaryAccepted) {

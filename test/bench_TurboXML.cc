@@ -13,13 +13,6 @@
 #include "Helpers.hh"
 #include "TurboXML.hh"
 
-// ---- Benchmark record types ----
-//
-// Record/metadata declarations used by the field-handling benchmarks below
-// (required-vs-optional tracking and string normalization). Each pairs an
-// xml::XmlMetadata specialization with its struct; the per-benchmark comments
-// further down explain how they are compared.
-
 // Optional fields (default): no presence tracking is emitted.
 struct OptItem {
   int id{};
@@ -93,7 +86,6 @@ struct xml::XmlMetadata<NormItemList> {
   static constexpr auto fields = std::make_tuple(xml::vecField("Item", &NormItemList::items));
 };
 
-// Helper functions
 static auto buildTreeXml(std::string& xml, int depth, int branching) -> void {
   if (depth <= 0) {
     xml += "<Node/>";
@@ -106,7 +98,6 @@ static auto buildTreeXml(std::string& xml, int depth, int branching) -> void {
   xml += "</Node>";
 }
 
-// Payload generators
 static auto generateLargeXml(size_t count) -> std::string {
   std::string xml = "<?xml version=\"1.0\"?>\n<Users>\n";
   xml.reserve(count * 100 + 30);
@@ -483,17 +474,10 @@ static auto bmParseCatalog(benchmark::State& state) -> void {
   state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(kCatalogXml.size()));
 }
 
-// ---- StrictParser across the comparison workloads ----
-//
-// The same workloads and output records as the default-Parser benchmarks above,
-// but parsed with xml::StrictParser (normalize + strict well-formedness). On
-// the std::string_view records the views stay raw and zero-copy; the extra cost
-// is purely the three well-formedness scans (']]>' in content, '<' in attribute
-// values, duplicate attribute names). The std::string Catalog additionally
-// routes its owning fields through the normalization scan. This places a
-// fully-conforming TurboXML configuration next to the validating tree parsers
-// (pugixml / libxml2) on identical input.
-
+// The default-Parser workloads re-run under xml::StrictParser, isolating the
+// cost of the well-formedness scans (']]>' in content, '<' in attribute values,
+// duplicate attributes) plus normalization on the owning-string Catalog. Puts a
+// fully-conforming configuration next to the validating tree parsers.
 static auto bmStrictParseFlatXml(benchmark::State& state) -> void {
   for (auto _ : state) {
     xml::StrictParser parser{kFlatXml};
@@ -602,17 +586,10 @@ static auto bmStrictParseCatalog(benchmark::State& state) -> void {
   state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(kCatalogXml.size()));
 }
 
-// ---- Required vs optional fields ----
-//
-// Two records with identical members and the identical payload (kFlatXml, a
-// 2000-element <FlatList> of <Item id><title><desc><status>); the only
-// difference is whether the fields are declared required. Marking a field
-// required turns on per-element presence tracking (a bitmask OR at each matched
-// field) plus a mask comparison at each closing tag in Parser::pull(); the
-// optional variant compiles all of that away (kHasRequired == false). Parsing
-// the same bytes both ways isolates that tracking overhead. Both records mark
-// every field required (the worst case for the required path).
-
+// Identical members and payload (kFlatXml); the only difference is whether
+// fields are declared required, isolating the per-element presence tracking
+// (bitmask OR per field + mask compare per close tag) the optional variant
+// compiles away. Both records mark every field required (worst case).
 static auto bmParseOptionalFields(benchmark::State& state) -> void {
   for (auto _ : state) {
     xml::Parser parser{kFlatXml};
@@ -637,23 +614,10 @@ static auto bmParseRequiredFields(benchmark::State& state) -> void {
   state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(kFlatXml.size()));
 }
 
-// ---- Normalizing string content ----
-//
-// Same kFlatXml payload, but the record holds owning std::string fields and is
-// parsed with xml::NormalizingParser. On that parser, std::string fields route
-// every text run through the normalization scan (reference expansion, CR/CRLF
-// folding, attribute whitespace) instead of a single zero-copy view assignment.
-//
-// Comparison axis vs the two benchmarks above: those use std::string_view (raw,
-// zero-copy), so the delta here bundles two costs - the owning std::string copy
-// AND the per-byte normalization scan. This payload is entity-free, so it
-// measures the steady-state cost of the normalization machinery on plain
-// content; documents carrying many &entities;/&#refs; would add expansion work
-// on top. bmParseOwnedRawStrings isolates the owning-copy half so the
-// normalization half can be read off as the difference.
-
-// Owning std::string fields parsed with the default (non-normalizing) parser:
-// the copy cost without the normalization scan, as a baseline for the delta.
+// Same kFlatXml payload into owning std::string fields. The delta between the
+// non-normalizing baseline below and the NormalizingParser run bundles the
+// owning-copy cost and the per-byte normalization scan; the payload is
+// entity-free, so it measures normalization on plain content.
 static auto bmParseOwnedRawStrings(benchmark::State& state) -> void {
   for (auto _ : state) {
     xml::Parser parser{kFlatXml};
@@ -929,32 +893,15 @@ BENCHMARK(bmPugiParseCommentHeavyXml);
 BENCHMARK(bmPugiParseCatalog);
 #endif  // TURBOXML_HAS_PUGIXML
 
-// ============================================================================
-// Comparison benchmarks: RapidXML and libxml2
-// ----------------------------------------------------------------------------
-// All three comparison libraries are timed on the identical payloads and emit
-// the identical output structures (the same FlatItem/Organization/etc. records,
-// or the same id/name/email vectors) as the TurboXML benchmarks above, so the
-// only thing that differs is the parsing strategy and its feature set. Read the
-// four together as a feature/performance spectrum:
-//
-//   * TurboXML (default Parser) - zero-copy, non-normalizing, non-validating.
-//     Views point straight into the source; no entity decoding, no DOM. Fewest
-//     features, no allocation for string fields.
-//   * RapidXML - in-situ DOM. Parses destructively into a *mutable* buffer and
-//     leaves zero-copy pointers into it; decodes the predefined entities. We
-//     copy the source into a fresh buffer inside the timed loop because the
-//     parse is destructive -- the analogue of pugixml's internal load_buffer
-//     copy, kept inside timing for parity.
-//   * pugixml - builds an owning DOM (load_buffer copies the source), decodes
-//     entities, normalizes. We then walk the tree to fill the structs.
-//   * libxml2 - the feature-rich end: copies every string into the tree,
-//     decodes entities, and fully validates well-formedness.
-//
-// To avoid charging the comparison parsers for work TurboXML also skips, the
-// string accessors below return pointers into each library's own tree (no extra
-// copy beyond what the parse already did), matching pugixml's child_value().
-// ============================================================================
+// Comparison benchmarks (RapidXML, pugixml, libxml2) on identical payloads,
+// emitting the identical output structures as the TurboXML benchmarks above, so
+// only the parsing strategy differs. The four span a feature/performance
+// spectrum: TurboXML (zero-copy, non-validating) -> RapidXML (in-situ DOM,
+// predefined entities) -> pugixml (owning DOM, normalizing) -> libxml2 (copies,
+// decodes, fully validates). Destructive parsers copy the source inside the
+// timed loop for parity with pugixml's load_buffer. String accessors below
+// return pointers into each library's own tree to avoid charging them for
+// copies TurboXML also skips.
 
 #ifdef TURBOXML_HAS_RAPIDXML
 #include <boost/property_tree/detail/rapidxml.hpp>
@@ -1590,8 +1537,6 @@ BENCHMARK(bmLibXml2ParseTreeXml);
 BENCHMARK(bmLibXml2ParseCommentHeavyXml);
 BENCHMARK(bmLibXml2ParseCatalog);
 
-// ---- libxml2 streaming reader (xmlTextReader) ----
-//
 // The pull/streaming counterpart to the DOM benchmarks above. A streaming
 // parser never materializes a tree, so it cannot hand back zero-copy views that
 // outlive the cursor: every field has to be copied out as it streams past.

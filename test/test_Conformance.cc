@@ -907,7 +907,6 @@ TEST_F(Sec5Conformance, BareAmpersandPassedThrough) {
   EXPECT_EQ(leaf.text, "a & b");
 }
 
-// Additional well-formedness edge cases
 class WellFormedness : public ::testing::Test {};
 
 /// Multiple root elements - only the first should be deserialized.
@@ -1093,7 +1092,6 @@ TEST_F(AttributeEdges, UnknownAttributesSkipped) {
   EXPECT_EQ(ao.y, "also");
 }
 
-// Error recovery and robustness
 class Robustness : public ::testing::Test {};
 
 /// Truncated document mid-tag.
