@@ -153,6 +153,16 @@ struct FieldBase {
   bool required{};  ///< If true, deserialize() fails when the field is absent.
 };
 
+namespace detail {
+template<FieldKind K, typename C, typename M>
+constexpr auto makeFieldDesc(std::string_view name, M C::*m, bool required) -> FieldBase<K, C, M> {
+  return {.xml_name = name,
+          .member = m,
+          .hash = name.empty() ? FieldHash{} : hashFieldName(name),
+          .required = required};
+}
+}  // namespace detail
+
 /// @brief Descriptor for a scalar child element field.
 template<typename C, typename M>
 using Field = FieldBase<FieldKind::Element, C, M>;
@@ -175,7 +185,7 @@ using ListField = FieldBase<FieldKind::List, C, M>;
 /// @param required If true, deserialize() fails unless the element is present.
 template<typename C, typename M>
 constexpr auto field(std::string_view name, M C::*m, bool required = false) -> Field<C, M> {
-  return {.xml_name = name, .member = m, .hash = detail::hashFieldName(name), .required = required};
+  return detail::makeFieldDesc<FieldKind::Element>(name, m, required);
 }
 
 /// @brief Creates an attribute field descriptor.
@@ -185,7 +195,7 @@ constexpr auto field(std::string_view name, M C::*m, bool required = false) -> F
 /// present.
 template<typename C, typename M>
 constexpr auto attrField(std::string_view name, M C::*m, bool required = false) -> AttrField<C, M> {
-  return {.xml_name = name, .member = m, .hash = detail::hashFieldName(name), .required = required};
+  return detail::makeFieldDesc<FieldKind::Attr>(name, m, required);
 }
 
 /// @brief Creates a container field descriptor for dynamic containers (e.g.,
@@ -197,7 +207,7 @@ constexpr auto attrField(std::string_view name, M C::*m, bool required = false) 
 template<typename C, typename M>
 constexpr auto vecField(std::string_view name, M C::*m,
                         bool required = false) -> ContainerField<C, M> {
-  return {.xml_name = name, .member = m, .hash = detail::hashFieldName(name), .required = required};
+  return detail::makeFieldDesc<FieldKind::Container>(name, m, required);
 }
 
 /// @brief Creates a container field descriptor for fixed containers (e.g.,
@@ -221,7 +231,7 @@ constexpr auto arrField(std::string_view name, M C::*m,
 /// @param required If true, deserialize() fails unless the element is present.
 template<typename C, typename M>
 constexpr auto listField(std::string_view name, M C::*m, bool required = false) -> ListField<C, M> {
-  return {.xml_name = name, .member = m, .hash = detail::hashFieldName(name), .required = required};
+  return detail::makeFieldDesc<FieldKind::List>(name, m, required);
 }
 
 /// @brief Specialize this to register XML field mappings for type T.
@@ -376,7 +386,7 @@ struct DateTime {
 template<typename C, typename M>
 constexpr auto valueField(M C::*m, bool required = false) -> ValueField<C, M> {
   static_assert(XmlScalar<M>, "valueField target must be a scalar (string/number/enum)");
-  return {.xml_name = {}, .member = m, .hash = {}, .required = required};
+  return detail::makeFieldDesc<FieldKind::Value>({}, m, required);
 }
 
 /// @brief Adapts a container for use with ContainerField. Specialize for custom
@@ -670,6 +680,20 @@ inline auto dtFmtTime(std::string& o, const Time& t) -> void {
   }
 }
 
+/// @brief Drives an XmlValueTraits date/time parse: trims, runs `grammar` over a
+/// cursor that must consume the whole input, and assigns only on full success.
+template<typename T, typename Grammar>
+auto dtParse(std::string_view s, T& out, Grammar grammar) -> bool {
+  trimWhitespace(s);
+  DtCursor c{s};
+  T tmp{};
+  if (!grammar(c, tmp) || !c.atEnd()) {
+    return false;
+  }
+  out = tmp;
+  return true;
+}
+
 /// @brief Resolves an XML token to its enumerator via XmlEnumTraits<E>::values.
 /// @return false if no token matches (an undefined enumeration value).
 template<typename E>
@@ -855,48 +879,60 @@ constexpr auto isElementKind(FieldKind k) noexcept -> bool {
   return k == FieldKind::Element || k == FieldKind::Container || k == FieldKind::List;
 }
 
+/// @brief True if any of T's field kinds satisfies pred.
+template<typename T, typename Pred>
+constexpr auto anyFieldKindIs(Pred pred) noexcept -> bool {
+  constexpr auto kinds = makeFieldKinds<T>();
+  return std::ranges::any_of(kinds, pred);
+}
+
+/// @brief Index of T's first field kind satisfying pred, or FIELD_COUNT<T> if
+/// none.
+template<typename T, typename Pred>
+constexpr auto firstFieldIndexIf(Pred pred) noexcept -> size_t {
+  constexpr auto kinds = makeFieldKinds<T>();
+  return static_cast<size_t>(std::distance(kinds.begin(), std::ranges::find_if(kinds, pred)));
+}
+
+constexpr auto isKind(FieldKind want) noexcept {
+  return [want](FieldKind k) { return k == want; };
+}
+
 /// @brief True if any field of T is an attribute field.
 template<typename T>
 constexpr auto hasAttrFields() noexcept -> bool {
-  constexpr auto kinds = makeFieldKinds<T>();
-  return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Attr; });
+  return anyFieldKindIs<T>(isKind(FieldKind::Attr));
 }
 
 /// @brief True if any field of T is a child element or container field.
 template<typename T>
 constexpr auto hasElementFields() noexcept -> bool {
-  constexpr auto kinds = makeFieldKinds<T>();
-  return std::ranges::any_of(kinds, isElementKind);
+  return anyFieldKindIs<T>(isElementKind);
 }
 
 /// @brief True if T declares a value field (binds the element's own text).
 template<typename T>
 constexpr auto hasValueField() noexcept -> bool {
-  constexpr auto kinds = makeFieldKinds<T>();
-  return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Value; });
+  return anyFieldKindIs<T>(isKind(FieldKind::Value));
 }
 
 /// @brief True if T declares a variant (xs:choice) field.
 template<typename T>
 constexpr auto hasVariantFields() noexcept -> bool {
-  constexpr auto kinds = makeFieldKinds<T>();
-  return std::ranges::any_of(kinds, [](FieldKind k) { return k == FieldKind::Variant; });
+  return anyFieldKindIs<T>(isKind(FieldKind::Variant));
 }
 
 /// @brief Index of T's first value field (only meaningful when one exists).
 template<typename T>
 constexpr auto valueFieldIndex() noexcept -> size_t {
-  constexpr auto kinds = makeFieldKinds<T>();
-  const auto it = std::ranges::find(kinds, FieldKind::Value);
-  return static_cast<size_t>(std::distance(kinds.begin(), it));
+  return firstFieldIndexIf<T>(isKind(FieldKind::Value));
 }
 
 /// @brief Index of the first child-element field, or 0 if none.
 template<typename T>
 constexpr auto firstElemIndex() noexcept -> size_t {
-  constexpr auto kinds = makeFieldKinds<T>();
-  const auto it = std::ranges::find_if(kinds, isElementKind);
-  return it != kinds.end() ? static_cast<size_t>(std::distance(kinds.begin(), it)) : 0;
+  constexpr size_t i = firstFieldIndexIf<T>(isElementKind);
+  return i < FIELD_COUNT<T> ? i : 0;
 }
 
 /// @brief Cyclic successor table over child-element fields: entry i holds
@@ -1177,14 +1213,9 @@ inline ErrorCode appendNormalized(std::string& out, std::string_view raw, NormMo
 template<>
 struct XmlValueTraits<Date> {
   [[nodiscard]] static auto parse(std::string_view s, Date& d) -> bool {
-    detail::trimWhitespace(s);
-    detail::DtCursor c{s};
-    Date out{};
-    if (!c.date(out) || !c.timezone(out.tz) || !c.atEnd()) {
-      return false;
-    }
-    d = out;
-    return true;
+    return detail::dtParse(s, d, [](detail::DtCursor& c, Date& o) {
+      return c.date(o) && c.timezone(o.tz);
+    });
   }
   static auto format(std::string& out, const Date& d) -> void {
     detail::dtFmtDate(out, d);
@@ -1196,14 +1227,9 @@ struct XmlValueTraits<Date> {
 template<>
 struct XmlValueTraits<Time> {
   [[nodiscard]] static auto parse(std::string_view s, Time& t) -> bool {
-    detail::trimWhitespace(s);
-    detail::DtCursor c{s};
-    Time out{};
-    if (!c.time(out) || !c.timezone(out.tz) || !c.atEnd()) {
-      return false;
-    }
-    t = out;
-    return true;
+    return detail::dtParse(s, t, [](detail::DtCursor& c, Time& o) {
+      return c.time(o) && c.timezone(o.tz);
+    });
   }
   static auto format(std::string& out, const Time& t) -> void {
     detail::dtFmtTime(out, t);
@@ -1215,15 +1241,9 @@ struct XmlValueTraits<Time> {
 template<>
 struct XmlValueTraits<DateTime> {
   [[nodiscard]] static auto parse(std::string_view s, DateTime& dt) -> bool {
-    detail::trimWhitespace(s);
-    detail::DtCursor c{s};
-    DateTime out{};
-    if (!c.date(out.date) || !c.eat('T') || !c.time(out.time) || !c.timezone(out.time.tz) ||
-        !c.atEnd()) {
-      return false;
-    }
-    dt = out;
-    return true;
+    return detail::dtParse(s, dt, [](detail::DtCursor& c, DateTime& o) {
+      return c.date(o.date) && c.eat('T') && c.time(o.time) && c.timezone(o.time.tz);
+    });
   }
   static auto format(std::string& out, const DateTime& dt) -> void {
     detail::dtFmtDate(out, dt.date);
@@ -2672,15 +2692,42 @@ class Serializer {
  private:
   std::string& out_;
 
-  auto doIndent(int depth) -> void {
+  inline auto doIndent(int depth) -> void {
     if constexpr (PRETTY) {
       out_.append(static_cast<size_t>(depth) * 2, ' ');
     }
   }
 
-  auto doNewline() -> void {
+  inline auto doNewline() -> void {
     if constexpr (PRETTY) {
       out_ += '\n';
+    }
+  }
+
+  inline auto openTag(std::string_view tag) -> void {
+    out_ += '<';
+    out_ += tag;
+    out_ += '>';
+  }
+
+  inline auto closeTag(std::string_view tag) -> void {
+    out_ += "</";
+    out_ += tag;
+    out_ += '>';
+  }
+
+  // Applies fn to each item of a fixed or dynamic container (read-only).
+  template<typename M, typename Fn>
+  static auto forEachItem(const M& container, Fn fn) -> void {
+    if constexpr (XmlFixedContainer<M>) {
+      using Traits = XmlContainerTraits<M>;
+      for (size_t i = 0; i < Traits::capacity; ++i) {
+        fn(Traits::at(container, i));
+      }
+    } else {
+      for (const auto& v : container) {
+        fn(v);
+      }
     }
   }
 
@@ -2770,13 +2817,9 @@ class Serializer {
   template<typename V>
   auto writePrimElement(std::string_view tag, const V& v, int depth) -> void {
     doIndent(depth);
-    out_ += '<';
-    out_ += tag;
-    out_ += '>';
+    openTag(tag);
     writeScalar<false>(v);
-    out_ += "</";
-    out_ += tag;
-    out_ += '>';
+    closeTag(tag);
     doNewline();
   }
 
@@ -2802,23 +2845,13 @@ class Serializer {
   template<typename M>
   auto writeListItems(const M& container) -> void {
     bool first = true;
-    auto write_one = [&](const auto& v) {
+    forEachItem(container, [&](const auto& v) {
       if (!first) {
         out_ += ' ';
       }
       first = false;
       writeScalar<true>(v);
-    };
-    if constexpr (XmlFixedContainer<M>) {
-      using Traits = XmlContainerTraits<M>;
-      for (size_t i = 0; i < Traits::capacity; ++i) {
-        write_one(Traits::at(container, i));
-      }
-    } else {
-      for (const auto& v : container) {
-        write_one(v);
-      }
-    }
+    });
   }
 
   template<typename T, size_t I>
@@ -2864,13 +2897,9 @@ class Serializer {
       // emitted inline by writeElement, not as a child
     } else if constexpr (f.kind == FieldKind::List) {
       doIndent(depth);
-      out_ += '<';
-      out_ += f.xml_name;
-      out_ += '>';
+      openTag(f.xml_name);
       writeListItems(obj.*(f.member));
-      out_ += "</";
-      out_ += f.xml_name;
-      out_ += '>';
+      closeTag(f.xml_name);
       doNewline();
     } else if constexpr (f.kind == FieldKind::Variant) {
       using M = std::decay_t<decltype(obj.*(f.member))>;
@@ -2882,17 +2911,8 @@ class Serializer {
         }
       }
     } else if constexpr (f.kind == FieldKind::Container) {
-      using M = std::decay_t<decltype(obj.*(f.member))>;
-      if constexpr (XmlFixedContainer<M>) {
-        using Traits = XmlContainerTraits<M>;
-        for (size_t i = 0; i < Traits::capacity; ++i) {
-          writeFieldValue(f.xml_name, Traits::at(obj.*(f.member), i), depth);
-        }
-      } else {
-        for (const auto& item : obj.*(f.member)) {
-          writeFieldValue(f.xml_name, item, depth);
-        }
-      }
+      forEachItem(obj.*(f.member),
+                  [&](const auto& item) { writeFieldValue(f.xml_name, item, depth); });
     } else {
       writeFieldValue(f.xml_name, obj.*(f.member), depth);
     }
@@ -2919,18 +2939,14 @@ class Serializer {
       constexpr auto& vf = std::get<VI>(XmlMetadata<T>::fields);
       out_ += '>';
       writeScalar<false>(obj.*(vf.member));
-      out_ += "</";
-      out_ += tag;
-      out_ += '>';
+      closeTag(tag);
       doNewline();
     } else if constexpr (detail::hasElementFields<T>() || detail::hasVariantFields<T>()) {
       out_ += '>';
       doNewline();
       writeChildren<T>(obj, depth + 1, Seq{});
       doIndent(depth);
-      out_ += "</";
-      out_ += tag;
-      out_ += '>';
+      closeTag(tag);
       doNewline();
     } else {
       out_ += "/>";
