@@ -1648,7 +1648,7 @@ class BasicParser {
         }
       }
       return fail(ErrorCode::UnexpectedEof);
-    } else {
+    } else if constexpr (XmlStringLike<M>) {
       std::string_view text;
       while (const Token* tok = peek()) {
         if (tok->type == TokenType::Text || tok->type == TokenType::CData) {
@@ -1658,12 +1658,51 @@ class BasicParser {
           if (!finishChardata<ConsumeClose>(*tok, expected_name)) {
             return false;
           }
-          if constexpr (XmlStringLike<M>) {
-            out = text;
-            return true;
+          out = text;
+          return true;
+        } else if (tok->type == TokenType::Error) {
+          return false;
+        } else {
+          consumePeeked();
+        }
+      }
+      return fail(ErrorCode::UnexpectedEof);
+    } else {
+      // Scalar leaf: concatenate text runs split by comments/PIs and, when
+      // normalizing, resolve references before parsing the whole value. The
+      // raw single-run common case stays zero-copy via the source view.
+      std::string_view single;
+      bool have = false;
+      bool buffered = false;
+      scalar_buf_.clear();
+      while (const Token* tok = peek()) {
+        if (tok->type == TokenType::Text || tok->type == TokenType::CData) {
+          if constexpr (NORMALIZE) {
+            const detail::NormMode mode = tok->type == TokenType::CData
+                                              ? detail::NormMode::CData
+                                              : detail::NormMode::Text;
+            if (const ErrorCode ec = detail::appendNormalized(scalar_buf_, tok->data, mode);
+                ec != ErrorCode::None) {
+              return fail(ec);
+            }
+            buffered = true;
+          } else if (!have) {
+            single = tok->data;
+            have = true;
           } else {
-            return parseScalar(text, out) ? true : fail(scalarError<M>());
+            if (!buffered) {
+              scalar_buf_.assign(single.data(), single.size());
+              buffered = true;
+            }
+            scalar_buf_.append(tok->data);
           }
+          consumePeeked();
+        } else if (tok->type == TokenType::ElementClose) {
+          if (!finishChardata<ConsumeClose>(*tok, expected_name)) {
+            return false;
+          }
+          const std::string_view text = buffered ? std::string_view{scalar_buf_} : single;
+          return parseScalar(text, out) ? true : fail(scalarError<M>());
         } else if (tok->type == TokenType::Error) {
           return false;
         } else {
@@ -1986,6 +2025,7 @@ class BasicParser {
 
   Token current_token_;
   std::vector<Attribute> attributes_;
+  std::string scalar_buf_;  // scratch for comment/PI-split or normalized scalar leaves
   std::string_view src_;
   const char* cur_;
   const char* end_;
@@ -2438,23 +2478,28 @@ inline auto BasicParser<Opts>::readElement(std::string_view expected_name, T& ou
       }
       return fail(scalarError<T>());  // empty numeric/bool/enum
     }
-    // Fast path: locate closing tag directly.
-    const char* found = findByte(cur_, '<');
-    if (found != end_ && found + 3 + expected_name.size() <= end_ && found[1] == '/' &&
-        std::memcmp(found + 2, expected_name.data(), expected_name.size()) == 0 &&
-        found[2 + expected_name.size()] == '>') {
-      const std::string_view text{cur_, static_cast<size_t>(found - cur_)};
-      if constexpr (STRICT) {
-        if (containsCdataEnd(cur_, found)) {
-          return fail(ErrorCode::CDataEndInContent);
+    // Fast path: locate the closing tag and parse the enclosed run directly.
+    // Skipped for normalizing non-string scalars, whose raw text may carry
+    // references that must be expanded before the value parse; readChardata
+    // handles that (string-like leaves normalize in assignValue regardless).
+    if constexpr (XmlStringLike<T> || !NORMALIZE) {
+      const char* found = findByte(cur_, '<');
+      if (found != end_ && found + 3 + expected_name.size() <= end_ && found[1] == '/' &&
+          std::memcmp(found + 2, expected_name.data(), expected_name.size()) == 0 &&
+          found[2 + expected_name.size()] == '>') {
+        const std::string_view text{cur_, static_cast<size_t>(found - cur_)};
+        if constexpr (STRICT) {
+          if (containsCdataEnd(cur_, found)) {
+            return fail(ErrorCode::CDataEndInContent);
+          }
         }
-      }
-      cur_ = found + 3 + expected_name.size();
-      has_peek_ = false;
-      if constexpr (XmlStringLike<T>) {
-        return assignValue(out, text);
-      } else {
-        return parseScalar(text, out) ? true : fail(scalarError<T>());
+        cur_ = found + 3 + expected_name.size();
+        has_peek_ = false;
+        if constexpr (XmlStringLike<T>) {
+          return assignValue(out, text);
+        } else {
+          return parseScalar(text, out) ? true : fail(scalarError<T>());
+        }
       }
     }
     return readChardata<true>(out, expected_name);

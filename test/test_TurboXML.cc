@@ -2693,25 +2693,25 @@ TEST_F(TurboBasicTests, RobustLeadingPlus) {
   EXPECT_DOUBLE_EQ(o.ratio, 3.5);
 }
 
-// TEST_F(TurboBasicTests, RobustCommentSplitNumericReadWhole) {
-//   expectCount<xml::Parser>("<RobScalars><count>4<!--x-->2</count></RobScalars>", 42);
-//   expectCount<xml::NormalizingParser>("<RobScalars><count>4<!--x-->2</count></RobScalars>", 42);
-//   expectCount<xml::StrictParser>("<RobScalars><count>4<!--x-->2</count></RobScalars>", 42);
-//   expectCount<xml::Parser>("<RobScalars><count>1<!--a-->2<!--b-->3</count></RobScalars>", 123);
-//   expectCount<xml::Parser>("<RobScalars><count>1<?pi ?>2</count></RobScalars>", 12);
-// }
+TEST_F(TurboBasicTests, RobustCommentSplitNumericReadWhole) {
+  expectCount<xml::Parser>("<RobScalars><count>4<!--x-->2</count></RobScalars>", 42);
+  expectCount<xml::NormalizingParser>("<RobScalars><count>4<!--x-->2</count></RobScalars>", 42);
+  expectCount<xml::StrictParser>("<RobScalars><count>4<!--x-->2</count></RobScalars>", 42);
+  expectCount<xml::Parser>("<RobScalars><count>1<!--a-->2<!--b-->3</count></RobScalars>", 123);
+  expectCount<xml::Parser>("<RobScalars><count>1<?pi ?>2</count></RobScalars>", 12);
+}
 
 TEST_F(TurboBasicTests, RobustNumericInCData) {
   expectCount<xml::Parser>("<RobScalars><count><![CDATA[42]]></count></RobScalars>", 42);
   expectCount<xml::NormalizingParser>("<RobScalars><count><![CDATA[42]]></count></RobScalars>", 42);
 }
 
-// TEST_F(TurboBasicTests, RobustCharRefInTypedLeaf) {
-//   const std::string_view xml = "<RobScalars><count>4&#50;</count></RobScalars>";
-//   expectCount<xml::NormalizingParser>(xml, 42);
-//   expectCount<xml::StrictParser>(xml, 42);
-//   expectCountError<xml::Parser>(xml, xml::ErrorCode::InvalidNumericValue);
-// }
+TEST_F(TurboBasicTests, RobustCharRefInTypedLeaf) {
+  const std::string_view xml = "<RobScalars><count>4&#50;</count></RobScalars>";
+  expectCount<xml::NormalizingParser>(xml, 42);
+  expectCount<xml::StrictParser>(xml, 42);
+  expectCountError<xml::Parser>(xml, xml::ErrorCode::InvalidNumericValue);
+}
 
 TEST_F(TurboBasicTests, RobustBoolSurroundingWhitespace) {
   xml::Parser p{"<RobScalars><flag> true </flag></RobScalars>"};
