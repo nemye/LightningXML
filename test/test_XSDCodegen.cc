@@ -169,7 +169,7 @@ TEST(XsdCodegen, UnsupportedConstructsAreNoted) {
   </xs:schema>)";
   const auto r = xsd::generate(xsd);
   ASSERT_TRUE(r.ok);  // still generates
-  ASSERT_GE(r.notes.size(), 2u);
+  ASSERT_GE(r.notes.size(), 2U);
   bool mixed = false;
   bool unknown = false;
   for (const auto& n : r.notes) {

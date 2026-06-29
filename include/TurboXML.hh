@@ -114,12 +114,12 @@ static constexpr FieldHash FNV_OFFSET = 14695981039346656037ULL;
 static constexpr FieldHash FNV_PRIME = 1099511628211ULL;
 
 /// @brief Accumulates one byte into a running FNV-1a hash.
-constexpr FieldHash fnv1aStep(FieldHash h, unsigned char c) noexcept {
+constexpr auto fnv1aStep(FieldHash h, unsigned char c) noexcept -> FieldHash {
   return (h ^ c) * FNV_PRIME;
 }
 
 /// @brief Computes the FNV-1a hash of a string at compile time.
-constexpr FieldHash hashFieldName(std::string_view s) noexcept {
+constexpr auto hashFieldName(std::string_view s) noexcept -> FieldHash {
   return std::accumulate(s.begin(), s.end(), FNV_OFFSET, [](FieldHash h, char c) {
     return fnv1aStep(h, static_cast<unsigned char>(c));
   });
@@ -289,6 +289,8 @@ struct XmlEnumTraits;
 /// deducing the entry count. The enum type E is given explicitly; each entry is
 /// a `{"token", E::value}` pair.
 template<typename E, size_t N>
+// NOLINTNEXTLINE(*-avoid-c-arrays): the array reference deduces N from the
+// caller's braced entry list, which is the point of this factory.
 constexpr auto enumTable(const EnumEntry<E> (&entries)[N]) -> std::array<EnumEntry<E>, N> {
   return std::to_array(entries);
 }
@@ -599,8 +601,12 @@ class DtCursor {
       tz = std::chrono::minutes{0};
       return true;
     }
-    const int sign = eat('+') ? 1 : (eat('-') ? -1 : 0);
-    if (sign == 0) {
+    int sign = 0;
+    if (eat('+')) {
+      sign = 1;
+    } else if (eat('-')) {
+      sign = -1;
+    } else {
       return false;
     }
     uint32_t hh = 0;
@@ -818,7 +824,7 @@ constexpr auto isNamedField(FieldKind k) noexcept -> bool {
 }
 
 template<typename T>
-inline size_t findFieldIndex(FieldHash hash) noexcept {
+inline auto findFieldIndex(FieldHash hash) noexcept -> size_t {
   constexpr auto hashes = makeFieldHashes<T>();
   const auto it = std::ranges::find(hashes, hash);
   return static_cast<size_t>(std::distance(hashes.begin(), it));
@@ -836,11 +842,11 @@ struct FieldMask {
   std::array<uint64_t, WORDS> words{};
 
   constexpr auto set(size_t i) noexcept -> void { words[i / 64] |= uint64_t{1} << (i % 64); }
-  [[nodiscard]] constexpr bool any() const noexcept {
+  [[nodiscard]] constexpr auto any() const noexcept -> bool {
     return std::ranges::any_of(words, [](uint64_t w) { return w != 0; });
   }
   /// @brief True when every bit set in `required` is also set in *this.
-  [[nodiscard]] constexpr bool containsAll(const FieldMask& required) const noexcept {
+  [[nodiscard]] constexpr auto containsAll(const FieldMask& required) const noexcept -> bool {
     for (size_t i = 0; i < WORDS; ++i) {
       if ((words[i] & required.words[i]) != required.words[i]) {
         return false;
@@ -931,8 +937,8 @@ constexpr auto valueFieldIndex() noexcept -> size_t {
 /// @brief Index of the first child-element field, or 0 if none.
 template<typename T>
 constexpr auto firstElemIndex() noexcept -> size_t {
-  constexpr size_t i = firstFieldIndexIf<T>(isElementKind);
-  return i < FIELD_COUNT<T> ? i : 0;
+  constexpr size_t IDX = firstFieldIndexIf<T>(isElementKind);
+  return IDX < FIELD_COUNT<T> ? IDX : 0;
 }
 
 /// @brief Cyclic successor table over child-element fields: entry i holds
@@ -1089,7 +1095,7 @@ inline auto encodeUtf8(std::string& out, uint32_t cp) -> bool {
 /// out and advancing i past the terminating ';'. Handles the five predefined
 /// entities and decimal/hex character references; any other name is an
 /// UndefinedEntity (no DTD is processed).
-inline ErrorCode expandReference(std::string& out, std::string_view s, size_t& i) {
+inline auto expandReference(std::string& out, std::string_view s, size_t& i) -> ErrorCode {
   const size_t semi = s.find(';', i + 1);
   if (semi == std::string_view::npos) {
     return ErrorCode::InvalidCharRef;  // bare '&' / unterminated reference
@@ -1166,7 +1172,7 @@ inline auto normSpecialTable(NormMode mode) noexcept -> const std::array<bool, 2
 /// Ordinary bytes (the overwhelming majority of typical content) are copied in
 /// bulk runs via std::string::append; only reference starts and line-ending /
 /// whitespace bytes are handled one at a time.
-inline ErrorCode appendNormalized(std::string& out, std::string_view raw, NormMode mode) {
+inline auto appendNormalized(std::string& out, std::string_view raw, NormMode mode) -> ErrorCode {
   const std::array<bool, 256>& special = normSpecialTable(mode);
   const char* const base = raw.data();
   const size_t n = raw.size();
@@ -1557,7 +1563,7 @@ class BasicParser {
   template<typename Container>
   auto splitInto(Container& out, std::string_view text) -> bool {
     using Traits = XmlContainerTraits<Container>;
-    auto eachToken = [&](auto handle) -> bool {
+    auto each_token = [&](auto handle) -> bool {
       size_t i = 0;
       while (i < text.size()) {
         while (i < text.size() && detail::isSpace(text[i])) {
@@ -1578,7 +1584,7 @@ class BasicParser {
     };
     if constexpr (XmlFixedContainer<Container>) {
       size_t fill = 0;
-      return eachToken([&](std::string_view tok) {
+      return each_token([&](std::string_view tok) {
         if (fill < Traits::capacity) {
           if (!assignToken(Traits::at(out, fill++), tok)) {
             return false;
@@ -1587,7 +1593,7 @@ class BasicParser {
         return true;
       });
     } else {
-      return eachToken([&](std::string_view tok) {
+      return each_token([&](std::string_view tok) {
         auto& slot = Traits::emplace(out);
         if (!assignToken(slot, tok)) {
           Traits::pop(out);
@@ -1667,10 +1673,9 @@ class BasicParser {
       // Scalar leaf: concatenate text runs split by comments/PIs and, when
       // normalizing, resolve references before parsing the whole value. The
       // raw single-run common case stays zero-copy via the source view.
-      std::string_view single;
-      bool have = false;
-      bool buffered = false;
       scalar_buf_.clear();
+      std::string_view text;
+      bool buffered = false;
       while (const Token* tok = peek()) {
         if (tok->type == TokenType::Text || tok->type == TokenType::CData) {
           if constexpr (NORMALIZE) {
@@ -1681,12 +1686,11 @@ class BasicParser {
               return fail(ec);
             }
             buffered = true;
-          } else if (!have) {
-            single = tok->data;
-            have = true;
+          } else if (text.empty() && !buffered) {
+            text = tok->data;  // first run: keep the zero-copy source view
           } else {
             if (!buffered) {
-              scalar_buf_.assign(single.data(), single.size());
+              scalar_buf_.assign(text.data(), text.size());
               buffered = true;
             }
             scalar_buf_.append(tok->data);
@@ -1696,7 +1700,9 @@ class BasicParser {
           if (!finishChardata<ConsumeClose>(*tok, expected_name)) {
             return false;
           }
-          const std::string_view text = buffered ? std::string_view{scalar_buf_} : single;
+          if (buffered) {
+            text = scalar_buf_;
+          }
           return parseScalar(text, out) ? true : fail(scalarError<M>());
         } else if (tok->type == TokenType::Error) {
           return false;
@@ -1715,7 +1721,7 @@ class BasicParser {
 
   /// @brief Whether the parser has encountered an error.
   /// @return true if `error_code_` is not `ErrorCode::None`.
-  auto error() const noexcept -> bool { return error_code_ != ErrorCode::None; }
+  [[nodiscard]] auto error() const noexcept -> bool { return error_code_ != ErrorCode::None; }
 
   // Record self-closing state after consuming an ElementOpen.
   auto updateSelfClosing() noexcept -> void {
@@ -2471,15 +2477,19 @@ inline auto BasicParser<Opts>::readElement(std::string_view expected_name, T& ou
       return fail(scalarError<T>());  // empty numeric/bool/enum
     }
     // Fast path: locate the closing tag and parse the enclosed run directly.
-    // Skipped for normalizing non-string scalars, whose raw text may carry
-    // references that must be expanded before the value parse; readChardata
-    // handles that (string-like leaves normalize in assignValue regardless).
-    if constexpr (XmlStringLike<T> || !NORMALIZE) {
-      const char* found = findByte(cur_, '<');
-      if (found != end_ && found + 3 + expected_name.size() <= end_ && found[1] == '/' &&
-          std::memcmp(found + 2, expected_name.data(), expected_name.size()) == 0 &&
-          found[2 + expected_name.size()] == '>') {
-        const std::string_view text{cur_, static_cast<size_t>(found - cur_)};
+    // A normalizing non-string scalar only needs readChardata when its text
+    // actually carries a reference ('&') or CR; those are the sole bytes text
+    // normalization rewrites, so otherwise the raw run parses identically here.
+    const char* found = findByte(cur_, '<');
+    if (found != end_ && found + 3 + expected_name.size() <= end_ && found[1] == '/' &&
+        std::memcmp(found + 2, expected_name.data(), expected_name.size()) == 0 &&
+        found[2 + expected_name.size()] == '>') {
+      const std::string_view text{cur_, static_cast<size_t>(found - cur_)};
+      bool fast = true;
+      if constexpr (NORMALIZE && !XmlStringLike<T>) {
+        fast = text.find_first_of("&\r") == std::string_view::npos;
+      }
+      if (fast) {
         if constexpr (STRICT) {
           if (containsCdataEnd(cur_, found)) {
             return fail(ErrorCode::CDataEndInContent);
@@ -2692,25 +2702,25 @@ class Serializer {
  private:
   std::string& out_;
 
-  inline auto doIndent(int depth) -> void {
+  auto doIndent(int depth) -> void {
     if constexpr (PRETTY) {
       out_.append(static_cast<size_t>(depth) * 2, ' ');
     }
   }
 
-  inline auto doNewline() -> void {
+  auto doNewline() -> void {
     if constexpr (PRETTY) {
       out_ += '\n';
     }
   }
 
-  inline auto openTag(std::string_view tag) -> void {
+  auto openTag(std::string_view tag) -> void {
     out_ += '<';
     out_ += tag;
     out_ += '>';
   }
 
-  inline auto closeTag(std::string_view tag) -> void {
+  auto closeTag(std::string_view tag) -> void {
     out_ += "</";
     out_ += tag;
     out_ += '>';
@@ -2735,7 +2745,7 @@ class Serializer {
   // text content escapes '>'. Copies safe byte runs in bulk via append().
   template<bool kAttr>
   static auto escape(std::string& out, std::string_view s) -> void {
-    static constexpr auto kSpecial = [] {
+    static constexpr auto SPECIAL = [] {
       std::array<bool, 256> t{};
       t[static_cast<unsigned char>('&')] = true;
       t[static_cast<unsigned char>('<')] = true;
@@ -2752,7 +2762,7 @@ class Serializer {
     const char* const e = p + s.size();
     while (p < e) {
       const char* q = p;
-      while (q < e && !kSpecial[static_cast<unsigned char>(*q)]) {
+      while (q < e && !SPECIAL[static_cast<unsigned char>(*q)]) {
         ++q;
       }
       out.append(p, q);
@@ -2911,8 +2921,17 @@ class Serializer {
         }
       }
     } else if constexpr (f.kind == FieldKind::Container) {
-      forEachItem(obj.*(f.member),
-                  [&](const auto& item) { writeFieldValue(f.xml_name, item, depth); });
+      using M = std::decay_t<decltype(obj.*(f.member))>;
+      if constexpr (XmlFixedContainer<M>) {
+        using Traits = XmlContainerTraits<M>;
+        for (size_t idx = 0; idx < Traits::capacity; ++idx) {
+          writeFieldValue(f.xml_name, Traits::at(obj.*(f.member), idx), depth);
+        }
+      } else {
+        for (const auto& item : obj.*(f.member)) {
+          writeFieldValue(f.xml_name, item, depth);
+        }
+      }
     } else {
       writeFieldValue(f.xml_name, obj.*(f.member), depth);
     }

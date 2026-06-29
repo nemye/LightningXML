@@ -1228,7 +1228,7 @@ class Generator {
   if (!xml::deserialize(parser, "schema", schema)) {
     GenResult r;
     r.ok = false;
-    r.notes.push_back("failed to parse the XSD as <schema> XML");
+    r.notes.emplace_back("failed to parse the XSD as <schema> XML");
     return r;
   }
 

@@ -2377,9 +2377,9 @@ TEST_F(TurboBasicTests, DateTimeRoundTripAndChrono) {
   Event e;
   ASSERT_TRUE(xml::deserialize(p, "Event", e));
   EXPECT_EQ(e.day, (xml::Date{2026, 6, 18}));
-  EXPECT_EQ(e.stamp.time.hour, 9u);
+  EXPECT_EQ(e.stamp.time.hour, 9U);
   EXPECT_TRUE(e.stamp.time.tz.has_value());
-  EXPECT_EQ(e.at.nanosecond, 500000000u);
+  EXPECT_EQ(e.at.nanosecond, 500000000U);
   EXPECT_EQ(e.at.tz, std::chrono::minutes{120});
   // chrono accessors
   EXPECT_EQ(e.day.toSysDays(), std::chrono::sys_days{std::chrono::year{2026} / 6 / 18});
@@ -2430,7 +2430,7 @@ TEST_F(TurboBasicTests, VariantSingleBothBranches) {
     xml::Parser p{src};
     Shape sh;
     ASSERT_TRUE(xml::deserialize(p, "Shape", sh));
-    ASSERT_EQ(sh.kind.index(), 1u);
+    ASSERT_EQ(sh.kind.index(), 1U);
     EXPECT_EQ(std::get<VSquare>(sh.kind).s, 7);
     EXPECT_EQ(xml::serialize<false>("Shape", sh), src);
   }
@@ -2439,7 +2439,7 @@ TEST_F(TurboBasicTests, VariantSingleBothBranches) {
     xml::Parser p{src};
     Shape sh;
     ASSERT_TRUE(xml::deserialize(p, "Shape", sh));
-    ASSERT_EQ(sh.kind.index(), 0u);
+    ASSERT_EQ(sh.kind.index(), 0U);
     EXPECT_EQ(std::get<VCircle>(sh.kind).r, 3);
     EXPECT_EQ(xml::serialize<false>("Shape", sh), src);
   }
@@ -2467,10 +2467,10 @@ TEST_F(TurboBasicTests, VariantRepeatedInterleaved) {
   xml::Parser p{src};
   VDoc d;
   ASSERT_TRUE(xml::deserialize(p, "VDoc", d));
-  ASSERT_EQ(d.body.size(), 3u);
-  EXPECT_EQ(d.body[0].index(), 0u);
+  ASSERT_EQ(d.body.size(), 3U);
+  EXPECT_EQ(d.body[0].index(), 0U);
   EXPECT_EQ(std::get<VCircle>(d.body[0]).r, 1);
-  EXPECT_EQ(d.body[1].index(), 1u);
+  EXPECT_EQ(d.body[1].index(), 1U);
   EXPECT_EQ(std::get<VSquare>(d.body[1]).s, 2);
   EXPECT_EQ(std::get<VCircle>(d.body[2]).r, 3);
   EXPECT_EQ(xml::serialize<false>("VDoc", d), src);
@@ -2610,7 +2610,7 @@ struct RobAttr {
   int n{};
 };
 struct RobOptAttr {
-  std::optional<int> n{};
+  std::optional<int> n;
 };
 }  // namespace
 

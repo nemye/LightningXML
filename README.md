@@ -8,19 +8,19 @@ Three parser tiers trade performance for conformance to XML 1.0 (Fifth Edition).
 
 ## Performance
 
-Benchmarked against [pugixml](https://pugixml.org/), [RapidXML](https://rapidxml.sourceforge.net/) (via the copy bundled in Boost.PropertyTree), and [libxml2](https://gitlab.gnome.org/GNOME/libxml2) on identical workloads. Every parser populates the same output records from the same payloads, so the numbers reflect a **feature/performance spectrum** rather than differing work. Throughput is bytes of source per second (higher is better); measured on an AMD Ryzen 9 7950X3D, Ubuntu 24.04, Clang 19, `-O2`/Release, pinned to one core.
+Benchmarked against [pugixml](https://pugixml.org/), [RapidXML](https://rapidxml.sourceforge.net/) (via the copy bundled in Boost.PropertyTree), and [libxml2](https://gitlab.gnome.org/GNOME/libxml2) on identical workloads. Every parser populates the same output records from the same payloads, so the numbers reflect a **feature/performance spectrum** rather than differing work. Throughput is bytes of source per second (higher is better); measured on an AMD Ryzen 9 7950X3D, Ubuntu 24.04, Clang 19, `-O3`/Release, pinned to one core (median of 15 repetitions).
 
 | Workload | TurboXML | TurboXML Strict | pugixml | RapidXML | RapidXML fast | libxml2 DOM | libxml2 reader |
 |---|---|---|---|---|---|---|---|
-| Flat (2K items, 4 fields + attr) | **2.83 GB/s** | 2.41 GB/s | 1.53 GB/s | 202 MB/s | 1.58 GB/s | 177 MB/s | 191 MB/s |
-| Deep (2K chains, 5 levels) | **1.63 GB/s** | 1.58 GB/s | 1.07 GB/s | 777 MB/s | 1.05 GB/s | 103 MB/s | 131 MB/s |
-| Attributes (2K items, 10 attrs) | **1.13 GB/s** | 839 MB/s | 435 MB/s | 710 MB/s | 904 MB/s | 34 MB/s | 101 MB/s |
-| Small (1 element) | **1.63 GB/s** | 1.54 GB/s | 811 MB/s | 891 MB/s | 1.14 GB/s | 68 MB/s | 78 MB/s |
-| Large (10K users) | **2.67 GB/s** | 2.27 GB/s | 326 MB/s | 214 MB/s | 355 MB/s | 66 MB/s | 175 MB/s |
-| Org (nested, ~400 members) | **1.61 GB/s** | 1.46 GB/s | 818 MB/s | 842 MB/s | 1.02 GB/s | 137 MB/s | 163 MB/s |
-| Tree (depth 14, binary) | 526 MB/s | **536 MB/s** | 123 MB/s | 119 MB/s | 115 MB/s | 115 MB/s | 122 MB/s |
-| Comment-heavy (skipped bytes) | **11.16 GB/s** | 9.89 GB/s | 3.29 GB/s | 2.86 GB/s | 3.32 GB/s | 517 MB/s | 600 MB/s |
-| Catalog (12 books, owning strings) | **2.57 GB/s** | 1.67 GB/s | 1.35 GB/s | 1.16 GB/s | 1.58 GB/s | 189 MB/s | 217 MB/s |
+| Flat (2K items, 4 fields + attr) | **2.77 GB/s** | 2.26 GB/s | 1.46 GB/s | 199 MB/s | 1.58 GB/s | 178 MB/s | 189 MB/s |
+| Deep (2K chains, 5 levels) | **1.65 GB/s** | 1.33 GB/s | 977 MB/s | 792 MB/s | 1.05 GB/s | 101 MB/s | 124 MB/s |
+| Attributes (2K items, 10 attrs) | **1.08 GB/s** | 762 MB/s | 417 MB/s | 719 MB/s | 886 MB/s | 34 MB/s | 101 MB/s |
+| Small (1 element) | **1.51 GB/s** | 1.39 GB/s | 823 MB/s | 886 MB/s | 1.13 GB/s | 68 MB/s | 76 MB/s |
+| Large (10K users) | **2.59 GB/s** | 2.36 GB/s | 311 MB/s | 194 MB/s | 340 MB/s | 60 MB/s | 172 MB/s |
+| Org (nested, ~400 members) | **1.55 GB/s** | 1.45 GB/s | 785 MB/s | 821 MB/s | 966 MB/s | 135 MB/s | 158 MB/s |
+| Tree (depth 14, binary) | **548 MB/s** | 545 MB/s | 145 MB/s | 106 MB/s | 108 MB/s | 113 MB/s | 116 MB/s |
+| Comment-heavy (skipped bytes) | **10.67 GB/s** | 10.00 GB/s | 2.87 GB/s | 2.58 GB/s | 3.25 GB/s | 506 MB/s | 590 MB/s |
+| Catalog (12 books, owning strings) | **2.52 GB/s** | 1.63 GB/s | 1.33 GB/s | 1.15 GB/s | 1.54 GB/s | 190 MB/s | 215 MB/s |
 
 What each column does, lowest to highest feature set:
 
@@ -32,7 +32,7 @@ What each column does, lowest to highest feature set:
 - **libxml2 DOM** - `xmlReadMemory`: the feature-rich end - copies every string into the tree, decodes entities, fully validates.
 - **libxml2 reader** - `xmlTextReader` streaming pull parser. A streaming parser can't hand back views that outlive the cursor, so it copies each field into owning storage as it streams - the streaming-vs-DOM trade-off.
 
-TurboXML leads on every workload (1.4–8× over pugixml; the Tree case is a near-tie with its own strict mode). All comparison benchmarks are opt-in CMake options and live in [test/bench_TurboXML.cc](test/bench_TurboXML.cc); see the per-section comments there for the exact fairness choices.
+TurboXML leads on every workload (1.7–8× over pugixml; the Tree case is a near-tie with its own strict mode). The depth-14 Tree row is allocation-bound and high-variance for the DOM parsers (pugixml/RapidXML), so treat those cells as approximate. All comparison benchmarks are opt-in CMake options and live in [test/bench_TurboXML.cc](test/bench_TurboXML.cc); see the per-section comments there for the exact fairness choices.
 
 ## Features
 
@@ -409,11 +409,11 @@ Supported XSD constructs:
 Unsupported constructs are reported as notes on `stderr` rather than causing a failure; the generator produces the best output it can for the rest of the schema.
 
 **Not supported (out of scope for 2.0):**
-- `xs:union` — no C++ type mapping without boxing
-- `xs:import` — cross-namespace schema merging requires a resolver not in scope
-- `xs:complexContent restriction` — high complexity, rare in practice
-- `xs:any` / `xs:anyAttribute` — wildcards have no static type
-- External entity resolution — requires file I/O, incompatible with the zero-copy design
+- `xs:union` - no C++ type mapping without boxing
+- `xs:import` - cross-namespace schema merging requires a resolver not in scope
+- `xs:complexContent restriction` - high complexity, rare in practice
+- `xs:any` / `xs:anyAttribute` - wildcards have no static type
+- External entity resolution - requires file I/O, incompatible with the zero-copy design
 
 Built with `TURBOXML_BUILD_CODEGEN` (on by default).
 
@@ -429,7 +429,7 @@ if (auto err = xml::validate(obj)) {
 }
 ```
 
-`xml::validate()` returns `std::optional<xml::ValidationError>` — empty when all constraints pass, or the first violation in `err->message`. This is intentionally distinct from `xml::ErrorCode` (parser errors) so the two failure modes can be handled independently. Types with no constraints use the default no-op specialization, which compiles away entirely.
+`xml::validate()` returns `std::optional<xml::ValidationError>` - empty when all constraints pass, or the first violation in `err->message`. This is intentionally distinct from `xml::ErrorCode` (parser errors) so the two failure modes can be handled independently. Types with no constraints use the default no-op specialization, which compiles away entirely.
 
 ## Building
 
