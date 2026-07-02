@@ -8,7 +8,7 @@ Three parser tiers trade performance for conformance to XML 1.0 (Fifth Edition).
 
 ## Performance
 
-Benchmarked against [pugixml](https://pugixml.org/), [RapidXML](https://rapidxml.sourceforge.net/) (via the copy bundled in Boost.PropertyTree), and [libxml2](https://gitlab.gnome.org/GNOME/libxml2) on identical workloads. Every parser populates the same output records from the same payloads, so the numbers reflect a **feature/performance spectrum** rather than differing work. Throughput is bytes of source per second (higher is better); measured on an AMD Ryzen 9 7950X3D, Ubuntu 24.04, Clang 19, `-O3`/Release, pinned to one core (median of 15 repetitions).
+Benchmarked against [pugixml](https://pugixml.org/), [RapidXML](https://rapidxml.sourceforge.net/) (via the copy bundled in Boost.PropertyTree), and [libxml2](https://gitlab.gnome.org/GNOME/libxml2) on identical workloads. Every parser populates the same output records from the same payloads, so the numbers reflect a fairly comparable performance spectrum. Throughput is measured as bytes of source per second (higher is better); measured on an AMD Ryzen 9 7950X3D, Ubuntu 24.04, Clang 19, `-O3`/Release, pinned to one core (median of 15 repetitions).
 
 | Workload | LightningXML | LightningXML Strict | pugixml | RapidXML | RapidXML fast | libxml2 DOM | libxml2 reader |
 |---|---|---|---|---|---|---|---|
@@ -22,14 +22,14 @@ Benchmarked against [pugixml](https://pugixml.org/), [RapidXML](https://rapidxml
 | Comment-heavy (skipped bytes) | **10.67 GB/s** | 10.00 GB/s | 2.87 GB/s | 2.58 GB/s | 3.25 GB/s | 506 MB/s | 590 MB/s |
 | Catalog (12 books, owning strings) | **2.52 GB/s** | 1.63 GB/s | 1.33 GB/s | 1.15 GB/s | 1.54 GB/s | 190 MB/s | 215 MB/s |
 
-What each column does, lowest to highest feature set:
+Column drscriptions, ordered from lower to higher feature sets:
 
 - **LightningXML** - zero-copy, non-normalizing, non-validating. `string_view` fields point straight into the source; no DOM, no entity decoding, no allocation for string fields.
 - **LightningXML Strict** - `xmlight::StrictParser`: same extraction, but adds the three well-formedness scans (`]]>` in content, `<` in attribute values, duplicate attributes) and normalizes owning `std::string` fields. A fully-conforming configuration; the delta is the cost of validation.
 - **pugixml** - builds an owning DOM (the source is copied into it), decodes entities, normalizes; we then walk the tree to fill the records.
-- **RapidXML** - in-situ DOM with `parse_default`: parses destructively into a mutable copy of the source (copy timed, like pugixml's), decodes the predefined entities. The whitespace-heavy payloads (Flat, Large) are pathological for its default data-node creation.
+- **RapidXML** - in-situ DOM with `parse_default`: parses destructively into a mutable copy of the source, decodes the predefined entities.
 - **RapidXML fast** - the same, with `parse_fastest` (no data nodes, no entity translation, no string terminators): much faster, fewer features.
-- **libxml2 DOM** - `xmlReadMemory`: the feature-rich end - copies every string into the tree, decodes entities, fully validates.
+- **libxml2 DOM** - `xmlReadMemory`: copies every string into the tree, decodes entities, fully validates.
 - **libxml2 reader** - `xmlTextReader` streaming pull parser. A streaming parser can't hand back views that outlive the cursor, so it copies each field into owning storage as it streams - the streaming-vs-DOM trade-off.
 
 LightningXML leads on every workload (1.7–8× over pugixml; the Tree case is a near-tie with its own strict mode). The depth-14 Tree row is allocation-bound and high-variance for the DOM parsers (pugixml/RapidXML), so treat those cells as approximate. All comparison benchmarks are opt-in CMake options and live in [test/bench_LightningXML.cc](test/bench_LightningXML.cc); see the per-section comments there for the exact fairness choices.
@@ -408,7 +408,7 @@ Supported XSD constructs:
 
 Unsupported constructs are reported as notes on `stderr` rather than causing a failure; the generator produces the best output it can for the rest of the schema.
 
-**Not supported (out of scope for 2.0):**
+**Not supported (out of scope, possible for 2.0):**
 - `xs:union` - no C++ type mapping without boxing
 - `xs:import` - cross-namespace schema merging requires a resolver not in scope
 - `xs:complexContent restriction` - high complexity, rare in practice
@@ -416,107 +416,6 @@ Unsupported constructs are reported as notes on `stderr` rather than causing a f
 - External entity resolution - requires file I/O, incompatible with the zero-copy design
 
 Built with `LIGHTNINGXML_BUILD_CODEGEN` (on by default).
-
-### Constraint Validation
-
-When types carry XSD constraints, `xsdgen` emits `xmlight::XmlConstraints<T>` specializations alongside the metadata. Call `xmlight::validate()` after deserialization:
-
-```cpp
-MyType obj;
-xmlight::deserialize(parser, "root", obj);
-if (auto err = xmlight::validate(obj)) {
-  std::cerr << "constraint violation: " << err->message << '\n';
-}
-```
-
-`xmlight::validate()` returns `std::optional<xmlight::ValidationError>` - empty when all constraints pass, or the first violation in `err->message`. This is intentionally distinct from `xmlight::ErrorCode` (parser errors) so the two failure modes can be handled independently. Types with no constraints use the default no-op specialization, which compiles away entirely.
-
-### Normalization & Entity Expansion (opt-in)
-
-By default `xml::Parser` is zero-copy and **non-normalizing**: it does not expand entities or character references, normalize line endings, or normalize attribute values.
-
-For XML-conformant text, use `xml::NormalizingParser` (an alias for `xml::BasicParser<ParserOptions{.normalize = true}>`). On this parser, **owning `std::string` fields** receive normalized, reference-expanded text:
-
-- The five predefined entities (`&amp; &lt; &gt; &apos; &quot;`) and decimal/hex character references (`&#65;`, `&#x41;`) are expanded (UTF-8 encoded).
-- Line endings (`\r\n`, `\r`) are normalized to `\n`.
-- Attribute whitespace (literal tab/newline) is normalized to spaces (XML §3.3.3); whitespace introduced via a reference is preserved.
-- CDATA content is copied literally (never reference-expanded) and concatenated with surrounding text.
-- An undefined entity (none of the five predefined; no DTD is processed) fails with `ErrorCode::UndefinedEntity`; a malformed or out-of-range character reference fails with `ErrorCode::InvalidCharRef`.
-
-```cpp
-xml::NormalizingParser p{src};
-xml::deserialize(p, "root", obj);   // std::string fields are normalized
-```
-
-`std::string_view` fields are **always** raw zero-copy and ignore this setting (a view cannot hold transformed bytes). The default `xml::Parser` compiles the normalization paths away entirely, meaning you pay nothing unless you opt in.
-
-### Strict Well-Formedness (opt-in)
-
-The default `xml::Parser` is deliberately **non-validating**: for speed it skips three scans the spec requires. `xml::StrictParser` (fully conforming - it both normalizes *and* enforces these constraints) rejects:
-
-- `]]>` appearing in character data (Production [14]) → `ErrorCode::CDataEndInContent`
-- `<` appearing in an attribute value (Production [10]) → `ErrorCode::LtInAttributeValue`
-- duplicate attribute names on one element (WFC: Unique Att Spec) → `ErrorCode::DuplicateAttribute`
-
-```cpp
-xml::StrictParser p{src};
-xml::deserialize(p, "root", obj);   // rejects ill-formed input; also normalizes
-```
-
-These checks each add a scan to the hot path, so they are **opt-in**: the default `xml::Parser` compiles them away entirely (zero cost). Parser policy is selected via the `xml::ParserOptions` flags (`normalize`, `strict`); the `Parser` / `NormalizingParser` / `StrictParser` aliases cover the common combinations, or use `xml::BasicParser<ParserOptions{...}>` directly.
-
-## Generating from XSD
-
-The `xsdgen` tool turns an XSD schema into the matching `XmlMetadata` definitions,
-so you don't hand-write the mapping. The schema is parsed with TurboXML itself.
-
-```bash
-./build/turboxml_xsdgen schema.xsd -o schema_generated.hh   # stdout if no -o
-```
-
-Supported XSD constructs:
-
-| XSD | Generated C++ |
-|---|---|
-| `xs:complexType` | `struct` + `XmlMetadata<T>` |
-| `xs:element` / `xs:attribute` | `field` / `attrField` (required, optional, or vector by `minOccurs`/`maxOccurs`/`use`) |
-| `xs:simpleType` enumeration | `enum class` + `XmlEnumTraits<E>` |
-| `xs:simpleContent` extension | `valueField` + attribute fields |
-| `xs:complexContent` extension | `struct Child : Parent` with merged `XmlMetadata<Child>` |
-| `xs:choice` | `std::variant<...>` + `variantField` |
-| `xs:attributeGroup` / `xs:group` | Expanded inline into the referencing type |
-| `xs:include` | Loaded relative to the input schema's directory (CLI) or a loader callback (`xsd::Options::loader`) |
-| XSD facets (`minLength`, `maxLength`, `length`, `pattern`, `minInclusive`, `maxInclusive`, …) | `XmlConstraints<T>` specialization checked by `xml::validate()` |
-| Attribute `default` | C++ default member initializer |
-| Attribute `fixed` | Default initializer + `XmlConstraints<T>` equality check |
-| Finite `maxOccurs=N` | `std::vector<T>` member + `XmlConstraints<T>` size check |
-| Built-in types | `std::string`, `int`, `double`, `bool`, `xml::Date`, `xml::Time`, `xml::DateTime`, … |
-| Recursive types | `std::unique_ptr<T>` (optional self-reference) or `std::vector<T>` (repeated) |
-
-Unsupported constructs are reported as notes on `stderr` rather than causing a failure; the generator produces the best output it can for the rest of the schema.
-
-**Not supported (out of scope for 2.0):**
-- `xs:union` - no C++ type mapping without boxing
-- `xs:import` - cross-namespace schema merging requires a resolver not in scope
-- `xs:complexContent restriction` - high complexity, rare in practice
-- `xs:any` / `xs:anyAttribute` - wildcards have no static type
-- External entity resolution - requires file I/O, incompatible with the zero-copy design
-
-Built with `TURBOXML_BUILD_CODEGEN` (on by default).
-
-### Constraint Validation
-
-When types carry XSD constraints, `xsdgen` emits `xml::XmlConstraints<T>` specializations alongside the metadata. Call `xml::validate()` after deserialization:
-
-```cpp
-MyType obj;
-xml::deserialize(parser, "root", obj);
-if (auto err = xml::validate(obj)) {
-  std::cerr << "constraint violation: " << err->message << '\n';
-}
-```
-
-`xml::validate()` returns `std::optional<xml::ValidationError>` - empty when all constraints pass, or the first violation in `err->message`. This is intentionally distinct from `xml::ErrorCode` (parser errors) so the two failure modes can be handled independently. Types with no constraints use the default no-op specialization, which compiles away entirely.
 
 ## Building
 
