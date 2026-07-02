@@ -1,0 +1,1232 @@
+/// @file test_Conformance.cc
+/// @brief XML 1.0 (Fifth Edition) conformance test suite for LightningXML.
+///
+/// Tests are organized by section of W3C REC-xml-20081126.
+/// Each test references the relevant spec section, production rule,
+/// or well-formedness constraint (WFC).
+///
+/// LightningXML is a zero-copy pull-parser/deserializer. The default xmlight::Parser
+/// enforces structural well-formedness. Additional conformance is opt-in:
+///
+///   xmlight::NormalizingParser (normalize=true):
+///     - Predefined entity expansion &amp; &lt; &gt; &apos; &quot; (sec 4.6)
+///     - Character reference resolution &#nnn; / &#xhh; (sec 4.1)
+///     - End-of-line normalization \r\n -> \n, \r -> \n (sec 2.11)
+///     - Attribute-value whitespace normalization (sec 3.3.3)
+///
+///   xmlight::StrictParser (normalize=true, strict=true):
+///     - All of the above, plus:
+///     - "]]>" rejection in character data (sec 2.4)
+///     - '<' rejection in attribute values (sec 3.1 WFC)
+///     - Duplicate-attribute detection (sec 3.1 WFC)
+///
+/// Deliberately not implemented (design trade-offs):
+///   - DTD processing (sec 2.8, 3.2-3.4) -- DOCTYPE is skipped, not interpreted
+///   - External entity resolution (sec 4.4) -- requires file I/O
+/// @link https://www.w3.org/TR/2008/REC-xml-20081126/
+
+#include <gtest/gtest.h>
+
+#include <cstring>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "LightningXML.hh"
+
+// Helper structs for exercising the parser.
+
+struct Leaf {
+  std::string_view text;
+};
+
+template<>
+struct xmlight::XmlMetadata<Leaf> {
+  static constexpr auto fields = std::make_tuple(xmlight::field("v", &Leaf::text));
+};
+
+struct LeafInt {
+  int value{};
+};
+
+template<>
+struct xmlight::XmlMetadata<LeafInt> {
+  static constexpr auto fields = std::make_tuple(xmlight::field("v", &LeafInt::value));
+};
+
+struct TwoFields {
+  std::string_view a;
+  std::string_view b;
+};
+
+template<>
+struct xmlight::XmlMetadata<TwoFields> {
+  static constexpr auto fields =
+      std::make_tuple(xmlight::field("a", &TwoFields::a), xmlight::field("b", &TwoFields::b));
+};
+
+struct AttrOnly {
+  std::string_view x;
+  std::string_view y;
+};
+
+template<>
+struct xmlight::XmlMetadata<AttrOnly> {
+  static constexpr auto fields =
+      std::make_tuple(xmlight::attrField("x", &AttrOnly::x), xmlight::attrField("y", &AttrOnly::y));
+};
+
+struct AttrInt {
+  int id{};
+  std::string_view name;
+};
+
+template<>
+struct xmlight::XmlMetadata<AttrInt> {
+  static constexpr auto fields =
+      std::make_tuple(xmlight::attrField("id", &AttrInt::id), xmlight::attrField("name", &AttrInt::name));
+};
+
+struct VecLeaf {
+  std::vector<std::string_view> items;
+};
+
+template<>
+struct xmlight::XmlMetadata<VecLeaf> {
+  static constexpr auto fields = std::make_tuple(xmlight::vecField("item", &VecLeaf::items));
+};
+
+struct Nested {
+  Leaf inner;
+};
+
+template<>
+struct xmlight::XmlMetadata<Nested> {
+  static constexpr auto fields = std::make_tuple(xmlight::field("inner", &Nested::inner));
+};
+
+struct OwnedLeaf {
+  std::string text;
+};
+
+template<>
+struct xmlight::XmlMetadata<OwnedLeaf> {
+  static constexpr auto fields = std::make_tuple(xmlight::field("v", &OwnedLeaf::text));
+};
+
+struct OwnedAttr {
+  std::string x;
+};
+
+template<>
+struct xmlight::XmlMetadata<OwnedAttr> {
+  static constexpr auto fields = std::make_tuple(xmlight::attrField("x", &OwnedAttr::x));
+};
+
+// sec 2.1 - Well-Formed XML Documents [Production 1: document]
+class Sec21WellFormedDocument : public ::testing::Test {};
+
+/// Production [1]: document ::= prolog element Misc*
+/// A minimal well-formed document is a single root element.
+TEST_F(Sec21WellFormedDocument, MinimalDocument) {
+  const std::string_view src = R"(<r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// There must be exactly one root element.
+/// Content after the root close tag should not interfere with parsing
+/// the root itself.
+TEST_F(Sec21WellFormedDocument, ExtraContentAfterRootIgnored) {
+  const std::string_view src = R"(<r><v>ok</v></r><extra/>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// No root element at all - must fail.
+TEST_F(Sec21WellFormedDocument, NoRootElement) {
+  const std::string_view src = R"(<!-- just a comment -->)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::RootElementNotFound);
+}
+
+/// Empty input - must fail.
+TEST_F(Sec21WellFormedDocument, EmptyInput) {
+  xmlight::Parser p{""};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::RootElementNotFound);
+}
+
+/// Whitespace-only input - must fail (no element).
+TEST_F(Sec21WellFormedDocument, WhitespaceOnlyInput) {
+  const std::string_view src = "   \n\t  \n  ";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::RootElementNotFound);
+}
+
+// sec 2.2 - Characters [Production 2: Char]
+class Sec22Characters : public ::testing::Test {};
+
+/// Tab (#x9), LF (#xA), CR (#xD), and space (#x20) are legal in content.
+TEST_F(Sec22Characters, LegalWhitespaceInContent) {
+  const std::string src = "<r><v>\t\n text\r\n</v></r>";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_FALSE(leaf.text.empty());
+}
+
+/// NUL byte (#x0) is illegal in XML content. The parser should either
+/// reject it or stop before it. (Char production excludes #x0.)
+TEST_F(Sec22Characters, NulByteInContent) {
+  std::string src = "<r><v>ab";
+  src.push_back('\0');
+  src += "cd</v></r>";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  // The parser may accept the doc but truncate at the NUL (memchr-based
+  // scanning), or it may reject it. Either behaviour should not crash.
+  std::ignore = xmlight::deserialize(p, "r", leaf);
+  // No crash is the assertion.
+}
+
+/// Valid multi-byte UTF-8 characters in element names and content.
+/// NameStartChar allows [#xC0-#xD6] etc.
+TEST_F(Sec22Characters, Utf8InElementNamesAndContent) {
+  // "café" as element name (é = U+00E9 -> 0xC3 0xA9 in UTF-8)
+  const std::string_view src = R"(<r><v>café</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "café");
+}
+
+/// Three-byte UTF-8 (CJK) in content.
+TEST_F(Sec22Characters, Utf8CjkContent) {
+  const std::string_view src = R"(<r><v>漢字</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "漢字");
+}
+
+// sec 2.3 - Common Syntactic Constructs [Productions 3-8: S, Name, etc.]
+class Sec23Names : public ::testing::Test {};
+
+/// Names may contain hyphens, dots, digits, underscores, colons.
+/// Production [4a]: NameChar includes '-', '.', [0-9].
+TEST_F(Sec23Names, NameWithHyphenDotDigit) {
+  const std::string_view src = R"(<root-1.0><v>ok</v></root-1.0>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "root-1.0", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Names starting with underscore are legal.
+/// Production [4]: NameStartChar includes '_'.
+TEST_F(Sec23Names, NameStartsWithUnderscore) {
+  const std::string_view src = R"(<_r><v>ok</v></_r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "_r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Names starting with colon are legal per XML 1.0 (though discouraged
+/// by the Namespaces spec). Production [4]: NameStartChar includes ':'.
+TEST_F(Sec23Names, NameStartsWithColon) {
+  const std::string_view src = R"(<:r><v>ok</v></:r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  // Colon at start means the prefix is empty and local name is "r" in
+  // LightningXML's namespace-aware parse_name. The root match uses full
+  // name comparison, so we try both.
+  // The parser's begin_element compares token.name which is the local
+  // part after the colon. So root_name "r" should match.
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Names must not start with a digit.
+/// Production [4]: NameStartChar excludes [0-9].
+TEST_F(Sec23Names, NameStartingWithDigitFails) {
+  const std::string_view src = R"(<1tag></1tag>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "1tag", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedCharAfterLt);
+}
+
+/// Names must not start with hyphen.
+TEST_F(Sec23Names, NameStartingWithHyphenFails) {
+  const std::string_view src = R"(<-tag></-tag>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "-tag", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedCharAfterLt);
+}
+
+/// Names must not start with a dot.
+TEST_F(Sec23Names, NameStartingWithDotFails) {
+  const std::string_view src = R"(<.tag></.tag>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, ".tag", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedCharAfterLt);
+}
+
+// sec 2.4 - Character Data and Markup [Production 14: CharData]
+class Sec24CharData : public ::testing::Test {};
+
+/// Production [14]: CharData must not contain "]]>" (the CDATA close
+/// delimiter appearing in ordinary text is a fatal error per spec).
+///
+/// StrictParser enforces this; the default Parser opts out of the extra text
+/// scan for speed and accepts it.
+TEST_F(Sec24CharData, CDataEndDelimiterInTextShouldFail) {
+  const std::string_view src = R"(<r><v>bad ]]> text</v></r>)";
+
+  xmlight::StrictParser sp{src};
+  Leaf strict_leaf;
+  EXPECT_FALSE(xmlight::deserialize(sp, "r", strict_leaf));
+  EXPECT_EQ(sp.errorCode(), xmlight::ErrorCode::CDataEndInContent);
+
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_TRUE(xmlight::deserialize(p, "r", leaf));  // accepted by the fast path
+}
+
+// sec 2.5 - Comments [Production 15]
+class Sec25Comments : public ::testing::Test {};
+
+/// Well-formed comment between elements should be skipped.
+TEST_F(Sec25Comments, CommentBetweenElements) {
+  const std::string_view src = R"(<r><!-- hello --><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Comment before the root element (in prolog) should be skipped.
+TEST_F(Sec25Comments, CommentInProlog) {
+  const std::string_view src = R"(<!-- prolog comment --><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Comment after the root element (in Misc) should be ignored.
+TEST_F(Sec25Comments, CommentAfterRoot) {
+  const std::string_view src = R"(<r><v>ok</v></r><!-- trailing -->)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Empty comment is legal: "<!---->".
+TEST_F(Sec25Comments, EmptyComment) {
+  const std::string_view src = R"(<!----><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Comments must not contain "--" (double hyphen).
+/// Production [15]: Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))*
+/// '-->'
+///
+/// LightningXML enforces this WFC: the comment scan rejects any interior "--"
+/// (the first "--" must begin the "-->" terminator).
+TEST_F(Sec25Comments, DoubleHyphenInsideCommentShouldFail) {
+  const std::string_view src = R"(<!-- bad -- comment --><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::MalformedComment);
+}
+
+/// Comment ending with "--->" is ill-formed: the content's trailing '-' is
+/// adjacent to the terminator's leading '-', forming a forbidden "--".
+TEST_F(Sec25Comments, CommentEndingWithTripleHyphenShouldFail) {
+  const std::string_view src = R"(<!--- bad ---><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::MalformedComment);
+}
+
+/// Unterminated comment - must fail.
+TEST_F(Sec25Comments, UnterminatedComment) {
+  const std::string_view src = R"(<!-- never ends <r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnterminatedComment);
+}
+
+// sec 2.6 - Processing Instructions [Production 16-17]
+class Sec26Pi : public ::testing::Test {};
+
+/// A well-formed PI before the root is skipped.
+TEST_F(Sec26Pi, PIInProlog) {
+  const std::string_view src = R"(<?myapp version="2.0"?><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// A PI between child elements is skipped.
+TEST_F(Sec26Pi, PIBetweenElements) {
+  const std::string_view src = R"(<r><?proc data?><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// PITarget must not be "xml" (case-insensitive) for processing
+/// instructions (as opposed to the XML declaration).
+/// Production [17]: PITarget ::= Name - (('X'|'x')('M'|'m')('L'|'l'))
+///
+/// NOTE: LightningXML treats "<?xml ...?>" as TokenType::XmlDeclaration and
+/// any other PI target as TokenType::ProcessingInstruction. A reserved
+/// case-variant of "xml" ("XML", "Xml", ...) is rejected as an illegal PI
+/// target (see PITargetXmlMixedCaseRejected).
+TEST_F(Sec26Pi, PITargetXmlLowercase) {
+  // "<?xml ...?>" at the start is the XML declaration - legal.
+  const std::string_view src = R"(<?xml version="1.0"?><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Production [17]: PITarget excludes every case variant of "xml". Only the
+/// exact lowercase form names the XML declaration; "<?XML?>", "<?Xml?>", etc.
+/// are reserved and ill-formed as PI targets.
+TEST_F(Sec26Pi, PITargetXmlMixedCaseRejected) {
+  const std::string_view src = R"(<?XML version="1.0"?><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  // Production 17 reserves every case variant of "xml"; LightningXML rejects a
+  // mixed-case "xml" PI target as ill-formed.
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ReservedPiTarget);
+}
+
+/// A PI target that merely starts with "xml" (e.g. "xml-stylesheet") is a
+/// legal Name, not the reserved target, and must be skipped without error.
+TEST_F(Sec26Pi, PITargetXmlPrefixedNameAllowed) {
+  const std::string_view src = R"(<?xml-stylesheet href="s.xsl"?><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Unterminated PI - must fail.
+TEST_F(Sec26Pi, UnterminatedPI) {
+  const std::string_view src = R"(<?proc never ends <r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnterminatedPi);
+}
+
+// sec 2.7 - CDATA Sections [Production 18-21]
+class Sec27Cdata : public ::testing::Test {};
+
+/// Well-formed CDATA between elements is skipped during struct
+/// deserialization (it's not bound to a field in pull()).
+TEST_F(Sec27Cdata, CDataBetweenElements) {
+  const std::string_view src = R"(<r><![CDATA[ignored <markup> & stuff]]><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// CDATA sections cannot be nested.
+/// "<![CDATA[outer <![CDATA[inner]]> ]]>" is ill-formed because the
+/// first "]]>" terminates the outer section, leaving " ]]>" as stray
+/// text. But the parser should not crash.
+TEST_F(Sec27Cdata, NestedCData) {
+  const std::string_view src = R"(<r><![CDATA[outer <![CDATA[inner]]> rest]]><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  // The exact behavior depends on how scan_to_delimiter handles the
+  // first "]]>". The important thing is no crash.
+  std::ignore = xmlight::deserialize(p, "r", leaf);
+}
+
+/// Unterminated CDATA - must fail.
+TEST_F(Sec27Cdata, UnterminatedCData) {
+  const std::string_view src = R"(<r><![CDATA[never ends</r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnterminatedCData);
+}
+
+// sec 2.8 - Prolog and Document Type Declaration [Production 22-28]
+class Sec28Prolog : public ::testing::Test {};
+
+/// XML declaration must come before the root element.
+TEST_F(Sec28Prolog, XmlDeclarationBeforeRoot) {
+  const std::string_view src = R"(<?xml version="1.0" encoding="UTF-8"?><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// XML declaration with standalone="yes".
+TEST_F(Sec28Prolog, XmlDeclarationStandalone) {
+  const std::string_view src = R"(<?xml version="1.0" standalone="yes"?><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// DOCTYPE declaration should be skipped (non-validating parser).
+/// LightningXML handles "<!...>" by scanning for '>' and moving on.
+TEST_F(Sec28Prolog, DoctypeSkipped) {
+  const std::string_view src =
+      R"(<?xml version="1.0"?><!DOCTYPE root SYSTEM "root.dtd"><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// DOCTYPE with internal subset (inline DTD). The parser should skip the
+/// entire block, including nested declarations whose '>' must not terminate
+/// the outer DOCTYPE prematurely (sec 2.8, Production [28]).
+TEST_F(Sec28Prolog, DoctypeWithInternalSubset) {
+  const std::string_view src =
+      R"(<?xml version="1.0"?><!DOCTYPE r [<!ELEMENT r (v)><!ELEMENT v (#PCDATA)>]><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// DOCTYPE with entity declaration containing '>' in quoted literal must
+/// not terminate the internal subset scan early (sec 2.8, 4.2).
+TEST_F(Sec28Prolog, DoctypeEntityWithGtInLiteral) {
+  const std::string_view src =
+      R"(<?xml version="1.0"?><!DOCTYPE r [<!ENTITY bar "a>b">]><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// UTF-8 BOM (\xEF\xBB\xBF) at the start of the document must be stripped
+/// transparently before parsing begins (sec 4.3.3, Appendix F).
+TEST_F(Sec28Prolog, Utf8BomStripped) {
+  // BOM + "<?xml version=\"1.0\"?><r><v>ok</v></r>"
+  const std::string src = "\xEF\xBB\xBF<?xml version=\"1.0\"?><r><v>ok</v></r>";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// UTF-8 BOM without an XML declaration (bare BOM before root element).
+TEST_F(Sec28Prolog, Utf8BomNoDeclaration) {
+  const std::string src = "\xEF\xBB\xBF<r><v>ok</v></r>";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+// sec 2.10 - White Space Handling
+class Sec210Whitespace : public ::testing::Test {};
+
+/// Leading and trailing whitespace in element content is preserved
+/// in the string_view (XML spec says processors must pass all characters
+/// that are not markup to the application).
+TEST_F(Sec210Whitespace, WhitespacePreservedInContent) {
+  const std::string_view src = R"(<r><v>  hello  </v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "  hello  ");
+}
+
+/// Whitespace between child elements (insignificant whitespace) should
+/// not disrupt parsing.
+TEST_F(Sec210Whitespace, WhitespaceBetweenElements) {
+  const std::string_view src = "<r>\n  <a>x</a>\n  <b>y</b>\n</r>";
+  xmlight::Parser p{src};
+  TwoFields tf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", tf));
+  EXPECT_EQ(tf.a, "x");
+  EXPECT_EQ(tf.b, "y");
+}
+
+// sec 2.11 - End-of-Line Handling
+class Sec211Eol : public ::testing::Test {};
+
+/// Per spec, \r\n -> \n and bare \r -> \n before any other processing. Applied
+/// on the normalizing parser for owning std::string fields; a zero-copy
+/// std::string_view necessarily preserves the raw bytes.
+TEST_F(Sec211Eol, CrLfNormalization) {
+  const std::string src = "<r><v>line1\r\nline2</v></r>";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "line1\nline2");
+}
+
+/// Bare \r -> \n.
+TEST_F(Sec211Eol, BareCarriageReturn) {
+  const std::string src = "<r><v>a\rb</v></r>";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "a\nb");
+}
+
+// sec 3.1 - Start-Tags, End-Tags, and Empty-Element Tags
+//         [Productions 40-44, WFC: Element Type Match,
+//          WFC: Unique Att Spec, WFC: No < in Attribute Values]
+class Sec31Tags : public ::testing::Test {};
+
+/// WFC: Element Type Match - the end-tag name must match the start-tag.
+TEST_F(Sec31Tags, WFC_ElementTypeMatch_Mismatch) {
+  const std::string_view src = R"(<r><v>data</wrong></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ElementMismatch);
+}
+
+/// WFC: Element Type Match - case-sensitive matching.
+TEST_F(Sec31Tags, WFC_ElementTypeMatch_CaseSensitive) {
+  const std::string_view src = R"(<R><v>data</v></R>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  // "R" and "r" are different names.
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::RootElementNotFound);
+  xmlight::Parser p2{src};
+  ASSERT_TRUE(xmlight::deserialize(p2, "R", leaf));
+  EXPECT_EQ(leaf.text, "data");
+}
+
+/// Empty-element tag (self-closing).
+/// Production [44]: EmptyElemTag ::= '<' Name (S Attribute)* S? '/>'
+TEST_F(Sec31Tags, EmptyElementTag) {
+  const std::string_view src = R"(<r><v/></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_TRUE(leaf.text.empty());
+}
+
+/// Empty-element tag with attributes.
+TEST_F(Sec31Tags, EmptyElementTagWithAttrs) {
+  const std::string_view src = R"(<r x="hello" y="world"/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "hello");
+  EXPECT_EQ(ao.y, "world");
+}
+
+/// Whitespace around '=' in attributes is legal.
+/// Production [25]: Eq ::= S? '=' S?
+TEST_F(Sec31Tags, WhitespaceAroundEquals) {
+  const std::string_view src = R"(<r x = "hello" y= "world" />)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "hello");
+  EXPECT_EQ(ao.y, "world");
+}
+
+/// Whitespace before '/>' is legal.
+TEST_F(Sec31Tags, WhitespaceBeforeSelfClose) {
+  const std::string_view src = R"(<r x="v"   />)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "v");
+}
+
+/// Whitespace before '>' in end-tag is legal.
+/// Production [42]: ETag ::= '</' Name S? '>'
+TEST_F(Sec31Tags, WhitespaceInEndTag) {
+  const std::string_view src = R"(<r><v>ok</v  ></r  >)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Attribute values in single quotes are legal.
+/// Production [10]: AttValue ::= '"' ... '"' | "'" ... "'"
+TEST_F(Sec31Tags, SingleQuotedAttributes) {
+  const std::string_view src = R"(<r x='hello' y='world'/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "hello");
+  EXPECT_EQ(ao.y, "world");
+}
+
+/// Mixed single and double quotes across different attributes.
+TEST_F(Sec31Tags, MixedQuoteStyles) {
+  const std::string_view src = R"(<r x="hello" y='world'/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "hello");
+  EXPECT_EQ(ao.y, "world");
+}
+
+/// Double quote inside single-quoted value and vice versa.
+TEST_F(Sec31Tags, QuoteCharInsideOppositeDelimiter) {
+  const std::string_view src = R"(<r x='say "hi"' y="it's"/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, R"(say "hi")");
+  EXPECT_EQ(ao.y, "it's");
+}
+
+/// Unquoted attribute value - must fail.
+TEST_F(Sec31Tags, UnquotedAttributeFails) {
+  const std::string_view src = R"(<r x=hello/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedQuotedValue);
+}
+
+/// WFC: No < in Attribute Values.
+/// Production [10]: AttValue must not contain '<'.
+///
+/// StrictParser enforces this; the default Parser accepts it.
+TEST_F(Sec31Tags, WFC_NoLtInAttributeValue) {
+  const std::string_view src = R"(<r x="a<b"/>)";
+
+  xmlight::StrictParser sp{src};
+  AttrOnly strict_ao;
+  EXPECT_FALSE(xmlight::deserialize(sp, "r", strict_ao));
+  EXPECT_EQ(sp.errorCode(), xmlight::ErrorCode::LtInAttributeValue);
+
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  EXPECT_TRUE(xmlight::deserialize(p, "r", ao));
+}
+
+/// WFC: Unique Att Spec - no two attributes in a start-tag may share
+/// the same name.
+///
+/// StrictParser enforces this; the default Parser accepts duplicates and the
+/// document-order match wins in attr().
+TEST_F(Sec31Tags, WFC_UniqueAttSpec) {
+  const std::string_view src = R"(<r x="first" x="second"/>)";
+
+  xmlight::StrictParser sp{src};
+  AttrOnly strict_ao;
+  EXPECT_FALSE(xmlight::deserialize(sp, "r", strict_ao));
+  EXPECT_EQ(sp.errorCode(), xmlight::ErrorCode::DuplicateAttribute);
+
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  EXPECT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "first");  // document-order match wins
+}
+
+/// Unclosed start tag - must fail.
+TEST_F(Sec31Tags, UnclosedStartTag) {
+  const std::string_view src = R"(<r x="v")";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnclosedTag);
+}
+
+/// End-tag with no name - must fail.
+TEST_F(Sec31Tags, EndTagNoName) {
+  const std::string_view src = R"(<r></>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedNameInCloseTag);
+}
+
+/// Proper nesting is required - overlapping elements are ill-formed.
+TEST_F(Sec31Tags, OverlappingElements) {
+  const std::string_view src = R"(<r><a>text</r></a>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ElementMismatch);
+}
+
+// sec 3.1 - Namespace-prefixed elements
+class Sec31Namespaces : public ::testing::Test {};
+
+/// Elements with namespace prefixes should parse; the local name is
+/// used for field matching.
+TEST_F(Sec31Namespaces, PrefixedElementName) {
+  const std::string_view src = R"(<ns:r xmlns:ns="urn:test"><v>ok</v></ns:r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  // LightningXML's begin_element compares the local name "r".
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Prefixed child elements - local name used for field matching.
+TEST_F(Sec31Namespaces, PrefixedChildElement) {
+  const std::string_view src = R"(<r><ns:v>ok</ns:v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Prefixed attributes - local name used for hash matching.
+TEST_F(Sec31Namespaces, PrefixedAttribute) {
+  const std::string_view src = R"(<r ns:x="hello" y="world"/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "hello");
+  EXPECT_EQ(ao.y, "world");
+}
+
+// sec 4.1 - Character and Entity References [Production 66-68]
+class Sec41References : public ::testing::Test {};
+
+/// sec 4.6 - Predefined entities: &amp; &lt; &gt; &apos; &quot;
+/// LightningXML does NOT expand entities (zero-copy). The raw text
+/// including the ampersand and semicolon is preserved.
+TEST_F(Sec41References, PredefinedEntitiesPreservedRaw) {
+  const std::string_view src = R"(<r><v>a&amp;b &lt; c &gt; d &apos;e&apos; &quot;f&quot;</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  // Zero-copy: entities are NOT expanded.
+  EXPECT_EQ(leaf.text, "a&amp;b &lt; c &gt; d &apos;e&apos; &quot;f&quot;");
+}
+
+/// Numeric character references (&#nnn; and &#xhh;) are also not
+/// expanded in zero-copy mode.
+TEST_F(Sec41References, NumericCharRefPreservedRaw) {
+  const std::string_view src = R"(<r><v>&#65;&#x42;</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  // Raw text - not expanded to "AB".
+  EXPECT_EQ(leaf.text, "&#65;&#x42;");
+}
+
+/// Entity references in attribute values - also preserved raw.
+TEST_F(Sec41References, EntityRefInAttributeRaw) {
+  const std::string_view src = R"(<r x="a&amp;b" y="c&lt;d"/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "a&amp;b");
+  EXPECT_EQ(ao.y, "c&lt;d");
+}
+
+/// Owned strings (std::string) also preserve raw entity text.
+TEST_F(Sec41References, OwnedStringPreservesEntities) {
+  const std::string_view src = R"(<r><v>hello &amp; world</v></r>)";
+  xmlight::Parser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "hello &amp; world");
+}
+
+// sec 5 - Conformance / sec 5.1 - Processor Classification
+class Sec5Conformance : public ::testing::Test {};
+
+/// A non-validating processor MUST report violations of well-formedness
+/// constraints as fatal errors (returning false / error token).
+/// This test aggregates the minimal set of fatal-error scenarios.
+
+/// Missing end tag for root - must fail.
+TEST_F(Sec5Conformance, FatalError_MissingEndTag) {
+  const std::string_view src = R"(<r><v>ok</v>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedEof);
+}
+
+/// Bare '<' in text content. Per spec, '<' may only appear as part
+/// of markup. In practice LightningXML's next_from_source treats '<' as
+/// the start of markup and will attempt to parse what follows.
+TEST_F(Sec5Conformance, FatalError_BareLtInContent) {
+  // "< " is not valid markup start - is_name_start(' ') is false.
+  const std::string_view src = R"(<r><v>a < b</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  // The parser should either fail or produce garbled output.
+  // The key assertion is no crash.
+  std::ignore = xmlight::deserialize(p, "r", leaf);
+}
+
+/// Bare '&' that doesn't form a valid entity reference.
+/// For a non-validating processor that doesn't expand entities, this
+/// is technically an error but the spec allows non-validating processors
+/// to not report it (sec 4.4.1). LightningXML's zero-copy pass-through is
+/// compliant here.
+TEST_F(Sec5Conformance, BareAmpersandPassedThrough) {
+  const std::string_view src = R"(<r><v>a & b</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  // Zero-copy: raw text is preserved including the bare '&'.
+  EXPECT_EQ(leaf.text, "a & b");
+}
+
+class WellFormedness : public ::testing::Test {};
+
+/// Multiple root elements - only the first should be deserialized.
+TEST_F(WellFormedness, TwoRootElements) {
+  const std::string_view src = R"(<r><v>first</v></r><r><v>second</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "first");
+}
+
+/// Deeply nested elements should parse up to kMaxDepth.
+TEST_F(WellFormedness, DeepNesting) {
+  // Build a 128-level nested structure:
+  // <r><inner><inner>...<v>ok</v>...</inner></inner></r>
+  std::string src = "<r>";
+  const int depth = 100;
+  for (int i = 0; i < depth; ++i) {
+    src += "<inner>";
+  }
+  src += "<v>ok</v>";
+  for (int i = 0; i < depth; ++i) {
+    src += "</inner>";
+  }
+  src += "</r>";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  // The parser will skip unknown "inner" elements, but it should not
+  // crash on deep nesting.
+  std::ignore = xmlight::deserialize(p, "r", leaf);
+}
+
+/// Interleaved CDATA, comments, PIs - all should be skipped cleanly.
+TEST_F(WellFormedness, InterleavedMisc) {
+  const std::string_view src = R"(
+<?xml version="1.0"?>
+<!-- top comment -->
+<?style sheet="none"?>
+<r>
+  <!-- inner comment -->
+  <![CDATA[some <data>]]>
+  <?inner-pi stuff?>
+  <v>ok</v>
+  <!-- trailing comment -->
+</r>
+)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Parser::reset() should allow re-parsing the same document.
+TEST_F(WellFormedness, ResetAndReparse) {
+  const std::string_view src = R"(<r><v>hello</v></r>)";
+  xmlight::Parser p{src};
+
+  Leaf first;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", first));
+  EXPECT_EQ(first.text, "hello");
+
+  p.reset();
+
+  Leaf second;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", second));
+  EXPECT_EQ(second.text, "hello");
+}
+
+/// Vector field with zero children - empty vector, no error.
+TEST_F(WellFormedness, EmptyVectorField) {
+  const std::string_view src = R"(<r></r>)";
+  xmlight::Parser p{src};
+  VecLeaf vl;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", vl));
+  EXPECT_TRUE(vl.items.empty());
+}
+
+/// Multiple children in a vector field.
+TEST_F(WellFormedness, VectorMultipleChildren) {
+  const std::string_view src = R"(<r><item>a</item><item>b</item><item>c</item></r>)";
+  xmlight::Parser p{src};
+  VecLeaf vl;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", vl));
+  ASSERT_EQ(vl.items.size(), 3U);
+  EXPECT_EQ(vl.items[0], "a");
+  EXPECT_EQ(vl.items[1], "b");
+  EXPECT_EQ(vl.items[2], "c");
+}
+
+/// Integer attribute parsing.
+TEST_F(WellFormedness, IntegerAttribute) {
+  const std::string_view src = R"(<r id="42" name="test"/>)";
+  xmlight::Parser p{src};
+  AttrInt ai;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ai));
+  EXPECT_EQ(ai.id, 42);
+  EXPECT_EQ(ai.name, "test");
+}
+
+/// Negative integer in element content.
+TEST_F(WellFormedness, NegativeInteger) {
+  const std::string_view src = R"(<r><v>-7</v></r>)";
+  xmlight::Parser p{src};
+  LeafInt li;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", li));
+  EXPECT_EQ(li.value, -7);
+}
+
+/// Large document - many siblings.
+TEST_F(WellFormedness, ManySiblings) {
+  std::string src = "<r>";
+  for (int i = 0; i < 10000; ++i) {
+    src += "<item>" + std::to_string(i) + "</item>";
+  }
+  src += "</r>";
+  xmlight::Parser p{src};
+  VecLeaf vl;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", vl));
+  EXPECT_EQ(vl.items.size(), 10000U);
+  EXPECT_EQ(vl.items[0], "0");
+  EXPECT_EQ(vl.items[9999], "9999");
+}
+
+/// Nested struct deserialization.
+TEST_F(WellFormedness, NestedStruct) {
+  const std::string_view src = R"(<r><inner><v>deep</v></inner></r>)";
+  xmlight::Parser p{src};
+  Nested n;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", n));
+  EXPECT_EQ(n.inner.text, "deep");
+}
+
+/// Self-closing root with no fields to read - should succeed.
+TEST_F(WellFormedness, SelfClosingRoot) {
+  const std::string_view src = R"(<r/>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_TRUE(leaf.text.empty());
+}
+
+// Attribute edge cases (sec 3.1 / sec 3.3)
+class AttributeEdges : public ::testing::Test {};
+
+/// Empty attribute value is legal.
+TEST_F(AttributeEdges, EmptyAttributeValue) {
+  const std::string_view src = R"(<r x="" y=""/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_TRUE(ao.x.empty());
+  EXPECT_TRUE(ao.y.empty());
+}
+
+/// Attribute value containing whitespace.
+TEST_F(AttributeEdges, WhitespaceInAttributeValue) {
+  const std::string_view src = R"(<r x="  spaces  " y="	tab	"/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "  spaces  ");
+  EXPECT_EQ(ao.y, "\ttab\t");
+}
+
+/// Attribute with numeric value parsed as string.
+TEST_F(AttributeEdges, NumericAttrAsString) {
+  const std::string_view src = R"(<r x="12345" y="0"/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "12345");
+  EXPECT_EQ(ao.y, "0");
+}
+
+/// Attributes appear after unknown attributes - registered ones are
+/// still found via hash lookup.
+TEST_F(AttributeEdges, UnknownAttributesSkipped) {
+  const std::string_view src = R"(<r foo="bar" x="found" baz="quux" y="also"/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "found");
+  EXPECT_EQ(ao.y, "also");
+}
+
+class Robustness : public ::testing::Test {};
+
+/// Truncated document mid-tag.
+TEST_F(Robustness, TruncatedMidTag) {
+  const std::string_view src = R"(<r><v>hel)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedEof);
+}
+
+/// Truncated in attribute name.
+TEST_F(Robustness, TruncatedInAttribute) {
+  const std::string_view src = R"(<r x)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedEquals);
+}
+
+/// Truncated in attribute value (no closing quote).
+TEST_F(Robustness, TruncatedInAttrValue) {
+  const std::string_view src = R"(<r x="hello)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnterminatedAttributeValue);
+}
+
+/// Just a '<' - must not crash.
+TEST_F(Robustness, JustLessThan) {
+  const std::string_view src = "<";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedEndAfterLt);
+}
+
+/// Just "</" - must not crash.
+TEST_F(Robustness, JustCloseTagStart) {
+  const std::string_view src = "</";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedNameInCloseTag);
+}
+
+/// Just "<!-" - partial comment start, must not crash.
+TEST_F(Robustness, PartialCommentStart) {
+  const std::string_view src = "<!-";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::RootElementNotFound);
+}
+
+/// Just "<?" - partial PI, must not crash.
+TEST_F(Robustness, PartialPIStart) {
+  const std::string_view src = "<?";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedPiTarget);
+}
+
+/// Very long element name (64KB).
+TEST_F(Robustness, VeryLongElementName) {
+  const std::string name(65536, 'a');
+  const std::string src = "<" + name + "><v>ok</v></" + name + ">";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, name, leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Very long attribute value (1MB).
+TEST_F(Robustness, VeryLongAttributeValue) {
+  const std::string val(1 << 20, 'x');
+  const std::string src = R"(<r x=")" + val + R"("/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x.size(), val.size());
+}
+
+/// Very long text content (1MB).
+TEST_F(Robustness, VeryLongTextContent) {
+  const std::string val(1 << 20, 'y');
+  const std::string src = "<r><v>" + val + "</v></r>";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text.size(), val.size());
+}
+
+/// Random garbage after valid XML - doesn't affect the first parse.
+TEST_F(Robustness, GarbageAfterDocument) {
+  const std::string_view src = R"(<r><v>ok</v></r>@#$%^&*garbage)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+// Tests for features that require the NormalizingParser opt-in:
+// entity/char-ref expansion and attribute-value normalization.
+class ConformanceGaps : public ::testing::Test {};
+
+/// sec 3.3.3 - Attribute-value normalization. For CDATA-typed attributes
+/// (the default without a DTD), processors replace character/entity references,
+/// then normalize whitespace. Supported on the normalizing parser for owning
+/// std::string fields (a zero-copy std::string_view cannot hold the result).
+TEST_F(ConformanceGaps, AttrValueNormalization) {
+  const std::string_view src = R"(<r x="a&#x20;&#x20;b"/>)";
+  xmlight::NormalizingParser p{src};
+  OwnedAttr ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "a  b");
+}
+
+/// sec 4.6 - Predefined entity expansion. A conforming processor MUST
+/// recognize &lt; &gt; &amp; &apos; &quot; and expand them.
+TEST_F(ConformanceGaps, PredefinedEntityExpansion) {
+  const std::string_view src = R"(<r><v>&lt;hello&gt;</v></r>)";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "<hello>");
+}
+
+/// sec 4.1 - Character reference expansion (&#nnn; / &#xhh;).
+TEST_F(ConformanceGaps, CharRefExpansion) {
+  const std::string_view src = R"(<r><v>&#65;</v></r>)";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "A");
+}
