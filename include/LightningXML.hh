@@ -1168,6 +1168,47 @@ inline auto normSpecialTable(NormMode mode) noexcept -> const std::array<bool, 2
   return kText;
 }
 
+/// @brief Shortest run worth scanning with memchr; below this the plain
+/// byte-table loop wins under the memchr call overhead.
+inline constexpr size_t MEMCHR_MIN_RUN = 32;
+
+/// @brief Position of the first byte in [base+i, base+n) that appendNormalized
+/// must handle specially under `mode`, or n if the run is ordinary. Long runs
+/// are scanned with memchr per special byte (each pass bounded by the earliest
+/// hit so far, so total work stays proportional to the run); short runs use the
+/// byte-table loop.
+inline auto findNormSpecial(const char* base, size_t i, size_t n, NormMode mode,
+                            const std::array<bool, 256>& special) noexcept -> size_t {
+  const size_t rem = n - i;
+  if (rem < MEMCHR_MIN_RUN) {
+    size_t j = i;
+    while (j < n && !special[static_cast<unsigned char>(base[j])]) {
+      ++j;
+    }
+    return j;
+  }
+  const char* const p = base + i;
+  const char* stop = nullptr;
+  if (mode != NormMode::CData) {
+    stop = static_cast<const char*>(std::memchr(p, '&', rem));
+  }
+  size_t limit = stop != nullptr ? static_cast<size_t>(stop - p) : rem;
+  if (const auto* cr = static_cast<const char*>(std::memchr(p, '\r', limit))) {
+    stop = cr;
+    limit = static_cast<size_t>(cr - p);
+  }
+  if (mode == NormMode::Attr) {
+    if (const auto* nl = static_cast<const char*>(std::memchr(p, '\n', limit))) {
+      stop = nl;
+      limit = static_cast<size_t>(nl - p);
+    }
+    if (const auto* tab = static_cast<const char*>(std::memchr(p, '\t', limit))) {
+      stop = tab;
+    }
+  }
+  return stop != nullptr ? i + static_cast<size_t>(stop - p) : n;
+}
+
 /// @brief Appends `raw` to `out` under the given NormMode. Returns the first
 /// error encountered (None on success). CData never errors.
 ///
@@ -1182,10 +1223,7 @@ inline auto appendNormalized(std::string& out, std::string_view raw, NormMode mo
   size_t i = 0;
   while (i < n) {
     // Copy the run of ordinary bytes up to the next byte needing attention.
-    size_t j = i;
-    while (j < n && !special[static_cast<unsigned char>(base[j])]) {
-      ++j;
-    }
+    const size_t j = findNormSpecial(base, i, n, mode, special);
     if (j > i) {
       out.append(base + i, j - i);
       i = j;
@@ -2782,9 +2820,23 @@ class Serializer {
     const char* p = s.data();
     const char* const e = p + s.size();
     while (p < e) {
+      // Position of the next byte needing an escape. Long runs use one bounded
+      // memchr per special byte; short runs use the byte-table loop.
       const char* q = p;
-      while (q < e && !SPECIAL[static_cast<unsigned char>(*q)]) {
-        ++q;
+      const auto rem = static_cast<size_t>(e - p);
+      if (rem >= detail::MEMCHR_MIN_RUN) {
+        q = e;
+        size_t limit = rem;
+        for (const char needle : {'&', '<', kAttr ? '"' : '>'}) {
+          if (const auto* hit = static_cast<const char*>(std::memchr(p, needle, limit))) {
+            q = hit;
+            limit = static_cast<size_t>(hit - p);
+          }
+        }
+      } else {
+        while (q < e && !SPECIAL[static_cast<unsigned char>(*q)]) {
+          ++q;
+        }
       }
       out.append(p, q);
       if (q == e) {
