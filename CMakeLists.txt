@@ -11,13 +11,39 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 message(STATUS "LightningXML: Build Type = ${CMAKE_BUILD_TYPE}.")
 
 # ---- Options ----
-option(LIGHTNINGXML_BUILD_TESTS       "Build unit tests (requires GTest)"                      ON)
-option(LIGHTNINGXML_BUILD_BENCHMARKS  "Build benchmarks (requires Google Benchmark)"           ON)
-option(LIGHTNINGXML_BUILD_CODEGEN     "Build the XSD -> XmlMetadata code generator (xsdgen)"   ON)
-option(LIGHTNINGXML_WITH_PUGIXML      "Build pugixml comparison benchmarks"                    OFF)
-option(LIGHTNINGXML_WITH_RAPIDXML     "Build RapidXML comparison benchmarks (via Boost)"       OFF)
-option(LIGHTNINGXML_WITH_LIBXML2      "Build libxml2 comparison benchmarks"                    OFF)
-option(LIGHTNINGXML_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(LIGHTNINGXML_BUILD_TESTS        "Build unit tests (requires GTest)"                      ON)
+option(LIGHTNINGXML_BUILD_BENCHMARKS   "Build benchmarks (requires Google Benchmark)"           ON)
+option(LIGHTNINGXML_BUILD_CODEGEN      "Build the XSD -> XmlMetadata code generator (xsdgen)"   ON)
+option(LIGHTNINGXML_WITH_PUGIXML       "Build pugixml comparison benchmarks"                    OFF)
+option(LIGHTNINGXML_WITH_RAPIDXML      "Build RapidXML comparison benchmarks (via Boost)"       OFF)
+option(LIGHTNINGXML_WITH_LIBXML2       "Build libxml2 comparison benchmarks"                    OFF)
+option(LIGHTNINGXML_ENABLE_SANITIZERS  "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(LIGHTNINGXML_ENABLE_UNITY_BUILD "Compile executables as unity builds"                    ON)
+option(LIGHTNINGXML_ENABLE_LTO         "Enable link-time optimization (IPO) for executables"    ON)
+
+if(LIGHTNINGXML_ENABLE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _ipo_supported OUTPUT _ipo_error)
+    if(NOT _ipo_supported)
+        message(FATAL_ERROR "LTO requested but not supported: ${_ipo_error}")
+    endif()
+    message(STATUS "LightningXML: LTO enabled")
+endif()
+
+if(LIGHTNINGXML_ENABLE_UNITY_BUILD)
+    message(STATUS "LightningXML: unity build enabled")
+endif()
+
+# Applies the unity/LTO options to one of this project's executables (the
+# options deliberately do not propagate into FetchContent dependencies).
+function(lightningxml_build_options target)
+    if(LIGHTNINGXML_ENABLE_UNITY_BUILD)
+        set_target_properties(${target} PROPERTIES UNITY_BUILD ON)
+    endif()
+    if(LIGHTNINGXML_ENABLE_LTO)
+        set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
+    endif()
+endfunction()
 
 if(LIGHTNINGXML_ENABLE_SANITIZERS)
     message(STATUS "LightningXML: sanitizers enabled")
@@ -76,6 +102,7 @@ if(LIGHTNINGXML_BUILD_TESTS)
         test/test_Conformance.cc
         test/test_XSDCodegen.cc
     )
+    lightningxml_build_options(lightningxml_tests)
     target_include_directories(lightningxml_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tools
     )
@@ -155,6 +182,7 @@ if(LIGHTNINGXML_BUILD_BENCHMARKS)
 
     # --- Timing benchmarks ---
     add_executable(lightningxml_bench test/bench_LightningXML.cc)
+    lightningxml_build_options(lightningxml_bench)
     target_link_libraries(lightningxml_bench PRIVATE lightningxml_helpers benchmark::benchmark)
     if(LIGHTNINGXML_WITH_PUGIXML)
         target_link_libraries(lightningxml_bench PRIVATE pugixml::pugixml)
@@ -174,6 +202,7 @@ endif()
 # ---- XSD code generator ----
 if(LIGHTNINGXML_BUILD_CODEGEN)
     add_executable(lightningxml_xsdgen tools/XSDGen.cc)
+    lightningxml_build_options(lightningxml_xsdgen)
     target_link_libraries(lightningxml_xsdgen PRIVATE lightningxml)
     target_include_directories(lightningxml_xsdgen PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tools

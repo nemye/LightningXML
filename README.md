@@ -465,6 +465,10 @@ Copy `include/LightningXML.hh` into your project. No build step required.
 | `LIGHTNINGXML_WITH_PUGIXML` | `OFF` | Build pugixml comparison benchmarks (fetches pugixml if not found) |
 | `LIGHTNINGXML_WITH_RAPIDXML` | `OFF` | Build RapidXML comparison benchmarks (fetches Boost, uses its bundled RapidXML) |
 | `LIGHTNINGXML_WITH_LIBXML2` | `OFF` | Build libxml2 comparison benchmarks (fetches libxml2 if not found) |
+| `LIGHTNINGXML_ENABLE_SANITIZERS` | `OFF` | Enable AddressSanitizer and UndefinedBehaviorSanitizer |
+| `LIGHTNINGXML_ENABLE_UNITY_BUILD` | `ON` | Compile executables as unity builds |
+| `LIGHTNINGXML_ENABLE_LTO` | `ON` | Enable link-time optimization (IPO) for executables |
+
 
 ### As a CMake Subdirectory
 
