@@ -2747,3 +2747,91 @@ TEST_F(LightningBasicTests, RobustOptionalTypedAttribute) {
     EXPECT_FALSE(o.n.has_value());
   }
 }
+
+struct ValItem {
+  std::string sku;
+};
+template<>
+struct xmlight::XmlMetadata<ValItem> {
+  static constexpr auto fields = std::make_tuple(xmlight::field("sku", &ValItem::sku));
+};
+template<>
+struct xmlight::XmlConstraints<ValItem> {
+  static auto check(const ValItem& v) -> std::optional<std::string> {
+    if (v.sku.size() > 4) {
+      return "sku: maxLength violation";
+    }
+    return {};
+  }
+};
+
+struct ValOrder {
+  int qty{};
+  std::vector<ValItem> items;
+  std::optional<ValItem> gift;
+  std::unique_ptr<ValOrder> parent;
+  std::variant<ValItem, int> pick{0};
+};
+template<>
+struct xmlight::XmlMetadata<ValOrder> {
+  static constexpr auto fields = std::make_tuple(
+      xmlight::attrField("qty", &ValOrder::qty), xmlight::vecField("item", &ValOrder::items),
+      xmlight::field("gift", &ValOrder::gift), xmlight::field("parent", &ValOrder::parent),
+      xmlight::variantField(&ValOrder::pick, xmlight::alt<ValItem>("pickItem"),
+                            xmlight::alt<int>("pickInt")));
+};
+template<>
+struct xmlight::XmlConstraints<ValOrder> {
+  static auto check(const ValOrder& v) -> std::optional<std::string> {
+    if (v.qty < 0) {
+      return "qty: minInclusive violation";
+    }
+    return {};
+  }
+};
+
+TEST_F(LightningBasicTests, ValidateChecksOwnConstraintsFirst) {
+  ValOrder o;
+  o.qty = -1;
+  o.items.push_back({"TOOLONG"});
+  const auto err = xmlight::validate(o);
+  ASSERT_TRUE(err.has_value());
+  EXPECT_EQ(err->message, "qty: minInclusive violation");
+}
+
+TEST_F(LightningBasicTests, ValidateRecursesIntoContainers) {
+  ValOrder o;
+  o.items.push_back({"OK"});
+  o.items.push_back({"TOOLONG"});
+  const auto err = xmlight::validate(o);
+  ASSERT_TRUE(err.has_value());
+  EXPECT_EQ(err->message, "sku: maxLength violation");
+}
+
+TEST_F(LightningBasicTests, ValidateRecursesIntoOptionalAndUniquePtr) {
+  ValOrder o;
+  o.gift = ValItem{"TOOLONG"};
+  EXPECT_TRUE(xmlight::validate(o).has_value());
+
+  ValOrder p;
+  p.parent = std::make_unique<ValOrder>();
+  p.parent->qty = -5;
+  EXPECT_TRUE(xmlight::validate(p).has_value());
+}
+
+TEST_F(LightningBasicTests, ValidateRecursesIntoVariants) {
+  ValOrder o;
+  o.pick = ValItem{"TOOLONG"};
+  EXPECT_TRUE(xmlight::validate(o).has_value());
+  o.pick = 7;
+  EXPECT_FALSE(xmlight::validate(o).has_value());
+}
+
+TEST_F(LightningBasicTests, ValidatePassesWhenAllNestedValid) {
+  ValOrder o;
+  o.qty = 3;
+  o.items.push_back({"ABCD"});
+  o.gift = ValItem{"OK"};
+  o.parent = std::make_unique<ValOrder>();
+  EXPECT_FALSE(xmlight::validate(o).has_value());
+}

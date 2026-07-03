@@ -273,7 +273,8 @@ using EnumEntry = std::pair<std::string_view, E>;
 
 /// @brief Adapts a C++ enum to/from its XML token spelling. Specialize with a
 /// `values` member: a constexpr range of EnumEntry<E> pairs mapping each token
-/// to its enumerator (e.g. one entry per xs:enumeration facet). Use
+/// to its enumerator (e.g. one entry per xs:enumeration facet). Keep the table
+/// exhaustive: serializing an enumerator with no entry emits empty text. Use
 /// enumTable() to build it without spelling the element type or count:
 /// @code
 /// template <> struct xmlight::XmlEnumTraits<Priority> {
@@ -1213,6 +1214,22 @@ inline auto appendNormalized(std::string& out, std::string_view raw, NormMode mo
   return ErrorCode::None;
 }
 
+/// @brief Applies fn to each item of a fixed or dynamic container (read-only).
+/// Shared by the serializer and validate().
+template<typename M, typename Fn>
+auto forEachItem(const M& container, Fn fn) -> void {
+  if constexpr (XmlFixedContainer<M>) {
+    using Traits = XmlContainerTraits<M>;
+    for (size_t i = 0; i < Traits::capacity; ++i) {
+      fn(Traits::at(container, i));
+    }
+  } else {
+    for (const auto& v : container) {
+      fn(v);
+    }
+  }
+}
+
 }  // namespace detail
 
 /// @brief Maps xmlight::Date to/from the XSD `date` lexical form.
@@ -1524,11 +1541,18 @@ class BasicParser {
 
   // Assigns a matched attribute's value to a leaf member (string normalized
   // when applicable, otherwise a scalar/enum/custom-value parse), or splits an
-  // xs:list value into a container member.
+  // xs:list value into a container member. The string arm stays inline here
+  // (not routed through assignValue) deliberately: it needs NormMode::Attr,
+  // and the extra call layer measurably regressed attribute-heavy parses.
   template<typename U>
   auto assignAttrValue(U& out, const Attribute& a) -> bool {
     if constexpr (XmlListContainer<U>) {
-      return splitInto(out, a.value);
+      using V = typename XmlContainerTraits<U>::value_type;
+      if constexpr (NORMALIZE_LIST<V>) {
+        return splitNormalized<detail::NormMode::Attr>(out, a.value);
+      } else {
+        return splitInto<false>(out, a.value);
+      }
     } else if constexpr (XmlStringLike<U>) {
       if constexpr (NORMALIZE && std::same_as<U, std::string>) {
         out.clear();
@@ -1548,19 +1572,44 @@ class BasicParser {
 
   // Assigns one whitespace-split list token to a container slot: a string
   // assignment for string-like items, else a scalar/enum/custom-value parse.
-  template<typename V>
+  // Pre-normalized tokens (Normalized == true, see splitNormalized) alias the
+  // scratch buffer and are copied raw; assignValue would re-expand their '&'s.
+  template<bool Normalized, typename V>
   auto assignToken(V& out, std::string_view tok) -> bool {
     if constexpr (XmlStringLike<V>) {
-      return assignValue(out, tok);
+      if constexpr (Normalized) {
+        out = V{tok};
+        return true;
+      } else {
+        return assignValue(out, tok);
+      }
     } else {
       return parseScalar(tok, out) ? true : fail(scalarError<V>());
     }
   }
 
+  // True when list values for item type V must be reference-expanded before
+  // splitting. string_view items always stay raw zero-copy (a view cannot hold
+  // transformed bytes), matching the string-field contract.
+  template<typename V>
+  static constexpr bool NORMALIZE_LIST = NORMALIZE && !std::same_as<V, std::string_view>;
+
+  // Normalizes a raw list value into the scratch buffer under the given mode,
+  // then splits it. Tokens alias scalar_buf_ and are assigned pre-normalized.
+  template<detail::NormMode MODE, typename Container>
+  auto splitNormalized(Container& out, std::string_view raw) -> bool {
+    scalar_buf_.clear();
+    if (const ErrorCode ec = detail::appendNormalized(scalar_buf_, raw, MODE);
+        ec != ErrorCode::None) {
+      return fail(ec);
+    }
+    return splitInto<true>(out, scalar_buf_);
+  }
+
   // Splits an xs:list value on XML whitespace and parses each token into the
   // container: dynamic containers grow per token; fixed containers fill
   // sequentially and skip overflow (as arrField does).
-  template<typename Container>
+  template<bool Normalized, typename Container>
   auto splitInto(Container& out, std::string_view text) -> bool {
     using Traits = XmlContainerTraits<Container>;
     auto each_token = [&](auto handle) -> bool {
@@ -1586,7 +1635,7 @@ class BasicParser {
       size_t fill = 0;
       return each_token([&](std::string_view tok) {
         if (fill < Traits::capacity) {
-          if (!assignToken(Traits::at(out, fill++), tok)) {
+          if (!assignToken<Normalized>(Traits::at(out, fill++), tok)) {
             return false;
           }
         }
@@ -1595,7 +1644,7 @@ class BasicParser {
     } else {
       return each_token([&](std::string_view tok) {
         auto& slot = Traits::emplace(out);
-        if (!assignToken(slot, tok)) {
+        if (!assignToken<Normalized>(slot, tok)) {
           Traits::pop(out);
           return false;
         }
@@ -1606,8 +1655,15 @@ class BasicParser {
 
   template<typename Container>
   auto readList(Container& out, std::string_view expected_name) -> bool {
-    std::string_view text;
-    return readChardata<true>(text, expected_name) && splitInto(out, text);
+    using V = typename XmlContainerTraits<Container>::value_type;
+    if constexpr (NORMALIZE_LIST<V>) {
+      // readChardata's owning branch expands references into scalar_buf_;
+      // the tokens are then assigned pre-normalized.
+      return readChardata<true>(scalar_buf_, expected_name) && splitInto<true>(out, scalar_buf_);
+    } else {
+      std::string_view text;
+      return readChardata<true>(text, expected_name) && splitInto<false>(out, text);
+    }
   }
 
   // Validates and consumes a readChardata closing tag. ConsumeClose drives the
@@ -1629,58 +1685,28 @@ class BasicParser {
   // numeric/enum/custom value. Stops at the close tag (see finishChardata).
   template<bool ConsumeClose, typename M>
   auto readChardata(M& out, std::string_view expected_name) -> bool {
-    if constexpr (NORMALIZE && std::same_as<M, std::string>) {
+    constexpr bool OWNING = NORMALIZE && std::same_as<M, std::string>;
+    if constexpr (OWNING) {
       out.clear();
-      while (const Token* tok = peek()) {
-        if (tok->type == TokenType::Text) {
-          const ErrorCode ec = detail::appendNormalized(out, tok->data, detail::NormMode::Text);
-          if (ec != ErrorCode::None) {
-            return fail(ec);
-          }
-          consumePeeked();
-        } else if (tok->type == TokenType::CData) {
-          detail::appendNormalized(out, tok->data, detail::NormMode::CData);
-          consumePeeked();
-        } else if (tok->type == TokenType::ElementClose) {
-          return finishChardata<ConsumeClose>(*tok, expected_name);
-        } else if (tok->type == TokenType::Error) {
-          return false;
-        } else {
-          consumePeeked();
-        }
-      }
-      return fail(ErrorCode::UnexpectedEof);
-    } else if constexpr (XmlStringLike<M>) {
-      std::string_view text;
-      while (const Token* tok = peek()) {
-        if (tok->type == TokenType::Text || tok->type == TokenType::CData) {
-          text = tok->data;
-          consumePeeked();
-        } else if (tok->type == TokenType::ElementClose) {
-          if (!finishChardata<ConsumeClose>(*tok, expected_name)) {
-            return false;
-          }
-          out = text;
-          return true;
-        } else if (tok->type == TokenType::Error) {
-          return false;
-        } else {
-          consumePeeked();
-        }
-      }
-      return fail(ErrorCode::UnexpectedEof);
-    } else {
-      // Scalar leaf: concatenate text runs split by comments/PIs and, when
-      // normalizing, resolve references before parsing the whole value. The
-      // raw single-run common case stays zero-copy via the source view.
+    } else if constexpr (!XmlStringLike<M>) {
       scalar_buf_.clear();
-      std::string_view text;
-      bool buffered = false;
-      while (const Token* tok = peek()) {
-        if (tok->type == TokenType::Text || tok->type == TokenType::CData) {
-          if constexpr (NORMALIZE) {
-            const detail::NormMode mode =
-                tok->type == TokenType::CData ? detail::NormMode::CData : detail::NormMode::Text;
+    }
+    [[maybe_unused]] std::string_view text;
+    [[maybe_unused]] bool buffered = false;
+    while (const Token* tok = peek()) {
+      switch (tok->type) {
+        case TokenType::Text:
+        case TokenType::CData: {
+          [[maybe_unused]] const detail::NormMode mode =
+              tok->type == TokenType::CData ? detail::NormMode::CData : detail::NormMode::Text;
+          if constexpr (OWNING) {
+            if (const ErrorCode ec = detail::appendNormalized(out, tok->data, mode);
+                ec != ErrorCode::None) {
+              return fail(ec);
+            }
+          } else if constexpr (XmlStringLike<M>) {
+            text = tok->data;  // raw view: the last run wins
+          } else if constexpr (NORMALIZE) {
             if (const ErrorCode ec = detail::appendNormalized(scalar_buf_, tok->data, mode);
                 ec != ErrorCode::None) {
               return fail(ec);
@@ -1696,22 +1722,31 @@ class BasicParser {
             scalar_buf_.append(tok->data);
           }
           consumePeeked();
-        } else if (tok->type == TokenType::ElementClose) {
+          break;
+        }
+        case TokenType::ElementClose:
           if (!finishChardata<ConsumeClose>(*tok, expected_name)) {
             return false;
           }
-          if (buffered) {
-            text = scalar_buf_;
+          if constexpr (OWNING) {
+            return true;
+          } else if constexpr (XmlStringLike<M>) {
+            out = text;
+            return true;
+          } else {
+            if (buffered) {
+              text = scalar_buf_;
+            }
+            return parseScalar(text, out) ? true : fail(scalarError<M>());
           }
-          return parseScalar(text, out) ? true : fail(scalarError<M>());
-        } else if (tok->type == TokenType::Error) {
+        case TokenType::Error:
           return false;
-        } else {
+        default:
           consumePeeked();
-        }
+          break;
       }
-      return fail(ErrorCode::UnexpectedEof);
     }
+    return fail(ErrorCode::UnexpectedEof);
   }
 
   auto makeError(Token& token, ErrorCode code) noexcept -> bool {
@@ -1774,10 +1809,9 @@ class BasicParser {
     return false;
   }
 
-  // Scan forward until `delim` is found. Sets token.data to the content
-  // before the delimiter and advances past it.
-  auto scanToDelimiter(Token& token, std::string_view delim, ErrorCode ec) -> bool {
-    const char* start = cur_;
+  // Advances cur_ just past the next occurrence of `delim` and returns where
+  // the delimiter began, or nullptr (leaving cur_ == end_) if absent.
+  auto scanPast(std::string_view delim) noexcept -> const char* {
     const char first = delim[0];
     while (cur_ < end_) {
       cur_ = findByte(cur_, first);
@@ -1785,30 +1819,29 @@ class BasicParser {
         break;
       }
       if (startsWith(delim)) {
-        token.data = {start, static_cast<size_t>(cur_ - start)};
+        const char* hit = cur_;
         cur_ += delim.size();
-        return true;
-      }
-      ++cur_;
-    }
-    return makeError(token, ec);
-  }
-
-  auto skipPast(std::string_view delim) noexcept -> void {
-    const char first = delim[0];
-    while (cur_ < end_) {
-      cur_ = findByte(cur_, first);
-      if (cur_ == end_) {
-        break;
-      }
-      if (startsWith(delim)) {
-        cur_ += delim.size();
-        return;
+        return hit;
       }
       ++cur_;
     }
     cur_ = end_;
+    return nullptr;
   }
+
+  // Scan forward until `delim` is found. Sets token.data to the content
+  // before the delimiter and advances past it.
+  auto scanToDelimiter(Token& token, std::string_view delim, ErrorCode ec) -> bool {
+    const char* start = cur_;
+    const char* hit = scanPast(delim);
+    if (hit == nullptr) {
+      return makeError(token, ec);
+    }
+    token.data = {start, static_cast<size_t>(hit - start)};
+    return true;
+  }
+
+  auto skipPast(std::string_view delim) noexcept -> void { std::ignore = scanPast(delim); }
 
   // Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'
   // The WFC forbids "--" in content, so the first "--" must begin the "-->"
@@ -2726,21 +2759,6 @@ class Serializer {
     out_ += '>';
   }
 
-  // Applies fn to each item of a fixed or dynamic container (read-only).
-  template<typename M, typename Fn>
-  static auto forEachItem(const M& container, Fn fn) -> void {
-    if constexpr (XmlFixedContainer<M>) {
-      using Traits = XmlContainerTraits<M>;
-      for (size_t i = 0; i < Traits::capacity; ++i) {
-        fn(Traits::at(container, i));
-      }
-    } else {
-      for (const auto& v : container) {
-        fn(v);
-      }
-    }
-  }
-
   // Escapes '&' and '<' always; attribute values additionally escape '"',
   // text content escapes '>'. Copies safe byte runs in bulk via append().
   template<bool kAttr>
@@ -2855,7 +2873,7 @@ class Serializer {
   template<typename M>
   auto writeListItems(const M& container) -> void {
     bool first = true;
-    forEachItem(container, [&](const auto& v) {
+    detail::forEachItem(container, [&](const auto& v) {
       if (!first) {
         out_ += ' ';
       }
@@ -2921,17 +2939,8 @@ class Serializer {
         }
       }
     } else if constexpr (f.kind == FieldKind::Container) {
-      using M = std::decay_t<decltype(obj.*(f.member))>;
-      if constexpr (XmlFixedContainer<M>) {
-        using Traits = XmlContainerTraits<M>;
-        for (size_t idx = 0; idx < Traits::capacity; ++idx) {
-          writeFieldValue(f.xml_name, Traits::at(obj.*(f.member), idx), depth);
-        }
-      } else {
-        for (const auto& item : obj.*(f.member)) {
-          writeFieldValue(f.xml_name, item, depth);
-        }
-      }
+      detail::forEachItem(obj.*(f.member),
+                          [&](const auto& item) { writeFieldValue(f.xml_name, item, depth); });
     } else {
       writeFieldValue(f.xml_name, obj.*(f.member), depth);
     }
@@ -2991,22 +3000,80 @@ template<bool PRETTY = true, typename T>
 /// @brief Optional constraint validator for type T.
 ///
 /// Specialize this (typically via xsdgen output) to enforce XSD facet
-/// constraints on a deserialized object. The default is a no-op.
+/// constraints on a deserialized object. Each specialization checks only the
+/// object's own members; xmlight::validate() recurses through nested objects.
+/// The default is a no-op.
 /// @return nullopt if all constraints pass, or a violation message.
 template<typename T>
 struct XmlConstraints {
   [[nodiscard]] static auto check(const T&) noexcept -> std::optional<std::string> { return {}; }
 };
 
-/// @brief Validates obj against its XmlConstraints<T> specialization.
-/// @return nullopt if valid, or a ValidationError describing the first violation.
+namespace detail {
+
+template<typename T>
+auto deepValidate(const T& obj) -> std::optional<std::string>;
+
+/// @brief Recurses into one field member for validate(): unwraps pointers,
+/// optionals, variants, and containers, and validates nested XmlObjects.
+/// Scalar leaves return nullopt; the owner's own check() covers them.
+template<typename M>
+auto validateMember(const M& m) -> std::optional<std::string> {
+  if constexpr (IsUniquePtr<M>::value || IsOptional<M>::value) {
+    return m ? validateMember(*m) : std::optional<std::string>{};
+  } else if constexpr (IsVariant<M>::value) {
+    return std::visit([](const auto& alt) { return validateMember(alt); }, m);
+  } else if constexpr (XmlObject<M>) {
+    return deepValidate(m);
+  } else if constexpr (XmlListContainer<M>) {
+    std::optional<std::string> err;
+    forEachItem(m, [&](const auto& item) {
+      if (!err) {
+        err = validateMember(item);
+      }
+    });
+    return err;
+  } else {
+    return {};
+  }
+}
+
+/// @brief Checks obj's own XmlConstraints, then every field member in
+/// declaration order; returns the first violation found.
+template<typename T>
+auto deepValidate(const T& obj) -> std::optional<std::string> {
+  if (auto msg = XmlConstraints<T>::check(obj)) {
+    return msg;
+  }
+  if constexpr (XmlObject<T>) {
+    std::optional<std::string> err;
+    [&]<size_t... I>(std::index_sequence<I...>) {
+      ([&] {
+        if (!err) {
+          err = validateMember(obj.*(std::get<I>(XmlMetadata<T>::fields).member));
+        }
+      }(), ...);
+    }(FIELD_SEQ<T>);
+    return err;
+  } else {
+    return {};
+  }
+}
+
+}  // namespace detail
+
+/// @brief Validates obj against its XmlConstraints specialization, then
+/// recursively validates nested objects: fields that are XmlObjects, and the
+/// contents of containers, optionals, unique_ptrs, and variants.
+/// @return nullopt if valid, or a ValidationError describing the first
+/// violation in declaration order.
 template<typename T>
 [[nodiscard]] auto validate(const T& obj) -> std::optional<ValidationError> {
-  auto msg = XmlConstraints<T>::check(obj);
+  auto msg = detail::deepValidate(obj);
   if (!msg) {
     return {};
   }
-  return {std::move(*msg)};
+  return ValidationError{std::move(*msg)};
 }
 
 }  // namespace xmlight

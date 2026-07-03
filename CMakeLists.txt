@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(LightningXML
-    VERSION 2.0.0
+    VERSION 1.1.0
     LANGUAGES CXX
     DESCRIPTION "High-performance XML pull-parser for C++20"
 )
@@ -153,42 +153,6 @@ if(LIGHTNINGXML_BUILD_BENCHMARKS)
         message(STATUS "LightningXML: libxml2 comparison benchmarks enabled")
     endif()
 
-    # RapidXML (optional). RapidXML has no canonical upstream package, so we use
-    # the copy bundled in Boost.PropertyTree (boost::property_tree::detail::rapidxml).
-    # The official Boost "-cmake" release archive ships every header with no git
-    # submodules; BOOST_INCLUDE_LIBRARIES restricts configuration to the
-    # property_tree subtree (and its dependencies) so the first build stays quick.
-    if(TURBOXML_WITH_RAPIDXML)
-        set(BOOST_INCLUDE_LIBRARIES property_tree CACHE STRING "" FORCE)
-        set(BOOST_ENABLE_CMAKE ON CACHE BOOL "" FORCE)
-        FetchContent_Declare(
-            Boost
-            URL https://github.com/boostorg/boost/releases/download/boost-1.88.0/boost-1.88.0-cmake.tar.xz
-        )
-        FetchContent_MakeAvailable(Boost)
-        message(STATUS "TurboXML: RapidXML (Boost) comparison benchmarks enabled")
-    endif()
-
-    # libxml2 (optional). A feature-rich parser: copies all strings, decodes
-    # entities, and fully validates well-formedness. Fetched and built from
-    # source with the optional codecs/tools disabled to keep the build lean.
-    if(TURBOXML_WITH_LIBXML2)
-        set(LIBXML2_WITH_PROGRAMS OFF CACHE BOOL "" FORCE)
-        set(LIBXML2_WITH_TESTS    OFF CACHE BOOL "" FORCE)
-        set(LIBXML2_WITH_PYTHON   OFF CACHE BOOL "" FORCE)
-        set(LIBXML2_WITH_ICONV    OFF CACHE BOOL "" FORCE)
-        set(LIBXML2_WITH_ZLIB     OFF CACHE BOOL "" FORCE)
-        set(LIBXML2_WITH_LZMA     OFF CACHE BOOL "" FORCE)
-        set(LIBXML2_WITH_HTTP     OFF CACHE BOOL "" FORCE)
-        FetchContent_Declare(
-            libxml2
-            GIT_REPOSITORY https://gitlab.gnome.org/GNOME/libxml2.git
-            GIT_TAG        v2.14.6
-        )
-        FetchContent_MakeAvailable(libxml2)
-        message(STATUS "TurboXML: libxml2 comparison benchmarks enabled")
-    endif()
-
     # --- Timing benchmarks ---
     add_executable(lightningxml_bench test/bench_LightningXML.cc)
     target_link_libraries(lightningxml_bench PRIVATE lightningxml_helpers benchmark::benchmark)
@@ -204,15 +168,6 @@ if(LIGHTNINGXML_BUILD_BENCHMARKS)
         target_link_libraries(lightningxml_bench PRIVATE LibXml2::LibXml2)
         target_compile_definitions(lightningxml_bench PRIVATE LIGHTNINGXML_HAS_LIBXML2)
     endif()
-    if(TURBOXML_WITH_RAPIDXML)
-        target_link_libraries(turboxml_bench PRIVATE Boost::property_tree)
-        target_compile_definitions(turboxml_bench PRIVATE TURBOXML_HAS_RAPIDXML)
-    endif()
-    if(TURBOXML_WITH_LIBXML2)
-        target_link_libraries(turboxml_bench PRIVATE LibXml2::LibXml2)
-        target_compile_definitions(turboxml_bench PRIVATE TURBOXML_HAS_LIBXML2)
-    endif()
-
     message(STATUS "LightningXML: benchmarks enabled")
 endif()
 
@@ -229,20 +184,47 @@ if(LIGHTNINGXML_BUILD_CODEGEN)
     message(STATUS "LightningXML: XSD code generator enabled")
 endif()
 
-# ---- XSD code generator ----
-if(TURBOXML_BUILD_CODEGEN)
-    add_executable(turboxml_xsdgen tools/XSDGen.cc)
-    target_link_libraries(turboxml_xsdgen PRIVATE turboxml)
-    target_include_directories(turboxml_xsdgen PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tools
+# ---- Generated-code test: xsdgen output must compile and round-trip ----
+if(LIGHTNINGXML_BUILD_TESTS AND LIGHTNINGXML_BUILD_CODEGEN)
+    set(_gen_hh ${CMAKE_CURRENT_BINARY_DIR}/generated/kitchensink_generated.hh)
+    add_custom_command(
+        OUTPUT ${_gen_hh}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+        COMMAND lightningxml_xsdgen ${CMAKE_CURRENT_SOURCE_DIR}/test/schemas/kitchensink.xsd -o ${_gen_hh}
+        DEPENDS lightningxml_xsdgen
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/schemas/kitchensink.xsd
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/schemas/common.xsd
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/schemas/base.xsd
+        COMMENT "Generating kitchensink_generated.hh from XSD"
     )
-    target_compile_options(turboxml_xsdgen PRIVATE
-        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
-    )
-    message(STATUS "TurboXML: XSD code generator enabled")
+    target_sources(lightningxml_tests PRIVATE test/test_Generated.cc ${_gen_hh})
+    target_include_directories(lightningxml_tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 endif()
 
-# Installation
+# ---- Installation & package config ----
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+install(TARGETS lightningxml EXPORT LightningXMLTargets)
+install(FILES include/LightningXML.hh DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(EXPORT LightningXMLTargets
+    FILE LightningXMLConfig.cmake
+    NAMESPACE LightningXML::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LightningXML
+)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/LightningXMLConfigVersion.cmake
+    COMPATIBILITY SameMajorVersion
+    ARCH_INDEPENDENT
+)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/LightningXMLConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LightningXML
+)
+if(TARGET lightningxml_xsdgen)
+    install(TARGETS lightningxml_xsdgen DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
+# Developer convenience: copy the test/bench/codegen binaries into <source>/bin.
 set(INSTALL_DIR "${CMAKE_SOURCE_DIR}/bin")
 foreach(_target lightningxml_tests lightningxml_bench lightningxml_xsdgen)
     if(TARGET ${_target})

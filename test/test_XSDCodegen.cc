@@ -308,7 +308,8 @@ TEST(XsdCodegen, ComplexContentExtension) {
   // But metadata MUST reference them via &Employee::.
   EXPECT_TRUE(has(r.code, R"(xmlight::attrField("id", &Employee::id, true))")) << r.code;
   EXPECT_TRUE(has(r.code, R"(xmlight::field("name", &Employee::name, true))")) << r.code;
-  EXPECT_TRUE(has(r.code, R"(xmlight::field("department", &Employee::department, true))")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xmlight::field("department", &Employee::department, true))"))
+      << r.code;
 }
 
 // 3b: xs:attributeGroup inline expansion.
@@ -536,6 +537,171 @@ TEST(XsdCodegen, InlineEnumOnElement) {
   EXPECT_TRUE(has(r.code, "enum class Signal")) << r.code;
   EXPECT_TRUE(has(r.code, "Signal signal{};")) << r.code;
   EXPECT_TRUE(has(r.code, R"(xmlight::field("signal", &Traffic::signal, true))")) << r.code;
+}
+
+// Inline simpleType with enumerations on an attribute generates an enum class
+// scoped to that attribute name.
+TEST(XsdCodegen, InlineEnumOnAttribute) {
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:complexType name="Task">
+      <xs:attribute name="priority" use="required">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="Low"/>
+            <xs:enumeration value="Medium"/>
+            <xs:enumeration value="High"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:attribute>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(r.notes.empty()) << r.notes.front();
+  EXPECT_TRUE(has(r.code, "enum class Priority")) << r.code;
+  EXPECT_TRUE(has(r.code, "Priority priority{};")) << r.code;
+  EXPECT_TRUE(has(r.code, R"(xmlight::attrField("priority", &Task::priority, true))")) << r.code;
+}
+
+// Inline simpleType facets on an attribute feed the XmlConstraints check.
+TEST(XsdCodegen, InlineFacetsOnAttribute) {
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:complexType name="Doc">
+      <xs:attribute name="code">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:maxLength value="8"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:attribute>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "std::string code{};")) << r.code;
+  EXPECT_TRUE(has(r.code, "xmlight::XmlConstraints<Doc>")) << r.code;
+  EXPECT_TRUE(has(r.code, "v.code.size() > 8")) << r.code;
+}
+
+// An inline complexType inside a group definition is collected and emitted.
+TEST(XsdCodegen, InlineTypeInGroupDef) {
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:group name="Meta">
+      <xs:sequence>
+        <xs:element name="audit">
+          <xs:complexType>
+            <xs:sequence><xs:element name="who" type="xs:string"/></xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:group>
+    <xs:complexType name="Doc">
+      <xs:sequence><xs:group ref="Meta"/></xs:sequence>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "struct Audit {")) << r.code;
+  EXPECT_TRUE(has(r.code, "Audit audit{};")) << r.code;
+  EXPECT_TRUE(has(r.code, "xmlight::XmlMetadata<Audit>")) << r.code;
+}
+
+// Facets on a choice branch cannot be checked per-member (the branch lives in
+// a std::variant); they must produce a note, not a reference to a member that
+// does not exist.
+TEST(XsdCodegen, ChoiceBranchFacetsNoted) {
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:simpleType name="Code">
+      <xs:restriction base="xs:string"><xs:maxLength value="4"/></xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Doc">
+      <xs:choice>
+        <xs:element name="a" type="Code"/>
+        <xs:element name="b" type="xs:int"/>
+      </xs:choice>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_FALSE(has(r.code, "v.a")) << r.code;
+  ASSERT_EQ(r.notes.size(), 1U);
+  EXPECT_TRUE(has(r.notes.front(), "xs:choice branch 'a'")) << r.notes.front();
+}
+
+// Two choices in one type get distinct member names.
+TEST(XsdCodegen, TwoChoicesGetDistinctMembers) {
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:complexType name="Doc">
+      <xs:sequence>
+        <xs:choice><xs:element name="a" type="xs:int"/><xs:element name="b" type="xs:string"/></xs:choice>
+        <xs:choice><xs:element name="c" type="xs:double"/><xs:element name="d" type="xs:string"/></xs:choice>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "std::variant<int, std::string> choice;")) << r.code;
+  EXPECT_TRUE(has(r.code, "std::variant<double, std::string> choice2;")) << r.code;
+  EXPECT_TRUE(has(r.code, "&Doc::choice2,")) << r.code;
+}
+
+// Enum-typed default/fixed values are emitted as qualified enumerators; a
+// fixed date has no literal spelling and is dropped with a note.
+TEST(XsdCodegen, EnumDefaultAndFixedQualified) {
+  const std::string_view xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:simpleType name="Priority">
+      <xs:restriction base="xs:string">
+        <xs:enumeration value="Low"/><xs:enumeration value="High"/>
+      </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Task">
+      <xs:attribute name="prio" type="Priority" default="Low"/>
+      <xs:attribute name="mode" type="Priority" fixed="High"/>
+      <xs:attribute name="due" type="xs:date" fixed="2026-01-01"/>
+    </xs:complexType>
+  </xs:schema>)";
+  const auto r = xsd::generate(xsd);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "Priority prio{Priority::Low};")) << r.code;
+  EXPECT_TRUE(has(r.code, "Priority mode{Priority::High};")) << r.code;
+  EXPECT_TRUE(has(r.code, "v.mode != Priority::High")) << r.code;
+  EXPECT_TRUE(has(r.code, "xmlight::Date due{};")) << r.code;
+  EXPECT_FALSE(has(r.code, "v.due")) << r.code;
+  ASSERT_EQ(r.notes.size(), 1U);
+  EXPECT_TRUE(has(r.notes.front(), "default/fixed value on 'due'")) << r.notes.front();
+}
+
+// An include of an include is resolved transitively (with a cycle guard).
+TEST(XsdCodegen, NestedIncludesResolved) {
+  const std::string_view root_xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:include schemaLocation="mid.xsd"/>
+    <xs:complexType name="Doc">
+      <xs:sequence><xs:element name="leaf" type="Leaf"/></xs:sequence>
+    </xs:complexType>
+  </xs:schema>)";
+  const std::string_view mid_xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:include schemaLocation="leaf.xsd"/>
+    <xs:include schemaLocation="mid.xsd"/>
+  </xs:schema>)";
+  const std::string_view leaf_xsd = R"(<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:complexType name="Leaf">
+      <xs:attribute name="id" type="xs:int"/>
+    </xs:complexType>
+  </xs:schema>)";
+  xsd::Options opts;
+  opts.loader = [&](std::string_view loc) -> std::optional<std::string> {
+    if (loc == "mid.xsd") {
+      return std::string{mid_xsd};
+    }
+    if (loc == "leaf.xsd") {
+      return std::string{leaf_xsd};
+    }
+    return {};
+  };
+  const auto r = xsd::generate(root_xsd, opts);
+  ASSERT_TRUE(r.ok);
+  EXPECT_TRUE(has(r.code, "struct Leaf {")) << r.code;
+  EXPECT_TRUE(has(r.code, "Leaf leaf{};")) << r.code;
 }
 
 // A top-level xs:element emits a root-deserialize comment in the output.

@@ -295,6 +295,8 @@ s.write("root_tag", object);
 
 Attribute values and text content are escaped (`&amp;`, `&lt;`, `&gt;`, `&quot;`). Types whose fields are all attributes serialize as self-closing tags.
 
+An enum value with no entry in its `XmlEnumTraits` table serializes as empty text; keep the table exhaustive (xsdgen always emits every `xs:enumeration` facet).
+
 ### Metadata Declaration
 
 Specialize `xmlight::XmlMetadata<T>` for each type. Field order in the tuple does not need to match the XML element order.
@@ -354,6 +356,7 @@ For XML-conformant text, use `xmlight::NormalizingParser` (an alias for `xmlight
 - Line endings (`\r\n`, `\r`) are normalized to `\n`.
 - Attribute whitespace (literal tab/newline) is normalized to spaces (XML §3.3.3); whitespace introduced via a reference is preserved.
 - CDATA content is copied literally (never reference-expanded) and concatenated with surrounding text.
+- `xs:list` values (list elements and list-valued attributes) are reference-expanded before whitespace splitting, except into `std::string_view` items, which stay raw.
 - An undefined entity (none of the five predefined; no DTD is processed) fails with `ErrorCode::UndefinedEntity`; a malformed or out-of-range character reference fails with `ErrorCode::InvalidCharRef`.
 
 ```cpp
@@ -408,7 +411,7 @@ Supported XSD constructs:
 
 Unsupported constructs are reported as notes on `stderr` rather than causing a failure; the generator produces the best output it can for the rest of the schema.
 
-**Not supported (out of scope, possible for 2.0):**
+**Not supported (out of scope):**
 - `xs:union` - no C++ type mapping without boxing
 - `xs:import` - cross-namespace schema merging requires a resolver not in scope
 - `xs:complexContent restriction` - high complexity, rare in practice
@@ -416,6 +419,22 @@ Unsupported constructs are reported as notes on `stderr` rather than causing a f
 - External entity resolution - requires file I/O, incompatible with the zero-copy design
 
 Built with `LIGHTNINGXML_BUILD_CODEGEN` (on by default).
+
+### Constraint Validation
+
+When types carry XSD constraints, `xsdgen` emits `xmlight::XmlConstraints<T>` specializations alongside the metadata. Call `xmlight::validate()` after deserialization:
+
+```cpp
+MyType obj;
+xmlight::deserialize(parser, "root", obj);
+if (auto err = xmlight::validate(obj)) {
+  std::cerr << "constraint violation: " << err->message << '\n';
+}
+```
+
+`xmlight::validate()` returns `std::optional<xmlight::ValidationError>` - empty when all constraints pass, or the first violation in `err->message`. Validation is **deep**: after checking the object's own `XmlConstraints`, it recurses through the declared fields into nested objects and the contents of containers, optionals, `unique_ptr`s, and variants, so validating the root covers the whole tree. This is intentionally distinct from `xmlight::ErrorCode` (parser errors) so the two failure modes can be handled independently. Types with no constraints use the default no-op specialization, which compiles away entirely.
+
+Facets on an `xs:choice` branch cannot be checked per-member (the branch lives in a `std::variant`); the generator reports these as notes instead of emitting checks.
 
 ## Building
 
@@ -451,6 +470,17 @@ Copy `include/LightningXML.hh` into your project. No build step required.
 
 ```cmake
 add_subdirectory(LightningXML)
+target_link_libraries(my_target PRIVATE LightningXML::lightningxml)
+```
+
+### As an Installed Package
+
+```bash
+cmake --install build --prefix /your/prefix   # header, xsdgen, CMake package config
+```
+
+```cmake
+find_package(LightningXML 1.0 REQUIRED)
 target_link_libraries(my_target PRIVATE LightningXML::lightningxml)
 ```
 
