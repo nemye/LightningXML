@@ -290,8 +290,7 @@ struct XmlEnumTraits;
 /// deducing the entry count. The enum type E is given explicitly; each entry is
 /// a `{"token", E::value}` pair.
 template<typename E, size_t N>
-// NOLINTNEXTLINE(*-avoid-c-arrays): the array reference deduces N from the
-// caller's braced entry list, which is the point of this factory.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
 constexpr auto enumTable(const EnumEntry<E> (&entries)[N]) -> std::array<EnumEntry<E>, N> {
   return std::to_array(entries);
 }
@@ -330,9 +329,10 @@ concept XmlScalar = XmlPrimitive<T> || XmlEnum<T> || XmlCustomValue<T>;
 /// timezone. Construct from XML via a field typed `xmlight::Date`; obtain chrono
 /// values via the accessors.
 struct Date {
-  int year{};                                ///< Proleptic Gregorian year (may be negative).
-  uint8_t month{};                           ///< 1-12.
-  uint8_t day{};                             ///< 1-31.
+  int year{};       ///< Proleptic Gregorian year (may be negative).
+  uint8_t month{};  ///< 1-12.
+  uint8_t day{};    ///< 1-31.
+  // NOLINTNEXTLINE(readability-redundant-member-init): explicit for member-init checks
   std::optional<std::chrono::minutes> tz{};  ///< Offset east of UTC, if explicit (0 for 'Z').
 
   [[nodiscard]] constexpr auto toYearMonthDay() const -> std::chrono::year_month_day {
@@ -347,10 +347,11 @@ struct Date {
 /// @brief An XSD `time`: time of day with optional fractional seconds and an
 /// optional timezone.
 struct Time {
-  uint8_t hour{};                            ///< 0-24 (24 only with zero minute/second/fraction).
-  uint8_t minute{};                          ///< 0-59.
-  uint8_t second{};                          ///< 0-59.
-  uint32_t nanosecond{};                     ///< Fractional second, in nanoseconds.
+  uint8_t hour{};         ///< 0-24 (24 only with zero minute/second/fraction).
+  uint8_t minute{};       ///< 0-59.
+  uint8_t second{};       ///< 0-59.
+  uint32_t nanosecond{};  ///< Fractional second, in nanoseconds.
+  // NOLINTNEXTLINE(readability-redundant-member-init): explicit for member-init checks
   std::optional<std::chrono::minutes> tz{};  ///< Offset east of UTC, if explicit (0 for 'Z').
 
   /// @brief Time elapsed since midnight (ignores any timezone).
@@ -1691,8 +1692,10 @@ class BasicParser {
     } else if constexpr (!XmlStringLike<M>) {
       scalar_buf_.clear();
     }
-    [[maybe_unused]] std::string_view text;
-    [[maybe_unused]] bool buffered = false;
+    // Both mutate only in some constexpr branches, so const would not compile
+    // in every instantiation.
+    [[maybe_unused]] std::string_view text;  // NOLINT(misc-const-correctness)
+    [[maybe_unused]] bool buffered = false;  // NOLINT(misc-const-correctness)
     while (const Token* tok = peek()) {
       switch (tok->type) {
         case TokenType::Text:
@@ -2518,7 +2521,7 @@ inline auto BasicParser<Opts>::readElement(std::string_view expected_name, T& ou
         std::memcmp(found + 2, expected_name.data(), expected_name.size()) == 0 &&
         found[2 + expected_name.size()] == '>') {
       const std::string_view text{cur_, static_cast<size_t>(found - cur_)};
-      bool fast = true;
+      bool fast = true;  // NOLINT(misc-const-correctness): mutable only when normalizing
       if constexpr (NORMALIZE && !XmlStringLike<T>) {
         fast = text.find_first_of("&\r") == std::string_view::npos;
       }
@@ -2939,8 +2942,9 @@ class Serializer {
         }
       }
     } else if constexpr (f.kind == FieldKind::Container) {
-      detail::forEachItem(obj.*(f.member),
-                          [&](const auto& item) { writeFieldValue(f.xml_name, item, depth); });
+      detail::forEachItem(obj.*(f.member), [&, name = f.xml_name](const auto& item) {
+        writeFieldValue(name, item, depth);
+      });
     } else {
       writeFieldValue(f.xml_name, obj.*(f.member), depth);
     }
