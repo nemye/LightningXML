@@ -945,48 +945,52 @@ constexpr auto elementTargetHasAttrs() noexcept -> bool {
   }
 }
 
+/// @brief True if any field of T satisfies `pred`, which is called with the
+/// field descriptor and a std::type_identity carrying the member type.
+/// Constexpr-folds over the fields in declaration order.
+template<typename T, typename Pred>
+constexpr auto anyFieldSatisfies(Pred pred) noexcept -> bool {
+  return [&]<size_t... I>(std::index_sequence<I...>) {
+    return ([&] {
+      constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
+      using M = std::remove_cvref_t<decltype(std::declval<T&>().*(f.member))>;
+      return pred(f, std::type_identity<M>{});
+    }() || ...);
+  }(FIELD_SEQ<T>);
+}
+
 /// @brief True when any child element/container field of T maps to a type
 /// with attribute fields. Gates the attributed-tag fast path in pull():
 /// schemas whose children carry no mapped attributes keep the minimal
 /// simple-tag matcher (attributed documents still parse via the tokenizer).
 template<typename T>
 constexpr auto anyElementTargetHasAttrs() noexcept -> bool {
-  bool any = false;
-  [&]<size_t... I>(std::index_sequence<I...>) {
-    ([&] {
-      constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
-      using M = std::remove_cvref_t<decltype(std::declval<T&>().*(f.member))>;
-      if constexpr (f.kind == FieldKind::Element) {
-        if constexpr (elementTargetHasAttrs<M>()) {
-          any = true;
-        }
-      } else if constexpr (f.kind == FieldKind::Container) {
-        if constexpr (elementTargetHasAttrs<typename XmlContainerTraits<M>::value_type>()) {
-          any = true;
-        }
-      }
-    }(), ...);
-  }(FIELD_SEQ<T>);
-  return any;
+  return anyFieldSatisfies<T>([](const auto& f, auto m) {
+    using F = std::remove_cvref_t<decltype(f)>;
+    using M = typename decltype(m)::type;
+    if constexpr (F::kind == FieldKind::Element) {
+      return elementTargetHasAttrs<M>();
+    } else if constexpr (F::kind == FieldKind::Container) {
+      return elementTargetHasAttrs<typename XmlContainerTraits<M>::value_type>();
+    } else {
+      return false;
+    }
+  });
 }
 
 /// @brief True if any container field of T stores into a fixed container
 /// (std::array); gates the per-pull fill-counter array.
 template<typename T>
 constexpr auto hasFixedContainerFields() noexcept -> bool {
-  bool any = false;
-  [&]<size_t... I>(std::index_sequence<I...>) {
-    ([&] {
-      constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
-      if constexpr (f.kind == FieldKind::Container) {
-        using M = std::remove_cvref_t<decltype(std::declval<T&>().*(f.member))>;
-        if constexpr (XmlFixedContainer<M>) {
-          any = true;
-        }
-      }
-    }(), ...);
-  }(FIELD_SEQ<T>);
-  return any;
+  return anyFieldSatisfies<T>([](const auto& f, auto m) {
+    using F = std::remove_cvref_t<decltype(f)>;
+    using M = typename decltype(m)::type;
+    if constexpr (F::kind == FieldKind::Container) {
+      return XmlFixedContainer<M>;
+    } else {
+      return false;
+    }
+  });
 }
 
 /// @brief Index of T's first value field (only meaningful when one exists).
@@ -1310,6 +1314,19 @@ inline auto appendNormalized(std::string& out, std::string_view raw, NormMode mo
     ++i;
   }
   return ErrorCode::None;
+}
+
+/// @brief Emplaces a slot in a dynamic container, populates it via `read`,
+/// and rolls the slot back on failure. Shared by the container, variant, and
+/// list read paths.
+template<typename Container, typename Read>
+auto readIntoNew(Container& c, Read read) -> bool {
+  auto& slot = XmlContainerTraits<Container>::emplace(c);
+  if (!read(slot)) {
+    XmlContainerTraits<Container>::pop(c);
+    return false;
+  }
+  return true;
 }
 
 /// @brief Applies fn to each item of a fixed or dynamic container (read-only).
@@ -1741,12 +1758,8 @@ class BasicParser {
       });
     } else {
       return each_token([&](std::string_view tok) {
-        auto& slot = Traits::emplace(out);
-        if (!assignToken<Normalized>(slot, tok)) {
-          Traits::pop(out);
-          return false;
-        }
-        return true;
+        return detail::readIntoNew(out,
+                                   [&](auto& slot) { return assignToken<Normalized>(slot, tok); });
       });
     }
   }
@@ -1885,6 +1898,23 @@ class BasicParser {
   auto parseElementClose(Token& token) -> bool;
   auto nextFromSource(Token& token) -> bool;
   auto skipElement() -> void;
+
+  // Matches "</name>" (whitespace allowed before '>') starting at p. Returns
+  // the position just past '>' on a match, nullptr otherwise. Shared by
+  // endElement's and readElement's close-tag fast paths.
+  [[nodiscard]] auto matchCloseTag(const char* p, std::string_view name) const noexcept -> const
+      char* {
+    const size_t name_len = name.size();
+    if (static_cast<size_t>(end_ - p) < name_len + 3 || p[0] != '<' || p[1] != '/' ||
+        std::memcmp(p + 2, name.data(), name_len) != 0) {
+      return nullptr;
+    }
+    p += 2 + name_len;
+    while (p < end_ && detail::isSpace(*p)) {
+      ++p;
+    }
+    return (p < end_ && *p == '>') ? p + 1 : nullptr;
+  }
 
   // First occurrence of `c` in [from, end_), or end_ if absent.
   [[nodiscard]] auto findByte(const char* from, char c) const noexcept -> const char* {
@@ -2075,8 +2105,8 @@ class BasicParser {
     if constexpr (f.kind == FieldKind::Attr || f.kind == FieldKind::Value ||
                   f.kind == FieldKind::Variant) {
       // Attr/value/variant fields aren't matched as child elements, so this arm
-      // is unreachable; it only has to compile (the dispatch table spans every
-      // field index).
+      // is unreachable; it only has to compile (the readFieldAt fold spans
+      // every field index).
       p.skipElement();
       return true;
     } else if constexpr (f.kind == FieldKind::List) {
@@ -2099,13 +2129,9 @@ class BasicParser {
       } else {
         static_assert(XmlDynContainer<M>,
                       "container member requires XmlContainerTraits specialization");
-        using Traits = XmlContainerTraits<M>;
-        auto& container = obj.*(f.member);
-        auto& elem = Traits::emplace(container);
-        if (!p.readElement(f.xml_name, elem, depth + 1)) {
-          Traits::pop(container);
-          return false;
-        }
+        return detail::readIntoNew(obj.*(f.member), [&](auto& elem) {
+          return p.readElement(f.xml_name, elem, depth + 1);
+        });
       }
       return true;
     } else {
@@ -2124,11 +2150,17 @@ class BasicParser {
     }
   }
 
+  // Direct dispatch to readField<T, I> for a runtime field index: a
+  // compile-time fold of compares the inliner can see through, instead of an
+  // opaque function-pointer table. idx must be < sizeof...(I).
   template<typename T, size_t... I>
-  static constexpr auto buildElemDispatch(std::index_sequence<I...>) noexcept {
-    using Handler =
-        bool (*)(BasicParser&, T&, uint16_t, std::span<size_t>, detail::RequiredMaskT<T>&);
-    return std::array<Handler, sizeof...(I)>{&readField<T, I>...};
+  static auto readFieldAt(size_t idx, BasicParser& p, T& obj, uint16_t depth,
+                          std::span<size_t> arr_fill, detail::RequiredMaskT<T>& parsed,
+                          std::index_sequence<I...> /*seq*/) -> bool {
+    bool ok = false;
+    std::ignore =
+        ((idx == I && (ok = readField<T, I>(p, obj, depth, arr_fill, parsed), true)) || ...);
+    return ok;
   }
 
   // Handle a matched variant alternative: field FieldI's element matched its
@@ -2147,15 +2179,10 @@ class BasicParser {
       var.template emplace<AltJ>();
       return p.readElement(f.names[AltJ], std::get<AltJ>(var), depth + 1);
     } else {
-      using Traits = XmlContainerTraits<Member>;
-      auto& container = obj.*(f.member);
-      auto& slot = Traits::emplace(container);
-      slot.template emplace<AltJ>();
-      if (!p.readElement(f.names[AltJ], std::get<AltJ>(slot), depth + 1)) {
-        Traits::pop(container);
-        return false;
-      }
-      return true;
+      return detail::readIntoNew(obj.*(f.member), [&](auto& slot) {
+        slot.template emplace<AltJ>();
+        return p.readElement(f.names[AltJ], std::get<AltJ>(slot), depth + 1);
+      });
     }
   }
 
@@ -2318,6 +2345,9 @@ inline auto BasicParser<Opts>::parseMarkup(Token& token) -> bool {
 // cleared. Records the error code and returns false on malformed input.
 template<ParserOptions Opts>
 inline auto BasicParser<Opts>::parseAttributes(bool& self_closing) -> bool {
+  // STRICT only: one bit per attribute name hash; a clear bit proves the name
+  // is new, so the exact duplicate scan runs only on 1/64 bit collisions.
+  [[maybe_unused]] uint64_t seen_name_bits = 0;
   while (true) {
     skipWhitespace();
     if (atEnd()) {
@@ -2343,28 +2373,48 @@ inline auto BasicParser<Opts>::parseAttributes(bool& self_closing) -> bool {
     Attribute& a = attributes_.emplace_back();
     parseName(a.prefix, a.name, a.name_hash);
     if constexpr (STRICT) {
-      // WFC: Unique Att Spec. Hash compares are the fast filter; the exact
-      // name/prefix compare only runs on the (astronomically rare) hash match,
-      // so this is O(n^2) hash comparisons over the element's attributes.
-      for (size_t i = 0; i + 1 < attributes_.size(); ++i) {
-        if (attributes_[i].name_hash == a.name_hash && attributes_[i].name == a.name &&
-            attributes_[i].prefix == a.prefix) {
-          return fail(ErrorCode::DuplicateAttribute);
+      // WFC: Unique Att Spec. The name-hash bit filter screens out new names;
+      // on a bit collision the hash compares filter further, and the exact
+      // name/prefix compare only runs on the (astronomically rare) hash match.
+      const uint64_t name_bit = uint64_t{1} << (a.name_hash & 63U);
+      if ((seen_name_bits & name_bit) != 0) [[unlikely]] {
+        for (size_t i = 0; i + 1 < attributes_.size(); ++i) {
+          if (attributes_[i].name_hash == a.name_hash && attributes_[i].name == a.name &&
+              attributes_[i].prefix == a.prefix) {
+            return fail(ErrorCode::DuplicateAttribute);
+          }
         }
       }
+      seen_name_bits |= name_bit;
     }
-    skipWhitespace();
-    if (!expect('=')) {
-      return fail(ErrorCode::ExpectedEquals);
+    char quote = 0;
+    if (end_ - cur_ >= 2 && cur_[0] == '=' && (cur_[1] == '"' || cur_[1] == '\'')) {
+      // Common shape: name="value" with no whitespace around '='.
+      quote = cur_[1];
+      cur_ += 2;
+    } else {
+      skipWhitespace();
+      if (!expect('=')) {
+        return fail(ErrorCode::ExpectedEquals);
+      }
+      skipWhitespace();
+      quote = peekChar();
+      if (quote != '"' && quote != '\'') {
+        return fail(ErrorCode::ExpectedQuotedValue);
+      }
+      ++cur_;
     }
-    skipWhitespace();
-    const char quote = peekChar();
-    if (quote != '"' && quote != '\'') {
-      return fail(ErrorCode::ExpectedQuotedValue);
-    }
-    ++cur_;
     const char* val_start = cur_;
-    const char* val_end = findByte(cur_, quote);
+    // Values are typically short: probe the first bytes inline before paying
+    // the memchr call overhead in findByte (short runs favor the byte loop).
+    const char* val_end = cur_;
+    const char* const probe_limit = (end_ - cur_ < 16) ? end_ : cur_ + 16;
+    while (val_end != probe_limit && *val_end != quote) {
+      ++val_end;
+    }
+    if (val_end == probe_limit && (val_end == end_ || *val_end != quote)) {
+      val_end = findByte(val_end, quote);
+    }
     if (val_end == end_) {
       return fail(ErrorCode::UnterminatedAttributeValue);
     }
@@ -2505,21 +2555,9 @@ template<ParserOptions Opts>
 inline auto BasicParser<Opts>::endElement(std::string_view expected_name) -> bool {
   if (!has_peek_) {
     skipWhitespace();
-    const auto name_len = expected_name.size();
-    const size_t required = name_len + 3;  // "</" + name + ">"
-    const auto remaining = static_cast<size_t>(end_ - cur_);
-    if (remaining >= required) {
-      const char* p = cur_;
-      if (p[0] == '<' && p[1] == '/' && std::memcmp(p + 2, expected_name.data(), name_len) == 0) {
-        p += 2 + name_len;
-        while (p < end_ && detail::isSpace(*p)) {
-          ++p;
-        }
-        if (p < end_ && *p == '>') {
-          cur_ = p + 1;
-          return true;
-        }
-      }
+    if (const char* past = matchCloseTag(cur_, expected_name)) {
+      cur_ = past;
+      return true;
     }
   }
 
@@ -2650,9 +2688,8 @@ inline auto BasicParser<Opts>::readElement(std::string_view expected_name, T& ou
     // actually carries a reference ('&') or CR; those are the sole bytes text
     // normalization rewrites, so otherwise the raw run parses identically here.
     const char* found = findByte(cur_, '<');
-    if (found != end_ && found + 3 + expected_name.size() <= end_ && found[1] == '/' &&
-        std::memcmp(found + 2, expected_name.data(), expected_name.size()) == 0 &&
-        found[2 + expected_name.size()] == '>') {
+    const char* past_close = found != end_ ? matchCloseTag(found, expected_name) : nullptr;
+    if (past_close != nullptr) {
       const std::string_view text{cur_, static_cast<size_t>(found - cur_)};
       bool fast = true;  // NOLINT(misc-const-correctness): mutable only when normalizing
       if constexpr (NORMALIZE && !XmlStringLike<T>) {
@@ -2664,7 +2701,7 @@ inline auto BasicParser<Opts>::readElement(std::string_view expected_name, T& ou
             return fail(ErrorCode::CDataEndInContent);
           }
         }
-        cur_ = found + 3 + expected_name.size();
+        cur_ = past_close;
         has_peek_ = false;
         if constexpr (XmlStringLike<T>) {
           return assignValue(out, text);
@@ -2773,7 +2810,6 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   constexpr bool HAS_ELEMS = detail::hasElementFields<T>();
   constexpr bool HAS_VARIANTS = detail::hasVariantFields<T>();
   constexpr bool ATTR_TAGS = detail::anyElementTargetHasAttrs<T>();
-  static constexpr auto dispatch = buildElemDispatch<T>(IDX_SEQ);
   static constexpr auto NAMES = detail::makeFieldNames<T>();
   static constexpr auto NEXT_ELEM = detail::makeNextElemTable<T>();
   [[maybe_unused]] size_t hint = detail::firstElemIndex<T>();  // NOLINT(misc-const-correctness)
@@ -2800,7 +2836,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
         }
       } else if constexpr (HAS_ELEMS) {
         if (tryBeginElement<ATTR_TAGS>(NAMES[hint])) {
-          if (!dispatch[hint](*this, object, depth, arr_fill, parsed)) {
+          if (!readFieldAt(hint, *this, object, depth, arr_fill, parsed, IDX_SEQ)) {
             return false;
           }
           hint = NEXT_ELEM[hint];
@@ -2849,7 +2885,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
       continue;
     }
     consumePeeked();
-    if (!dispatch[idx](*this, object, depth, arr_fill, parsed)) {
+    if (!readFieldAt(idx, *this, object, depth, arr_fill, parsed, IDX_SEQ)) {
       return false;
     }
     if constexpr (HAS_ELEMS && N > 1) {
@@ -2887,16 +2923,32 @@ class Serializer {
     }
   }
 
-  auto openTag(std::string_view tag) -> void {
-    out_ += '<';
-    out_ += tag;
-    out_ += '>';
-  }
+  auto openTag(std::string_view tag) -> void { appendTag<false>(tag); }
+  auto closeTag(std::string_view tag) -> void { appendTag<true>(tag); }
 
-  auto closeTag(std::string_view tag) -> void {
-    out_ += "</";
-    out_ += tag;
-    out_ += '>';
+  // Assembles "<tag>" / "</tag>" in a stack buffer so each tag costs one
+  // append (one capacity check) instead of three.
+  template<bool CLOSING>
+  auto appendTag(std::string_view tag) -> void {
+    std::array<char, 64> buf;  // written before read; zeroing costs a memset per tag
+    const size_t n = tag.size() + (CLOSING ? 3 : 2);
+    if (n <= buf.size()) [[likely]] {
+      char* w = buf.data();
+      *w++ = '<';
+      if constexpr (CLOSING) {
+        *w++ = '/';
+      }
+      std::memcpy(w, tag.data(), tag.size());
+      w[tag.size()] = '>';
+      out_.append(buf.data(), n);
+    } else {
+      out_ += '<';
+      if constexpr (CLOSING) {
+        out_ += '/';
+      }
+      out_ += tag;
+      out_ += '>';
+    }
   }
 
   // Escapes '&' and '<' always; attribute values additionally escape '"',
