@@ -930,6 +930,46 @@ constexpr auto hasVariantFields() noexcept -> bool {
   return anyFieldKindIs<T>(isKind(FieldKind::Variant));
 }
 
+/// @brief True when the type a child-element member parses into (through
+/// unique_ptr/optional wrappers) declares attribute fields.
+template<typename M>
+constexpr auto elementTargetHasAttrs() noexcept -> bool {
+  if constexpr (IsUniquePtr<M>::value) {
+    return elementTargetHasAttrs<typename M::element_type>();
+  } else if constexpr (IsOptional<M>::value) {
+    return elementTargetHasAttrs<typename M::value_type>();
+  } else if constexpr (XmlObject<M>) {
+    return hasAttrFields<M>();
+  } else {
+    return false;
+  }
+}
+
+/// @brief True when any child element/container field of T maps to a type
+/// with attribute fields. Gates the attributed-tag fast path in pull():
+/// schemas whose children carry no mapped attributes keep the minimal
+/// simple-tag matcher (attributed documents still parse via the tokenizer).
+template<typename T>
+constexpr auto anyElementTargetHasAttrs() noexcept -> bool {
+  bool any = false;
+  [&]<size_t... I>(std::index_sequence<I...>) {
+    ([&] {
+      constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
+      using M = std::remove_cvref_t<decltype(std::declval<T&>().*(f.member))>;
+      if constexpr (f.kind == FieldKind::Element) {
+        if constexpr (elementTargetHasAttrs<M>()) {
+          any = true;
+        }
+      } else if constexpr (f.kind == FieldKind::Container) {
+        if constexpr (elementTargetHasAttrs<typename XmlContainerTraits<M>::value_type>()) {
+          any = true;
+        }
+      }
+    }(), ...);
+  }(FIELD_SEQ<T>);
+  return any;
+}
+
 /// @brief True if any container field of T stores into a fixed container
 /// (std::array); gates the per-pull fill-counter array.
 template<typename T>
@@ -1841,6 +1881,7 @@ class BasicParser {
 
   auto parseMarkup(Token& token) -> bool;
   auto parseElementOpen(Token& token) -> bool;
+  [[nodiscard]] auto parseAttributes(bool& self_closing) -> bool;
   auto parseElementClose(Token& token) -> bool;
   auto nextFromSource(Token& token) -> bool;
   auto skipElement() -> void;
@@ -1964,10 +2005,14 @@ class BasicParser {
            (name[2] | 0x20) == 'l';
   }
 
-  // Fast-path: match and consume "<name>" or "<name/>" without tokenisation.
-  // Only succeeds for simple tags (no attributes, no namespace prefix).
-  // Returns false to fall through to normal tokenisation path.
-  [[nodiscard]] auto tryBeginElement(std::string_view name) noexcept -> bool {
+  // Fast-path: match and consume "<name>", "<name/>", or (only when
+  // WITH_ATTRS) "<name attr...>" without tokenisation (no namespace prefix).
+  // Returns false to fall through to the normal tokenisation path; a
+  // malformed attribute list records the code so the caller's next read
+  // fails. WITH_ATTRS is compile-time gated by anyElementTargetHasAttrs so
+  // attribute-free schemas keep this matcher minimal and noexcept.
+  template<bool WITH_ATTRS>
+  [[nodiscard]] auto tryBeginElement(std::string_view name) noexcept(!WITH_ATTRS) -> bool {
     const size_t name_len = name.size();
     const auto avail = static_cast<size_t>(end_ - cur_);
     if (avail < name_len + 2 || cur_[0] != '<') {
@@ -1991,7 +2036,27 @@ class BasicParser {
       attributes_.clear();
       return true;
     }
+    if constexpr (WITH_ATTRS) {
+      if (detail::isSpace(after)) {
+        return beginAttributedElement(name_len);
+      }
+    }
     return false;
+  }
+
+  // Attributed-tag continuation of tryBeginElement: the name already matched,
+  // so skip re-scanning and hashing it and go straight to the attribute list.
+  // Outlined to keep tryBeginElement's inline body small.
+  [[nodiscard]] auto beginAttributedElement(size_t name_len) -> bool {
+    cur_ += 1 + name_len;
+    has_peek_ = false;
+    attributes_.clear();
+    bool self_closing = false;
+    if (!parseAttributes(self_closing)) {
+      return false;
+    }
+    last_self_closing_ = self_closing;
+    return true;
   }
 
   // Post-consume dispatch: opening tag already consumed, route to the correct
@@ -2248,20 +2313,15 @@ inline auto BasicParser<Opts>::parseMarkup(Token& token) -> bool {
   return makeError(token, ErrorCode::UnexpectedCharAfterLt);
 }
 
+// Scans a start-tag's attribute list into attributes_ up to the closing '>'
+// or '/>'. cur_ must be just past the element name; attributes_ must be
+// cleared. Records the error code and returns false on malformed input.
 template<ParserOptions Opts>
-inline auto BasicParser<Opts>::parseElementOpen(Token& token) -> bool {
-  token.type = TokenType::ElementOpen;
-  token.self_closing = false;
-  parseName(token.prefix, token.name, token.name_hash);
-  if (token.name.empty()) {
-    return makeError(token, ErrorCode::ExpectedElementName);
-  }
-
-  attributes_.clear();
+inline auto BasicParser<Opts>::parseAttributes(bool& self_closing) -> bool {
   while (true) {
     skipWhitespace();
     if (atEnd()) {
-      return makeError(token, ErrorCode::UnclosedTag);
+      return fail(ErrorCode::UnclosedTag);
     }
     const char c = *cur_;
     if (c == '>') {
@@ -2270,14 +2330,14 @@ inline auto BasicParser<Opts>::parseElementOpen(Token& token) -> bool {
     }
     if (c == '/' && cur_ + 1 < end_ && *(cur_ + 1) == '>') {
       cur_ += 2;
-      token.self_closing = true;
+      self_closing = true;
       return true;
     }
     if (!detail::isNameStart(c)) {
-      return makeError(token, ErrorCode::ExpectedAttributeName);
+      return fail(ErrorCode::ExpectedAttributeName);
     }
     if (attributes_.size() >= MAX_ATTRIBUTES_PER_ELEMENT) [[unlikely]] {
-      return makeError(token, ErrorCode::TooManyAttributes);
+      return fail(ErrorCode::TooManyAttributes);
     }
 
     Attribute& a = attributes_.emplace_back();
@@ -2289,35 +2349,51 @@ inline auto BasicParser<Opts>::parseElementOpen(Token& token) -> bool {
       for (size_t i = 0; i + 1 < attributes_.size(); ++i) {
         if (attributes_[i].name_hash == a.name_hash && attributes_[i].name == a.name &&
             attributes_[i].prefix == a.prefix) {
-          return makeError(token, ErrorCode::DuplicateAttribute);
+          return fail(ErrorCode::DuplicateAttribute);
         }
       }
     }
     skipWhitespace();
     if (!expect('=')) {
-      return makeError(token, ErrorCode::ExpectedEquals);
+      return fail(ErrorCode::ExpectedEquals);
     }
     skipWhitespace();
     const char quote = peekChar();
     if (quote != '"' && quote != '\'') {
-      return makeError(token, ErrorCode::ExpectedQuotedValue);
+      return fail(ErrorCode::ExpectedQuotedValue);
     }
     ++cur_;
     const char* val_start = cur_;
     const char* val_end = findByte(cur_, quote);
     if (val_end == end_) {
-      return makeError(token, ErrorCode::UnterminatedAttributeValue);
+      return fail(ErrorCode::UnterminatedAttributeValue);
     }
     if constexpr (STRICT) {
       // WFC: No '<' in attribute values (Production [10]). One short memchr
       // over the value; a '<' beyond val_end belongs to later markup.
       if (findByte(val_start, '<') < val_end) {
-        return makeError(token, ErrorCode::LtInAttributeValue);
+        return fail(ErrorCode::LtInAttributeValue);
       }
     }
     a.value = {val_start, static_cast<size_t>(val_end - val_start)};
     cur_ = val_end + 1;
   }
+}
+
+template<ParserOptions Opts>
+inline auto BasicParser<Opts>::parseElementOpen(Token& token) -> bool {
+  token.type = TokenType::ElementOpen;
+  token.self_closing = false;
+  parseName(token.prefix, token.name, token.name_hash);
+  if (token.name.empty()) {
+    return makeError(token, ErrorCode::ExpectedElementName);
+  }
+  attributes_.clear();
+  if (!parseAttributes(token.self_closing)) {
+    token.type = TokenType::Error;
+    return false;
+  }
+  return true;
 }
 
 template<ParserOptions Opts>
@@ -2696,6 +2772,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   // documents miss once, re-sync at the dispatch site, and stay correct.
   constexpr bool HAS_ELEMS = detail::hasElementFields<T>();
   constexpr bool HAS_VARIANTS = detail::hasVariantFields<T>();
+  constexpr bool ATTR_TAGS = detail::anyElementTargetHasAttrs<T>();
   static constexpr auto dispatch = buildElemDispatch<T>(IDX_SEQ);
   static constexpr auto NAMES = detail::makeFieldNames<T>();
   static constexpr auto NEXT_ELEM = detail::makeNextElemTable<T>();
@@ -2715,14 +2792,14 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
       // tokenisation (parseName, hash, peek machinery).
       if constexpr (HAS_ELEMS && N == 1) {
         // Single-field types: compile-time tag name and direct call.
-        if (tryBeginElement(NAMES[0])) {
+        if (tryBeginElement<ATTR_TAGS>(NAMES[0])) {
           if (!readField<T, 0>(*this, object, depth, arr_fill, parsed)) {
             return false;
           }
           continue;
         }
       } else if constexpr (HAS_ELEMS) {
-        if (tryBeginElement(NAMES[hint])) {
+        if (tryBeginElement<ATTR_TAGS>(NAMES[hint])) {
           if (!dispatch[hint](*this, object, depth, arr_fill, parsed)) {
             return false;
           }
