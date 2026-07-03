@@ -657,6 +657,41 @@ static auto bmStrictParseNormalizedFields(benchmark::State& state) -> void {
   state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(kFlatXml.size()));
 }
 
+// Serializer benchmarks: parse the payload once, then produce a fresh string
+// per iteration (the serialize() public API shape). Bytes are output bytes.
+template<bool PRETTY, typename T>
+static auto runSerialize(benchmark::State& state, std::string_view src, std::string_view root,
+                         T& obj) -> void {
+  xmlight::Parser parser{src};
+  if (!xmlight::deserialize(parser, root, obj)) {
+    state.SkipWithError("payload parse failed");
+    return;
+  }
+  size_t out_bytes = 0;
+  for (auto _ : state) {
+    std::string xml = xmlight::serialize<PRETTY>(root, obj);
+    out_bytes = xml.size();
+    benchmark::DoNotOptimize(xml);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(out_bytes));
+}
+
+static auto bmSerializeLargeXml(benchmark::State& state) -> void {
+  Users users;
+  runSerialize<false>(state, kLargeXml, "Users", users);
+}
+
+static auto bmSerializeAttrXml(benchmark::State& state) -> void {
+  AttrList list;
+  runSerialize<false>(state, kAttrXml, "AttrList", list);
+}
+
+static auto bmSerializeCatalogPretty(benchmark::State& state) -> void {
+  Catalog catalog;
+  runSerialize<true>(state, kCatalogXml, "catalog", catalog);
+}
+
 BENCHMARK(bmParseFlatXml);
 BENCHMARK(bmParseDeepXml);
 BENCHMARK(bmParseAttrXml);
@@ -682,6 +717,10 @@ BENCHMARK(bmStrictParseOrgXml);
 BENCHMARK(bmStrictParseTreeXml);
 BENCHMARK(bmStrictParseCommentHeavyXml);
 BENCHMARK(bmStrictParseCatalog);
+
+BENCHMARK(bmSerializeLargeXml);
+BENCHMARK(bmSerializeAttrXml);
+BENCHMARK(bmSerializeCatalogPretty);
 
 #ifdef LIGHTNINGXML_HAS_PUGIXML
 #include <pugixml.hpp>

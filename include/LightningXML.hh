@@ -930,6 +930,25 @@ constexpr auto hasVariantFields() noexcept -> bool {
   return anyFieldKindIs<T>(isKind(FieldKind::Variant));
 }
 
+/// @brief True if any container field of T stores into a fixed container
+/// (std::array); gates the per-pull fill-counter array.
+template<typename T>
+constexpr auto hasFixedContainerFields() noexcept -> bool {
+  bool any = false;
+  [&]<size_t... I>(std::index_sequence<I...>) {
+    ([&] {
+      constexpr auto& f = std::get<I>(XmlMetadata<T>::fields);
+      if constexpr (f.kind == FieldKind::Container) {
+        using M = std::remove_cvref_t<decltype(std::declval<T&>().*(f.member))>;
+        if constexpr (XmlFixedContainer<M>) {
+          any = true;
+        }
+      }
+    }(), ...);
+  }(FIELD_SEQ<T>);
+  return any;
+}
+
 /// @brief Index of T's first value field (only meaningful when one exists).
 template<typename T>
 constexpr auto valueFieldIndex() noexcept -> size_t {
@@ -2603,9 +2622,12 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
                 "a std::optional field cannot be marked required (an optional "
                 "field is inherently optional)");
 
-  // Per-field fill counters for fixed containers. Only those entries are
-  // touched; the compiler elides the rest.
-  std::array<size_t, (N != 0 ? N : 1)> arr_fill{};
+  // Per-field fill counters for fixed containers, indexed by field. The
+  // counters are only reachable through the dispatch table's opaque span, so
+  // without this gate the per-element zero-init would survive for every type;
+  // types with no fixed container collapse it to one dead slot.
+  constexpr size_t FILL_N = detail::hasFixedContainerFields<T>() ? N : 1;
+  std::array<size_t, FILL_N> arr_fill{};
 
   // Presence tracking for required fields. When nothing is required (the
   // default) HAS_REQUIRED is false, so 'parsed' is never read: every write to
@@ -2816,7 +2838,6 @@ class Serializer {
       }
       return t;
     }();
-    out.reserve(out.size() + s.size());
     const char* p = s.data();
     const char* const e = p + s.size();
     while (p < e) {
@@ -3048,6 +3069,9 @@ class Serializer {
 template<bool PRETTY = true, typename T>
 [[nodiscard]] auto serialize(std::string_view root_name, const T& object) -> std::string {
   std::string out;
+  // Skip the small-document growth reallocations; the buffer-reuse path
+  // (constructing a Serializer over a caller-owned string) avoids them all.
+  out.reserve(4096);
   Serializer<PRETTY> s{out};
   s.write(root_name, object);
   return out;
