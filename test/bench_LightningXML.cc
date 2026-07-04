@@ -6,6 +6,7 @@
 #include <charconv>
 #include <cstring>
 #include <format>
+#include <memory_resource>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -677,6 +678,37 @@ static auto runSerialize(benchmark::State& state, std::string_view src, std::str
   state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(out_bytes));
 }
 
+// Internal reference: the same tree payload parsed into pmr nodes backed by a
+// monotonic buffer, isolating the allocator share of bmParseTreeXml. Different
+// record type and ownership semantics -- never a README table cell.
+struct PmrTreeNode {
+  using allocator_type = std::pmr::polymorphic_allocator<>;
+  PmrTreeNode() = default;
+  explicit PmrTreeNode(const allocator_type& alloc) : children(alloc) {}
+  PmrTreeNode(PmrTreeNode&& other, const allocator_type& alloc)
+      : children(std::move(other.children), alloc) {}
+  std::pmr::vector<PmrTreeNode> children;
+};
+template<>
+struct xmlight::XmlMetadata<PmrTreeNode> {
+  static constexpr auto fields = std::make_tuple(xmlight::vecField("Node", &PmrTreeNode::children));
+};
+
+static auto bmParseTreePooledXml(benchmark::State& state) -> void {
+  std::vector<char> pool_buf(16U << 20);
+  for (auto _ : state) {
+    std::pmr::monotonic_buffer_resource pool{pool_buf.data(), pool_buf.size(),
+                                             std::pmr::null_memory_resource()};
+    xmlight::Parser parser{kTreeXml};
+    PmrTreeNode root{std::pmr::polymorphic_allocator<>{&pool}};
+    bool ok = xmlight::deserialize(parser, "Node", root);
+    benchmark::DoNotOptimize(ok);
+    benchmark::DoNotOptimize(root);
+    benchmark::ClobberMemory();
+  }
+  state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(kTreeXml.size()));
+}
+
 static auto bmSerializeLargeXml(benchmark::State& state) -> void {
   Users users;
   runSerialize<false>(state, kLargeXml, "Users", users);
@@ -718,6 +750,7 @@ BENCHMARK(bmStrictParseTreeXml);
 BENCHMARK(bmStrictParseCommentHeavyXml);
 BENCHMARK(bmStrictParseCatalog);
 
+BENCHMARK(bmParseTreePooledXml);
 BENCHMARK(bmSerializeLargeXml);
 BENCHMARK(bmSerializeAttrXml);
 BENCHMARK(bmSerializeCatalogPretty);

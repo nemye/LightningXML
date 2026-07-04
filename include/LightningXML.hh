@@ -403,7 +403,14 @@ struct XmlContainerTraits;
 template<typename T, typename A>
 struct XmlContainerTraits<std::vector<T, A>> {
   using value_type = T;
-  static auto emplace(std::vector<T, A>& c) -> T& { return c.emplace_back(); }
+  static auto emplace(std::vector<T, A>& c) -> T& {
+    if (c.capacity() == 0) {
+      // grow 0->2 in one allocation at the cost of one spare slot for
+      // single-child containers
+      c.reserve(2);
+    }
+    return c.emplace_back();
+  }
   static auto pop(std::vector<T, A>& c) -> void { c.pop_back(); }
 };
 
