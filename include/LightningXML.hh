@@ -714,7 +714,7 @@ auto dtParse(std::string_view s, T& out, Grammar grammar) -> bool {
 template<typename E>
 constexpr auto enumFromString(std::string_view s, E& out) noexcept -> bool {
   const auto& vals = XmlEnumTraits<E>::values;
-  const auto it = std::ranges::find_if(vals, [&](const auto& p) { return p.first == s; });
+  const auto it = std::ranges::find_if(vals, [s](const auto& p) { return p.first == s; });
   if (it == vals.end()) {
     return false;
   }
@@ -1734,7 +1734,7 @@ class BasicParser {
   template<bool Normalized, typename Container>
   auto splitInto(Container& out, std::string_view text) -> bool {
     using Traits = XmlContainerTraits<Container>;
-    auto each_token = [&](auto handle) -> bool {
+    auto each_token = [text](auto handle) -> bool {
       size_t i = 0;
       while (i < text.size()) {
         while (i < text.size() && detail::isSpace(text[i])) {
@@ -1755,7 +1755,7 @@ class BasicParser {
     };
     if constexpr (XmlFixedContainer<Container>) {
       size_t fill = 0;
-      return each_token([&](std::string_view tok) {
+      return each_token([this, &out, &fill](std::string_view tok) {
         if (fill < Traits::capacity) {
           if (!assignToken<Normalized>(Traits::at(out, fill++), tok)) {
             return false;
@@ -1764,9 +1764,10 @@ class BasicParser {
         return true;
       });
     } else {
-      return each_token([&](std::string_view tok) {
-        return detail::readIntoNew(out,
-                                   [&](auto& slot) { return assignToken<Normalized>(slot, tok); });
+      return each_token([this, &out](std::string_view tok) {
+        return detail::readIntoNew(out, [this, tok](auto& slot) {
+          return assignToken<Normalized>(slot, tok);
+        });
       });
     }
   }
@@ -2136,8 +2137,8 @@ class BasicParser {
       } else {
         static_assert(XmlDynContainer<M>,
                       "container member requires XmlContainerTraits specialization");
-        return detail::readIntoNew(obj.*(f.member), [&](auto& elem) {
-          return p.readElement(f.xml_name, elem, depth + 1);
+        return detail::readIntoNew(obj.*(f.member), [&p, depth](auto& elem) {
+          return p.readElement(std::get<I>(XmlMetadata<T>::fields).xml_name, elem, depth + 1);
         });
       }
       return true;
@@ -2186,9 +2187,10 @@ class BasicParser {
       var.template emplace<AltJ>();
       return p.readElement(f.names[AltJ], std::get<AltJ>(var), depth + 1);
     } else {
-      return detail::readIntoNew(obj.*(f.member), [&](auto& slot) {
+      return detail::readIntoNew(obj.*(f.member), [&p, depth](auto& slot) {
         slot.template emplace<AltJ>();
-        return p.readElement(f.names[AltJ], std::get<AltJ>(slot), depth + 1);
+        return p.readElement(std::get<FieldI>(XmlMetadata<T>::fields).names[AltJ],
+                             std::get<AltJ>(slot), depth + 1);
       });
     }
   }
@@ -2354,7 +2356,7 @@ template<ParserOptions Opts>
 inline auto BasicParser<Opts>::parseAttributes(bool& self_closing) -> bool {
   // STRICT only: one bit per attribute name hash; a clear bit proves the name
   // is new, so the exact duplicate scan runs only on 1/64 bit collisions.
-  [[maybe_unused]] uint64_t seen_name_bits = 0;
+  [[maybe_unused]] uint64_t seen_name_bits = 0;  // NOLINT(misc-const-correctness)
   while (true) {
     skipWhitespace();
     if (atEnd()) {
@@ -2752,10 +2754,10 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   // Presence tracking for required fields. When nothing is required (the
   // default) HAS_REQUIRED is false, so 'parsed' is never read: every write to
   // it is dead-store eliminated and check_required() compiles to `return true`.
-  constexpr auto REQUIRED_MASK = detail::makeRequiredMask<T>();
+  static constexpr auto REQUIRED_MASK = detail::makeRequiredMask<T>();
   constexpr bool HAS_REQUIRED = REQUIRED_MASK.any();
   [[maybe_unused]] detail::RequiredMaskT<T> parsed{};  // NOLINT(misc-const-correctness)
-  const auto check_required = [&]() -> bool {
+  const auto check_required = [this, &parsed]() -> bool {
     if constexpr (HAS_REQUIRED) {
       if (!parsed.containsAll(REQUIRED_MASK)) {
         return fail(ErrorCode::MissingRequiredField);
@@ -2937,7 +2939,7 @@ class Serializer {
   // append (one capacity check) instead of three.
   template<bool CLOSING>
   auto appendTag(std::string_view tag) -> void {
-    std::array<char, 64> buf;  // written before read; zeroing costs a memset per tag
+    std::array<char, 64> buf{};
     const size_t n = tag.size() + (CLOSING ? 3 : 2);
     if (n <= buf.size()) [[likely]] {
       char* w = buf.data();
@@ -3085,7 +3087,7 @@ class Serializer {
   template<typename M>
   auto writeListItems(const M& container) -> void {
     bool first = true;
-    detail::forEachItem(container, [&](const auto& v) {
+    detail::forEachItem(container, [this, &first](const auto& v) {
       if (!first) {
         out_ += ' ';
       }
@@ -3123,7 +3125,7 @@ class Serializer {
   // Writes the active alternative of a variant under its bound element name.
   template<typename FieldT, typename Var>
   auto writeVariantActive(const FieldT& f, const Var& var, int depth) -> void {
-    [&]<size_t... J>(std::index_sequence<J...>) {
+    [this, &f, &var, depth]<size_t... J>(std::index_sequence<J...>) {
       (..., (var.index() == J ? writeFieldValue(f.names[J], std::get<J>(var), depth) : void()));
     }(std::make_index_sequence<std::variant_size_v<Var>>{});
   }
@@ -3151,8 +3153,8 @@ class Serializer {
         }
       }
     } else if constexpr (f.kind == FieldKind::Container) {
-      detail::forEachItem(obj.*(f.member), [&, name = f.xml_name](const auto& item) {
-        writeFieldValue(name, item, depth);
+      detail::forEachItem(obj.*(f.member), [this, depth](const auto& item) {
+        writeFieldValue(std::get<I>(XmlMetadata<T>::fields).xml_name, item, depth);
       });
     } else {
       writeFieldValue(f.xml_name, obj.*(f.member), depth);
@@ -3243,7 +3245,7 @@ auto validateMember(const M& m) -> std::optional<std::string> {
     return deepValidate(m);
   } else if constexpr (XmlListContainer<M>) {
     std::optional<std::string> err;
-    forEachItem(m, [&](const auto& item) {
+    forEachItem(m, [&err](const auto& item) {
       if (!err) {
         err = validateMember(item);
       }
@@ -3263,8 +3265,8 @@ auto deepValidate(const T& obj) -> std::optional<std::string> {
   }
   if constexpr (XmlObject<T>) {
     std::optional<std::string> err;
-    [&]<size_t... I>(std::index_sequence<I...>) {
-      ([&] {
+    [&err, &obj]<size_t... I>(std::index_sequence<I...>) {
+      ([&err, &obj] {
         if (!err) {
           err = validateMember(obj.*(std::get<I>(XmlMetadata<T>::fields).member));
         }

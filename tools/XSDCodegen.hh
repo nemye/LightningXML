@@ -1055,7 +1055,7 @@ class Generator {
     const std::string val = is_opt ? "*v." + mem : "v." + mem;
     const std::string g = is_opt ? "v." + mem + " && " : "";
 
-    auto emit_if = [&](const std::string& cond, const std::string& msg) {
+    auto emit_if = [&out, &g, &mem](const std::string& cond, const std::string& msg) {
       out += "    if (" + g + cond + ") return \"" + mem + ": " + msg + "\";\n";
     };
 
@@ -1103,7 +1103,7 @@ class Generator {
     std::string body;
     const ComplexType& ct = *s.ct;
 
-    auto process_attr = [&](const Attribute& a) {
+    auto process_attr = [this, &body](const Attribute& a) {
       const std::string mem = detail::sanitize(a.name);
       if (!a.fixed.empty()) {
         const Resolved res = resolveAttrType(a);
@@ -1129,7 +1129,7 @@ class Generator {
       }
       body += buildCheckCode(mem, resolveAttrType(a).cpp, false, *r);
     };
-    auto process_element = [&](const Element& el) {
+    auto process_element = [this, &body](const Element& el) {
       const std::string mem = detail::sanitize(el.name);
       if (const auto n = finiteMaxOccurs(el)) {
         body +=
@@ -1148,7 +1148,7 @@ class Generator {
 
     // Choice branches live in a std::variant member, not in members named
     // after the branch elements, so their facets cannot be checked per-member.
-    auto note_choice_facets = [&](const Choice& ch) {
+    auto note_choice_facets = [this](const Choice& ch) {
       for (const auto& el : ch.elements) {
         if (elementRestriction(el) != nullptr) {
           note("facet constraints on xs:choice branch '" + el.name +
@@ -1219,7 +1219,7 @@ class Generator {
     }
     std::vector<int> state(structs_.size(), 0);  // 0=new,1=active,2=done
     std::vector<StructDef> ordered;
-    auto visit = [&](auto&& self, size_t i) -> void {
+    auto visit = [this, &state, &deps, &ordered](auto&& self, size_t i) -> void {
       if (state[i] == 2) {
         return;
       }
