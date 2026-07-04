@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Public entry points (`deserialize`, `serialize`, `Serializer::write`, `valueField`, `Parser::pull`) constrained with C++20 concepts
+- Compile-time field-kind queries consolidated into variable templates (matching `FIELD_COUNT`/`FIELD_SEQ`); `optionalsNotRequired` reuses `anyFieldSatisfies`.
+- Serializer escape scanning
+
+### Fixed
+- date/dateTime year with 19+ digits overflowed a signed accumulator (undefined behavior)
+
 ## 1.1.0 - 2026-07-02
 
 ### Changed
