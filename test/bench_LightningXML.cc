@@ -9,6 +9,7 @@
 #include <memory_resource>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "LightningXML.hh"
@@ -755,6 +756,28 @@ BENCHMARK(bmSerializeLargeXml);
 BENCHMARK(bmSerializeAttrXml);
 BENCHMARK(bmSerializeCatalogPretty);
 
+#if defined(LIGHTNINGXML_HAS_PUGIXML) || defined(LIGHTNINGXML_HAS_RAPIDXML) || \
+    defined(LIGHTNINGXML_HAS_LIBXML2)
+// Parity with the library's first-growth container reserve
+// (XmlContainerTraits<std::vector>): comparator extraction pays the same
+// record-population cost on nested record vectors.
+template<typename T>
+static auto emplaceRecord(std::vector<T>& v) -> T& {
+  if (v.capacity() == 0) {
+    v.reserve(2);
+  }
+  return v.emplace_back();
+}
+
+template<typename T, typename V>
+static auto pushRecord(std::vector<T>& v, V&& value) -> void {
+  if (v.capacity() == 0) {
+    v.reserve(2);
+  }
+  v.push_back(std::forward<V>(value));
+}
+#endif
+
 #ifdef LIGHTNINGXML_HAS_PUGIXML
 #include <pugixml.hpp>
 
@@ -884,13 +907,13 @@ static auto bmPugiParseOrgXml(benchmark::State& state) -> void {
           member.full_name = mn.child_value("FullName");
           member.email = mn.child_value("Email");
           for (const auto& sn : mn.child("Skills").children("Skill")) {
-            member.skills.items.push_back(sn.child_value());
+            pushRecord(member.skills.items, sn.child_value());
           }
-          team.members.push_back(member);
+          pushRecord(team.members, member);
         }
-        dept.teams.push_back(team);
+        pushRecord(dept.teams, team);
       }
-      org.departments.push_back(dept);
+      pushRecord(org.departments, dept);
     }
     benchmark::DoNotOptimize(org);
     benchmark::ClobberMemory();
@@ -900,8 +923,7 @@ static auto bmPugiParseOrgXml(benchmark::State& state) -> void {
 
 static auto pugiBuildTree(TreeNode& node, const pugi::xml_node& xn) -> void {
   for (const auto& child : xn.children("Node")) {
-    node.children.emplace_back();
-    pugiBuildTree(node.children.back(), child);
+    pugiBuildTree(emplaceRecord(node.children), child);
   }
 }
 
@@ -969,8 +991,9 @@ BENCHMARK(bmPugiParseCatalog);
 #endif  // LIGHTNINGXML_HAS_PUGIXML
 
 // Comparison benchmarks (RapidXML, pugixml, libxml2) on identical payloads,
-// emitting the identical output structures as the LightningXML benchmarks above, so
-// only the parsing strategy differs. The four span a feature/performance
+// extracting equivalent records to the LightningXML benchmarks above (where the
+// shape differs -- e.g. column vectors for the Users workloads -- it favors the
+// comparator), so only the parsing strategy differs. The four span a feature/performance
 // spectrum: LightningXML (zero-copy, non-validating) -> RapidXML (in-situ DOM,
 // predefined entities) -> pugixml (owning DOM, normalizing) -> libxml2 (copies,
 // decodes, fully validates). Destructive parsers copy the source inside the
@@ -1130,7 +1153,7 @@ static auto rxBuildOrgMember(OrgMember& member, RxNode* mn) -> void {
   member.email = rxChildSv(mn, "Email");
   auto* skills = mn->first_node("Skills");
   for (auto* sn = skills->first_node("Skill"); sn; sn = sn->next_sibling("Skill")) {
-    member.skills.items.push_back(std::string_view(sn->value(), sn->value_size()));
+    pushRecord(member.skills.items, std::string_view(sn->value(), sn->value_size()));
   }
 }
 
@@ -1155,11 +1178,11 @@ static auto rxRunOrg(benchmark::State& state) -> void {
         for (auto* mn = tn->first_node("Member"); mn; mn = mn->next_sibling("Member")) {
           OrgMember member;
           rxBuildOrgMember(member, mn);
-          team.members.push_back(member);
+          pushRecord(team.members, member);
         }
-        dept.teams.push_back(team);
+        pushRecord(dept.teams, team);
       }
-      org.departments.push_back(dept);
+      pushRecord(org.departments, dept);
     }
     benchmark::DoNotOptimize(org);
     benchmark::ClobberMemory();
@@ -1169,8 +1192,7 @@ static auto rxRunOrg(benchmark::State& state) -> void {
 
 static auto rxBuildTree(TreeNode& node, RxNode* xn) -> void {
   for (auto* child = xn->first_node("Node"); child; child = child->next_sibling("Node")) {
-    node.children.emplace_back();
-    rxBuildTree(node.children.back(), child);
+    rxBuildTree(emplaceRecord(node.children), child);
   }
 }
 
@@ -1480,7 +1502,7 @@ static auto x2BuildOrgMember(OrgMember& member, xmlNode* mn) -> void {
   xmlNode* skills = x2Child(mn, "Skills");
   for (xmlNode* sn = skills->children; sn != nullptr; sn = sn->next) {
     if (sn->type == XML_ELEMENT_NODE && xmlStrcmp(sn->name, BAD_CAST "Skill") == 0) {
-      member.skills.items.push_back(x2Text(sn));
+      pushRecord(member.skills.items, x2Text(sn));
     }
   }
 }
@@ -1514,11 +1536,11 @@ static auto bmLibXml2ParseOrgXml(benchmark::State& state) -> void {
           }
           OrgMember member;
           x2BuildOrgMember(member, mn);
-          team.members.push_back(member);
+          pushRecord(team.members, member);
         }
-        dept.teams.push_back(team);
+        pushRecord(dept.teams, team);
       }
-      org.departments.push_back(dept);
+      pushRecord(org.departments, dept);
     }
     benchmark::DoNotOptimize(org);
     xmlFreeDoc(doc);
@@ -1530,8 +1552,7 @@ static auto bmLibXml2ParseOrgXml(benchmark::State& state) -> void {
 static auto x2BuildTree(TreeNode& node, xmlNode* xn) -> void {
   for (xmlNode* c = xn->children; c != nullptr; c = c->next) {
     if (c->type == XML_ELEMENT_NODE && xmlStrcmp(c->name, BAD_CAST "Node") == 0) {
-      node.children.emplace_back();
-      x2BuildTree(node.children.back(), c);
+      x2BuildTree(emplaceRecord(node.children), c);
     }
   }
 }
@@ -1852,7 +1873,7 @@ static auto srReadMember(xmlTextReaderPtr r, SrMember& m) -> void {
           break;
         }
         if (st == kElem && srNameIs(r, "Skill")) {
-          m.skills.push_back(srText(r));
+          pushRecord(m.skills, srText(r));
         }
       }
     }
@@ -1872,15 +1893,15 @@ static auto bmLibXml2ReaderParseOrgXml(benchmark::State& state) -> void {
         org.id = srAttrInt(r, "id");
         org.name = srAttrStr(r, "name");
       } else if (srNameIs(r, "Department")) {
-        SrDept& d = org.depts.emplace_back();
+        SrDept& d = emplaceRecord(org.depts);
         d.id = srAttrInt(r, "id");
         d.name = srAttrStr(r, "name");
       } else if (srNameIs(r, "Team")) {
-        SrTeam& t = org.depts.back().teams.emplace_back();
+        SrTeam& t = emplaceRecord(org.depts.back().teams);
         t.id = srAttrInt(r, "id");
         t.name = srAttrStr(r, "name");
       } else if (srNameIs(r, "Member")) {
-        SrMember& m = org.depts.back().teams.back().members.emplace_back();
+        SrMember& m = emplaceRecord(org.depts.back().teams.back().members);
         srReadMember(r, m);
       }
     }
@@ -1900,7 +1921,7 @@ static auto bmLibXml2ReaderParseTreeXml(benchmark::State& state) -> void {
     while (xmlTextReaderRead(r) == 1) {
       const int t = xmlTextReaderNodeType(r);
       if (t == kElem && srNameIs(r, "Node")) {
-        TreeNode& child = stack.back()->children.emplace_back();
+        TreeNode& child = emplaceRecord(stack.back()->children);
         if (!xmlTextReaderIsEmptyElement(r)) {
           stack.push_back(&child);
         }
