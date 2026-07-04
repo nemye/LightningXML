@@ -83,8 +83,8 @@ struct AttrInt {
 
 template<>
 struct xmlight::XmlMetadata<AttrInt> {
-  static constexpr auto fields =
-      std::make_tuple(xmlight::attrField("id", &AttrInt::id), xmlight::attrField("name", &AttrInt::name));
+  static constexpr auto fields = std::make_tuple(xmlight::attrField("id", &AttrInt::id),
+                                                 xmlight::attrField("name", &AttrInt::name));
 };
 
 struct VecLeaf {
@@ -1229,4 +1229,66 @@ TEST_F(ConformanceGaps, CharRefExpansion) {
   OwnedLeaf leaf;
   ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
   EXPECT_EQ(leaf.text, "A");
+}
+
+struct NormList {
+  std::vector<std::string> words;
+  std::vector<int> nums;
+};
+template<>
+struct xmlight::XmlMetadata<NormList> {
+  static constexpr auto fields = std::make_tuple(xmlight::attrField("nums", &NormList::nums),
+                                                 xmlight::listField("words", &NormList::words));
+};
+
+struct RawViewList {
+  std::vector<std::string_view> words;
+};
+template<>
+struct xmlight::XmlMetadata<RawViewList> {
+  static constexpr auto fields = std::make_tuple(xmlight::listField("words", &RawViewList::words));
+};
+
+/// sec 4.4/3.3.3 - References inside an xs:list element value are expanded
+/// before whitespace splitting on the normalizing parser.
+TEST_F(ConformanceGaps, ListElementValueIsNormalized) {
+  const std::string_view src = "<r nums='1 2'><words>&#65;B c&amp;d</words></r>";
+  xmlight::NormalizingParser p{src};
+  NormList list;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", list));
+  ASSERT_EQ(list.words.size(), 2U);
+  EXPECT_EQ(list.words[0], "AB");
+  EXPECT_EQ(list.words[1], "c&d");
+}
+
+/// sec 3.3.3 - References inside a list-valued attribute are expanded before
+/// splitting; character references can even form the list items.
+TEST_F(ConformanceGaps, ListAttributeValueIsNormalized) {
+  const std::string_view src = "<r nums='1 &#50; 3'><words>x</words></r>";
+  xmlight::NormalizingParser p{src};
+  NormList list;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", list));
+  ASSERT_EQ(list.nums.size(), 3U);
+  EXPECT_EQ(list.nums[1], 2);
+}
+
+/// string_view list items stay raw zero-copy even on the normalizing parser,
+/// matching the string-field contract (a view cannot hold transformed bytes).
+TEST_F(ConformanceGaps, ListOfViewsStaysRaw) {
+  const std::string_view src = "<r><words>a&amp;b c</words></r>";
+  xmlight::NormalizingParser p{src};
+  RawViewList list;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", list));
+  ASSERT_EQ(list.words.size(), 2U);
+  EXPECT_EQ(list.words[0], "a&amp;b");
+}
+
+/// A bad reference inside a list value is a fatal error on the normalizing
+/// parser, consistent with string-field normalization.
+TEST_F(ConformanceGaps, ListValueBadReferenceFails) {
+  const std::string_view src = "<r><words>a &undefined; b</words></r>";
+  xmlight::NormalizingParser p{src};
+  NormList list;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", list));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UndefinedEntity);
 }

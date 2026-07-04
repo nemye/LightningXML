@@ -6,10 +6,14 @@
 /// is recorded as a note rather than dropped silently or treated as fatal.
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <charconv>
 #include <format>
 #include <functional>
+#include <iterator>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -22,17 +26,13 @@
 namespace xsd {
 
 // Parsed XSD model, populated by LightningXML.
-struct Enumeration {
-  std::string value;
-};
-
 struct Facet {
   std::string value;
 };
 
 struct Restriction {
   std::string base;
-  std::vector<Enumeration> enumerations;
+  std::vector<Facet> enumerations;
   std::optional<Facet> min_length;
   std::optional<Facet> max_length;
   std::optional<Facet> length;
@@ -61,6 +61,7 @@ struct Attribute {
   std::string use;
   std::string default_;  // NOLINT(readability-identifier-naming)
   std::string fixed;
+  std::optional<SimpleType> simple_type;
 };
 
 struct AttributeGroupRef {
@@ -152,10 +153,6 @@ struct Schema {
 }  // namespace xsd
 
 template<>
-struct xmlight::XmlMetadata<xsd::Enumeration> {
-  static constexpr auto fields = std::make_tuple(xmlight::attrField("value", &xsd::Enumeration::value));
-};
-template<>
 struct xmlight::XmlMetadata<xsd::Facet> {
   static constexpr auto fields = std::make_tuple(xmlight::attrField("value", &xsd::Facet::value));
 };
@@ -177,7 +174,8 @@ struct xmlight::XmlMetadata<xsd::Restriction> {
 };
 template<>
 struct xmlight::XmlMetadata<xsd::List> {
-  static constexpr auto fields = std::make_tuple(xmlight::attrField("itemType", &xsd::List::item_type));
+  static constexpr auto fields =
+      std::make_tuple(xmlight::attrField("itemType", &xsd::List::item_type));
 };
 template<>
 struct xmlight::XmlMetadata<xsd::SimpleType> {
@@ -193,7 +191,8 @@ struct xmlight::XmlMetadata<xsd::Attribute> {
                       xmlight::attrField("type", &xsd::Attribute::type),
                       xmlight::attrField("use", &xsd::Attribute::use),
                       xmlight::attrField("default", &xsd::Attribute::default_),
-                      xmlight::attrField("fixed", &xsd::Attribute::fixed));
+                      xmlight::attrField("fixed", &xsd::Attribute::fixed),
+                      xmlight::field("simpleType", &xsd::Attribute::simple_type));
 };
 template<>
 struct xmlight::XmlMetadata<xsd::AttributeGroupRef> {
@@ -225,9 +224,10 @@ struct xmlight::XmlMetadata<xsd::Sequence> {
 };
 template<>
 struct xmlight::XmlMetadata<xsd::GroupDef> {
-  static constexpr auto fields = std::make_tuple(xmlight::attrField("name", &xsd::GroupDef::name),
-                                                 xmlight::field("sequence", &xsd::GroupDef::sequence),
-                                                 xmlight::field("choice", &xsd::GroupDef::choice));
+  static constexpr auto fields =
+      std::make_tuple(xmlight::attrField("name", &xsd::GroupDef::name),
+                      xmlight::field("sequence", &xsd::GroupDef::sequence),
+                      xmlight::field("choice", &xsd::GroupDef::choice));
 };
 template<>
 struct xmlight::XmlMetadata<xsd::Extension> {
@@ -342,7 +342,7 @@ inline auto capitalize(std::string_view name) -> std::string {
 }
 
 // XSD built-in -> C++ type, or "" if not a known built-in.
-inline auto builtinType(std::string_view xsd_type) -> std::string {
+inline auto builtinType(std::string_view xsd_type) -> std::string_view {
   static const std::unordered_map<std::string_view, std::string_view> k_map = {
       {"string", "std::string"},
       {"normalizedString", "std::string"},
@@ -372,7 +372,7 @@ inline auto builtinType(std::string_view xsd_type) -> std::string {
       {"time", "xmlight::Time"},
       {"dateTime", "xmlight::DateTime"}};
   const auto it = k_map.find(localName(xsd_type));
-  return it == k_map.end() ? std::string{} : std::string{it->second};
+  return it == k_map.end() ? std::string_view{} : it->second;
 }
 
 }  // namespace detail
@@ -386,11 +386,22 @@ class Generator {
     for (const auto& st : schema_.simple_types) {
       collectSimpleType(st.name, st);
     }
+    for (const auto& ag : schema_.attribute_groups) {
+      for (const auto& a : ag.attributes) {
+        collectAttrInline(a);
+      }
+    }
+    for (const auto& g : schema_.groups) {
+      collectContentInline(g.sequence ? &*g.sequence : nullptr, g.choice ? &*g.choice : nullptr);
+    }
     for (const auto& ct : schema_.complex_types) {
       collectComplexType(detail::capitalize(ct.name), ct);
     }
     for (const auto& el : schema_.elements) {
       collectElementInline(el);
+    }
+    for (auto& s : structs_) {
+      s.fields = buildFields(s);
     }
     orderStructs();
     // Build constraint specializations before emit() so needs_regex_ is known.
@@ -406,23 +417,57 @@ class Generator {
   }
 
  private:
-  struct StructDef {
-    std::string cpp_name;
-    const ComplexType* ct;
-    std::string parent_xsd;  // XSD key (named_complex_ key) of the base type; "" if none
-  };
-  struct EnumDef {
-    std::string cpp_name;
-    std::vector<std::string> tokens;  // original XML token spellings
-  };
   struct FieldOut {
     std::string member;    // C++ member declaration, e.g. "std::string name;"
     std::string metadata;  // metadata call, e.g. xmlight::field("name", &T::name)
     bool inherited{};      // from a base class; omit from struct body but keep in metadata
   };
+  struct StructDef {
+    std::string cpp_name;
+    const ComplexType* ct;
+    std::string parent_xsd;        // XSD key (named_complex_ key) of the base type; "" if none
+    std::vector<FieldOut> fields;  // built once by run(), then read everywhere
+  };
+  struct EnumDef {
+    std::string cpp_name;
+    std::vector<std::string> tokens;  // original XML token spellings
+  };
 
-  // Deduplicated: fieldsOf() is computed several times (ordering, struct, and
-  // metadata emission), so the same diagnostic can be produced more than once.
+  // A complexType's effective content, regardless of where the schema puts it
+  // (simpleContent extension, complexContent extension, or the type body).
+  // Every consumer of a ComplexType walks this one shape.
+  struct Content {
+    const Extension* simple{};  // simpleContent extension, if any
+    std::span<const Attribute> attributes;
+    std::span<const AttributeGroupRef> attr_groups;
+    const Sequence* sequence{};
+    const Choice* choice{};
+  };
+
+  static auto contentOf(const ComplexType& ct) -> Content {
+    if (ct.simple_content && ct.simple_content->extension) {
+      const Extension& ext = *ct.simple_content->extension;
+      return {.simple = &ext,
+              .attributes = ext.attributes,
+              .attr_groups = {},
+              .sequence = nullptr,
+              .choice = nullptr};
+    }
+    if (ct.complex_content && ct.complex_content->extension) {
+      const ComplexExtension& ext = *ct.complex_content->extension;
+      return {.attributes = ext.attributes,
+              .attr_groups = ext.attribute_group_refs,
+              .sequence = ext.sequence ? &*ext.sequence : nullptr,
+              .choice = ext.choice ? &*ext.choice : nullptr};
+    }
+    return {.attributes = ct.attributes,
+            .attr_groups = ct.attribute_group_refs,
+            .sequence = ct.sequence ? &*ct.sequence : nullptr,
+            .choice = ct.choice ? &*ct.choice : nullptr};
+  }
+
+  // Deduplicated: the same diagnostic can arise from more than one struct
+  // (e.g. a missing attributeGroup referenced by several types).
   auto note(std::string msg) -> void {
     if (note_seen_.insert(msg).second) {
       notes_.push_back(std::move(msg));
@@ -483,7 +528,7 @@ class Generator {
       }
     }
 
-    structs_.emplace_back(cpp_name, &ct, parent_xsd);
+    structs_.push_back({cpp_name, &ct, parent_xsd, {}});
 
     if (ct.mixed) {
       note("mixed content on complexType '" + ct.name +
@@ -491,35 +536,27 @@ class Generator {
     }
 
     // Collect inline types from wherever they live in this CT.
-    auto collect_seq = [&](const Sequence& seq) {
-      for (const auto& el : seq.elements) {
+    const Content c = contentOf(ct);
+    for (const auto& a : c.attributes) {
+      collectAttrInline(a);
+    }
+    collectContentInline(c.sequence, c.choice);
+  }
+
+  auto collectContentInline(const Sequence* seq, const Choice* choice) -> void {
+    if (seq != nullptr) {
+      for (const auto& el : seq->elements) {
         collectElementInline(el);
       }
-      for (const auto& ch : seq.choices) {
+      for (const auto& ch : seq->choices) {
         for (const auto& el : ch.elements) {
           collectElementInline(el);
         }
       }
-    };
-
-    if (ct.complex_content && ct.complex_content->extension) {
-      const auto& ext = *ct.complex_content->extension;
-      if (ext.sequence) {
-        collect_seq(*ext.sequence);
-      }
-      if (ext.choice) {
-        for (const auto& el : ext.choice->elements) {
-          collectElementInline(el);
-        }
-      }
-    } else {
-      if (ct.sequence) {
-        collect_seq(*ct.sequence);
-      }
-      if (ct.choice) {
-        for (const auto& el : ct.choice->elements) {
-          collectElementInline(el);
-        }
+    }
+    if (choice != nullptr) {
+      for (const auto& el : choice->elements) {
+        collectElementInline(el);
       }
     }
   }
@@ -529,6 +566,12 @@ class Generator {
       collectComplexType(uniqueName(detail::capitalize(el.name)), *el.complex_type);
     } else if (el.simple_type) {
       collectSimpleType(el.name, *el.simple_type);
+    }
+  }
+
+  auto collectAttrInline(const Attribute& a) -> void {
+    if (a.simple_type) {
+      collectSimpleType(a.name, *a.simple_type);
     }
   }
 
@@ -548,11 +591,12 @@ class Generator {
     std::string cpp;
     bool is_struct{};
     bool is_list{};
+    bool is_enum{};
   };
 
   auto resolveListItem(std::string_view item_type) const -> std::string {
-    if (std::string b = detail::builtinType(item_type); !b.empty()) {
-      return b;
+    if (const std::string_view b = detail::builtinType(item_type); !b.empty()) {
+      return std::string{b};
     }
     const std::string key{detail::localName(item_type)};
     if (auto it = named_simple_.find(key); it != named_simple_.end()) {
@@ -569,37 +613,44 @@ class Generator {
     return n == "NMTOKENS" || n == "IDREFS" || n == "ENTITIES";
   }
 
+  // Resolves an inline <simpleType> (on an element or attribute) to its C++
+  // type: a list's item type, the enum generated from its enumerations, or
+  // the restriction base.
+  auto resolveInlineSimple(const SimpleType& st, std::string_view name) -> Resolved {
+    if (st.list) {
+      return {resolveListItem(st.list->item_type), false, true};
+    }
+    if (st.restriction && !st.restriction->enumerations.empty()) {
+      return {
+          .cpp = detail::capitalize(name), .is_struct = false, .is_list = false, .is_enum = true};
+    }
+    if (st.restriction) {
+      return {baseBuiltin(st.restriction->base), false, false};
+    }
+    note("untyped inline simpleType on '" + std::string{name} + "' -> std::string");
+    return {"std::string", false, false};
+  }
+
   auto resolveElementType(const Element& el) -> Resolved {
     if (el.complex_type) {
       return {detail::capitalize(el.name), true, false};
     }
     if (el.simple_type) {
-      if (el.simple_type->list) {
-        return {resolveListItem(el.simple_type->list->item_type), false, true};
-      }
-      if (const std::string e = enumNameForInline(el); !e.empty()) {
-        return {e, false, false};
-      }
-      if (el.simple_type->restriction) {
-        return {baseBuiltin(el.simple_type->restriction->base), false, false};
-      }
-      note("untyped inline simpleType on '" + el.name + "' -> std::string");
-      return {"std::string", false, false};
+      return resolveInlineSimple(*el.simple_type, el.name);
     }
     return resolveNamedType(el.type, el.name);
   }
 
-  static auto enumNameForInline(const Element& el) -> std::string {
-    if (!el.simple_type || !el.simple_type->restriction ||
-        el.simple_type->restriction->enumerations.empty()) {
-      return {};
+  auto resolveAttrType(const Attribute& a) -> Resolved {
+    if (a.simple_type) {
+      return resolveInlineSimple(*a.simple_type, a.name);
     }
-    return detail::capitalize(el.name);
+    return resolveNamedType(a.type, a.name);
   }
 
   auto baseBuiltin(std::string_view base) const -> std::string {
-    if (std::string b = detail::builtinType(base); !b.empty()) {
-      return b;
+    if (const std::string_view b = detail::builtinType(base); !b.empty()) {
+      return std::string{b};
     }
     if (auto it = named_simple_.find(std::string{detail::localName(base)});
         it != named_simple_.end() && it->second->restriction) {
@@ -616,8 +667,8 @@ class Generator {
     if (builtinList(type)) {
       return {"std::string", false, true};
     }
-    if (const std::string b = detail::builtinType(type); !b.empty()) {
-      return {b, false, false};
+    if (const std::string_view b = detail::builtinType(type); !b.empty()) {
+      return {std::string{b}, false, false};
     }
     const std::string key{detail::localName(type)};
     if (auto it = named_complex_.find(key); it != named_complex_.end()) {
@@ -628,7 +679,8 @@ class Generator {
         return {resolveListItem(it->second->list->item_type), false, true};
       }
       if (it->second->restriction && !it->second->restriction->enumerations.empty()) {
-        return {detail::capitalize(key), false, false};
+        return {
+            .cpp = detail::capitalize(key), .is_struct = false, .is_list = false, .is_enum = true};
       }
       return {baseBuiltin(it->second->restriction ? it->second->restriction->base : "string"),
               false, false};
@@ -648,22 +700,23 @@ class Generator {
 
   // Returns the finite max_occurs bound when it's an integer > 1; empty otherwise.
   static auto finiteMaxOccurs(const Element& el) -> std::optional<int> {
-    if (!el.max_occurs || el.max_occurs->empty() || *el.max_occurs == "unbounded") {
+    if (!el.max_occurs) {
       return {};
     }
-    try {
-      const int n = std::stoi(*el.max_occurs);
-      return n > 1 ? std::optional<int>{n} : std::optional<int>{};
-    } catch (...) {
+    const std::string_view s = *el.max_occurs;
+    int n{};
+    const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), n);
+    if (ec != std::errc{} || ptr != s.data() + s.size() || n <= 1) {
       return {};
     }
+    return n;
   }
 
   // field generation
 
   auto addAttrField(const std::string& ctx, const Attribute& a,
                     std::vector<FieldOut>& out) -> void {
-    const Resolved r = resolveNamedType(a.type, a.name);
+    const Resolved r = resolveAttrType(a);
     const std::string mem = detail::sanitize(a.name);
     const std::string suffix = (a.use == "required") ? ", true)" : ")";
     std::string decl;
@@ -673,6 +726,12 @@ class Generator {
     } else if (!init_val.empty()) {
       if (isStringCpp(r.cpp)) {
         decl = r.cpp + " " + mem + "{\"" + escapeStrLiteral(init_val) + "\"};";
+      } else if (r.is_enum) {
+        decl = r.cpp + " " + mem + "{" + r.cpp + "::" + detail::sanitize(init_val) + "};";
+      } else if (r.cpp.starts_with("xmlight::")) {
+        note("default/fixed value on '" + a.name + "' (" + r.cpp +
+             ") is unsupported; the initializer was dropped");
+        decl = r.cpp + " " + mem + "{};";
       } else {
         decl = r.cpp + " " + mem + "{" + init_val + "};";
       }
@@ -746,11 +805,17 @@ class Generator {
       alts_joined += "\n          " + alts[i] + (i + 1 < alts.size() ? "," : "");
     }
 
-    out.push_back(
-        {member_type + " choice;", "xmlight::variantField(&" + ctx + "::choice," + alts_joined + ")"});
+    // A type may hold several choices (own and inherited); number the members
+    // so they don't collide: choice, choice2, choice3, ...
+    const auto prior = static_cast<size_t>(std::ranges::count_if(out, [](const FieldOut& f) {
+      return f.metadata.find("variantField(") != std::string::npos;
+    }));
+    const std::string mem = prior == 0 ? "choice" : std::format("choice{}", prior + 1);
+    out.push_back({member_type + " " + mem + ";",
+                   "xmlight::variantField(&" + ctx + "::" + mem + "," + alts_joined + ")"});
   }
 
-  auto expandAttrGroups(const std::string& ctx, const std::vector<AttributeGroupRef>& refs,
+  auto expandAttrGroups(const std::string& ctx, std::span<const AttributeGroupRef> refs,
                         std::vector<FieldOut>& out) -> void {
     for (const auto& agr : refs) {
       const std::string ref_key{detail::localName(agr.ref)};
@@ -785,90 +850,62 @@ class Generator {
     }
   }
 
-  // Generates the own (non-inherited) fields of a complexType. ctx is the C++
-  // struct name used for pointer-to-member references in metadata.
-  auto ownFieldsOf(const std::string& ctx, const ComplexType& ct) -> std::vector<FieldOut> {
-    std::vector<FieldOut> out;
-
-    if (ct.simple_content && ct.simple_content->extension) {
-      const auto& ext = *ct.simple_content->extension;
-      out.push_back({baseBuiltin(ext.base) + " value{};", "xmlight::valueField(&" + ctx + "::value)"});
-      for (const auto& a : ext.attributes) {
-        addAttrField(ctx, a, out);
-      }
-      return out;
+  // Appends the own (non-inherited) fields of a complexType to out. ctx is the
+  // C++ struct name used for pointer-to-member references in metadata.
+  auto ownFieldsOf(const std::string& ctx, const ComplexType& ct,
+                   std::vector<FieldOut>& out) -> void {
+    const Content c = contentOf(ct);
+    if (c.simple != nullptr) {
+      out.push_back(
+          {baseBuiltin(c.simple->base) + " value{};", "xmlight::valueField(&" + ctx + "::value)"});
     }
-
-    if (ct.complex_content && ct.complex_content->extension) {
-      const auto& ext = *ct.complex_content->extension;
-      for (const auto& a : ext.attributes) {
-        addAttrField(ctx, a, out);
-      }
-      expandAttrGroups(ctx, ext.attribute_group_refs, out);
-      if (ext.sequence) {
-        for (const auto& el : ext.sequence->elements) {
-          addElementField(ctx, el, out);
-        }
-        for (const auto& gr : ext.sequence->group_refs) {
-          expandGroupRef(ctx, gr, out);
-        }
-        for (const auto& ch : ext.sequence->choices) {
-          addChoiceFields(ctx, ch, out);
-        }
-      }
-      if (ext.choice) {
-        addChoiceFields(ctx, *ext.choice, out);
-      }
-      return out;
-    }
-
-    for (const auto& a : ct.attributes) {
+    for (const auto& a : c.attributes) {
       addAttrField(ctx, a, out);
     }
-    expandAttrGroups(ctx, ct.attribute_group_refs, out);
-    if (ct.sequence) {
-      for (const auto& el : ct.sequence->elements) {
+    expandAttrGroups(ctx, c.attr_groups, out);
+    if (c.sequence != nullptr) {
+      for (const auto& el : c.sequence->elements) {
         addElementField(ctx, el, out);
       }
-      for (const auto& gr : ct.sequence->group_refs) {
+      for (const auto& gr : c.sequence->group_refs) {
         expandGroupRef(ctx, gr, out);
       }
-      for (const auto& ch : ct.sequence->choices) {
+      for (const auto& ch : c.sequence->choices) {
         addChoiceFields(ctx, ch, out);
       }
     }
-    if (ct.choice) {
-      addChoiceFields(ctx, *ct.choice, out);
+    if (c.choice != nullptr) {
+      addChoiceFields(ctx, *c.choice, out);
     }
-    return out;
   }
 
-  // Walks the complexContent extension chain and returns all inherited fields,
+  // Appends the inherited fields from the complexContent extension chain,
   // each marked inherited=true. Uses ctx for pointer-to-member names so that
   // &Child::inherited_field is emitted (valid C++ via derived-class access).
-  auto inheritedFields(const std::string& ctx, const ComplexType& ct) -> std::vector<FieldOut> {
+  auto appendInheritedFields(const std::string& ctx, const ComplexType& ct,
+                             std::vector<FieldOut>& out) -> void {
     if (!ct.complex_content || !ct.complex_content->extension) {
-      return {};
+      return;
     }
     const std::string base_key{detail::localName(ct.complex_content->extension->base)};
-    auto it = named_complex_.find(base_key);
+    const auto it = named_complex_.find(base_key);
     if (it == named_complex_.end()) {
-      return {};
+      return;
     }
-
-    auto result = inheritedFields(ctx, *it->second);
-    for (auto& f : ownFieldsOf(ctx, *it->second)) {
-      f.inherited = true;
-      result.push_back(std::move(f));
+    appendInheritedFields(ctx, *it->second, out);
+    const size_t first_own = out.size();
+    ownFieldsOf(ctx, *it->second, out);
+    for (size_t i = first_own; i < out.size(); ++i) {
+      out[i].inherited = true;
     }
-    return result;
   }
 
-  auto fieldsOf(const StructDef& s) -> std::vector<FieldOut> {
-    auto result = inheritedFields(s.cpp_name, *s.ct);
-    for (auto& f : ownFieldsOf(s.cpp_name, *s.ct)) {
-      result.push_back(std::move(f));
-    }
+  // Builds the full field list (inherited then own) for StructDef::fields;
+  // run() calls this once per struct and every later pass reads the cache.
+  auto buildFields(const StructDef& s) -> std::vector<FieldOut> {
+    std::vector<FieldOut> result;
+    appendInheritedFields(s.cpp_name, *s.ct, result);
+    ownFieldsOf(s.cpp_name, *s.ct, result);
     return result;
   }
 
@@ -938,7 +975,7 @@ class Generator {
       out_ += " : " + detail::capitalize(s.parent_xsd);
     }
     out_ += " {\n";
-    for (const auto& f : fieldsOf(s)) {
+    for (const auto& f : s.fields) {
       if (!f.inherited && !f.member.empty()) {
         out_ += "  " + f.member + "\n";
       }
@@ -947,7 +984,7 @@ class Generator {
   }
 
   auto emitStructMetadata(const StructDef& s) -> void {
-    const auto fields = fieldsOf(s);
+    const auto& fields = s.fields;
     out_ += "template <>\nstruct xmlight::XmlMetadata<" + s.cpp_name + "> {\n";
     out_ += "  static constexpr auto fields = std::make_tuple(\n";
     for (size_t i = 0; i < fields.size(); ++i) {
@@ -1003,6 +1040,14 @@ class Generator {
     return typeRestriction(el.type);
   }
 
+  auto attrRestriction(const Attribute& a) const -> const Restriction* {
+    if (a.simple_type && a.simple_type->restriction &&
+        hasValueFacets(*a.simple_type->restriction)) {
+      return &*a.simple_type->restriction;
+    }
+    return typeRestriction(a.type);
+  }
+
   auto buildCheckCode(const std::string& mem, const std::string& cpp, bool is_opt,
                       const Restriction& r) -> std::string {
     std::string out;
@@ -1010,7 +1055,7 @@ class Generator {
     const std::string val = is_opt ? "*v." + mem : "v." + mem;
     const std::string g = is_opt ? "v." + mem + " && " : "";
 
-    auto emit_if = [&](const std::string& cond, const std::string& msg) {
+    auto emit_if = [&out, &g, &mem](const std::string& cond, const std::string& msg) {
       out += "    if (" + g + cond + ") return \"" + mem + ": " + msg + "\";\n";
     };
 
@@ -1058,25 +1103,33 @@ class Generator {
     std::string body;
     const ComplexType& ct = *s.ct;
 
-    auto process_attr = [&](const Attribute& a) {
+    auto process_attr = [this, &body](const Attribute& a) {
       const std::string mem = detail::sanitize(a.name);
       if (!a.fixed.empty()) {
-        const Resolved res = resolveNamedType(a.type, a.name);
+        const Resolved res = resolveAttrType(a);
+        // Custom value types (xmlight::Date etc.) have no literal spelling; the
+        // dropped-initializer note was already emitted by addAttrField.
         if (isStringCpp(res.cpp)) {
           body += "    if (v." + mem + " != \"" + escapeStrLiteral(a.fixed) + "\") return \"" +
                   mem + ": fixed value violation\";\n";
-        } else {
+        } else if (res.is_enum) {
+          body += "    if (v." + mem + " != " + res.cpp + "::" + detail::sanitize(a.fixed) +
+                  ") return \"" + mem + ": fixed value violation\";\n";
+        } else if (!res.cpp.starts_with("xmlight::")) {
           body += "    if (v." + mem + " != " + a.fixed + ") return \"" + mem +
                   ": fixed value violation\";\n";
         }
       }
-      const Restriction* r = typeRestriction(a.type);
+      if (a.simple_type && a.simple_type->list) {
+        return;  // list values carry no scalar facet checks (as with elements)
+      }
+      const Restriction* r = attrRestriction(a);
       if (r == nullptr) {
         return;
       }
-      body += buildCheckCode(mem, resolveNamedType(a.type, a.name).cpp, false, *r);
+      body += buildCheckCode(mem, resolveAttrType(a).cpp, false, *r);
     };
-    auto process_element = [&](const Element& el) {
+    auto process_element = [this, &body](const Element& el) {
       const std::string mem = detail::sanitize(el.name);
       if (const auto n = finiteMaxOccurs(el)) {
         body +=
@@ -1093,47 +1146,36 @@ class Generator {
       body += buildCheckCode(mem, resolveElementType(el).cpp, minOccursOf(el) == 0, *r);
     };
 
-    if (ct.simple_content && ct.simple_content->extension) {
-      const auto& ext = *ct.simple_content->extension;
-      if (const Restriction* r = typeRestriction(ext.base)) {
-        body += buildCheckCode("value", baseBuiltin(ext.base), false, *r);
-      }
-      for (const auto& a : ext.attributes) {
-        process_attr(a);
-      }
-      return body;
-    }
-
-    if (ct.complex_content && ct.complex_content->extension) {
-      const auto& ext = *ct.complex_content->extension;
-      for (const auto& a : ext.attributes) {
-        process_attr(a);
-      }
-      if (ext.sequence) {
-        for (const auto& el : ext.sequence->elements) {
-          process_element(el);
+    // Choice branches live in a std::variant member, not in members named
+    // after the branch elements, so their facets cannot be checked per-member.
+    auto note_choice_facets = [this](const Choice& ch) {
+      for (const auto& el : ch.elements) {
+        if (elementRestriction(el) != nullptr) {
+          note("facet constraints on xs:choice branch '" + el.name +
+               "' are not enforced by XmlConstraints");
         }
       }
-      if (ext.choice) {
-        for (const auto& el : ext.choice->elements) {
-          process_element(el);
-        }
-      }
-      return body;
-    }
+    };
 
-    for (const auto& a : ct.attributes) {
+    const Content c = contentOf(ct);
+    if (c.simple != nullptr) {
+      if (const Restriction* r = typeRestriction(c.simple->base)) {
+        body += buildCheckCode("value", baseBuiltin(c.simple->base), false, *r);
+      }
+    }
+    for (const auto& a : c.attributes) {
       process_attr(a);
     }
-    if (ct.sequence) {
-      for (const auto& el : ct.sequence->elements) {
+    if (c.sequence != nullptr) {
+      for (const auto& el : c.sequence->elements) {
         process_element(el);
+      }
+      for (const auto& ch : c.sequence->choices) {
+        note_choice_facets(ch);
       }
     }
-    if (ct.choice) {
-      for (const auto& el : ct.choice->elements) {
-        process_element(el);
-      }
+    if (c.choice != nullptr) {
+      note_choice_facets(*c.choice);
     }
     return body;
   }
@@ -1161,7 +1203,7 @@ class Generator {
 
     std::vector<std::vector<size_t>> deps(structs_.size());
     for (size_t i = 0; i < structs_.size(); ++i) {
-      for (const auto& f : fieldsOf(structs_[i])) {
+      for (const auto& f : structs_[i].fields) {
         if (f.inherited) {
           continue;
         }
@@ -1177,7 +1219,7 @@ class Generator {
     }
     std::vector<int> state(structs_.size(), 0);  // 0=new,1=active,2=done
     std::vector<StructDef> ordered;
-    auto visit = [&](auto&& self, size_t i) -> void {
+    auto visit = [this, &state, &deps, &ordered](auto&& self, size_t i) -> void {
       if (state[i] == 2) {
         return;
       }
@@ -1189,7 +1231,7 @@ class Generator {
         self(self, j);
       }
       state[i] = 2;
-      ordered.push_back(structs_[i]);
+      ordered.push_back(std::move(structs_[i]));
     };
     for (size_t i = 0; i < structs_.size(); ++i) {
       visit(visit, i);
@@ -1233,8 +1275,21 @@ class Generator {
   }
 
   if (opts.loader) {
+    const auto merge = [](auto& dst, auto& src) {
+      dst.insert(dst.end(), std::make_move_iterator(src.begin()),
+                 std::make_move_iterator(src.end()));
+    };
+    // Worklist over schemaLocations so includes of included schemas are also
+    // loaded; the seen set breaks include cycles.
+    std::vector<std::string> pending;
+    std::unordered_set<std::string> seen;
     for (const auto& inc : schema.includes) {
-      auto src = opts.loader(inc.schema_location);
+      if (seen.insert(inc.schema_location).second) {
+        pending.push_back(inc.schema_location);
+      }
+    }
+    for (size_t i = 0; i < pending.size(); ++i) {
+      auto src = opts.loader(pending[i]);
       if (!src) {
         continue;
       }
@@ -1243,21 +1298,16 @@ class Generator {
       if (!xmlight::deserialize(ip, "schema", included)) {
         continue;
       }
-      for (auto& ct : included.complex_types) {
-        schema.complex_types.push_back(std::move(ct));
+      for (const auto& inc : included.includes) {
+        if (seen.insert(inc.schema_location).second) {
+          pending.push_back(inc.schema_location);
+        }
       }
-      for (auto& st : included.simple_types) {
-        schema.simple_types.push_back(std::move(st));
-      }
-      for (auto& el : included.elements) {
-        schema.elements.push_back(std::move(el));
-      }
-      for (auto& ag : included.attribute_groups) {
-        schema.attribute_groups.push_back(std::move(ag));
-      }
-      for (auto& g : included.groups) {
-        schema.groups.push_back(std::move(g));
-      }
+      merge(schema.complex_types, included.complex_types);
+      merge(schema.simple_types, included.simple_types);
+      merge(schema.elements, included.elements);
+      merge(schema.attribute_groups, included.attribute_groups);
+      merge(schema.groups, included.groups);
     }
   }
 

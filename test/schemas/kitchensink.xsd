@@ -1,0 +1,52 @@
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:include schemaLocation="common.xsd"/>
+  <xs:complexType name="Price">
+    <xs:simpleContent>
+      <xs:extension base="xs:decimal">
+        <xs:attribute name="currency" type="xs:string" use="required"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+  <xs:complexType name="Item">
+    <xs:complexContent>
+      <xs:extension base="Entity">
+        <xs:sequence>
+          <xs:element name="sku" type="Sku"/>
+          <xs:element name="color" type="Color" minOccurs="0"/>
+          <xs:element name="qty" type="xs:int" maxOccurs="4"/>
+          <xs:element name="price" type="Price"/>
+          <xs:element name="tags" minOccurs="0">
+            <xs:simpleType><xs:list itemType="xs:int"/></xs:simpleType>
+          </xs:element>
+          <xs:group ref="MetaGroup"/>
+          <xs:choice>
+            <xs:element name="weight" type="xs:double"/>
+            <xs:element name="volume" type="xs:string"/>
+          </xs:choice>
+          <xs:choice>
+            <xs:element name="local" type="xs:boolean"/>
+            <xs:element name="origin" type="xs:string"/>
+          </xs:choice>
+          <xs:element name="variant" type="Item" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="prio" fixed="High">
+          <xs:simpleType>
+            <xs:restriction base="xs:string">
+              <xs:enumeration value="Low"/>
+              <xs:enumeration value="High"/>
+            </xs:restriction>
+          </xs:simpleType>
+        </xs:attribute>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:element name="inventory">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="item" type="Item" maxOccurs="unbounded"/>
+        <xs:element name="warehouse" type="xs:NMTOKENS" minOccurs="0"/>
+      </xs:sequence>
+      <xs:attributeGroup ref="Audited"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

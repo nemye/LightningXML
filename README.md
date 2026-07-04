@@ -12,17 +12,17 @@ Benchmarked against [pugixml](https://pugixml.org/), [RapidXML](https://rapidxml
 
 | Workload | LightningXML | LightningXML Strict | pugixml | RapidXML | RapidXML fast | libxml2 DOM | libxml2 reader |
 |---|---|---|---|---|---|---|---|
-| Flat (2K items, 4 fields + attr) | **2.77 GB/s** | 2.26 GB/s | 1.46 GB/s | 199 MB/s | 1.58 GB/s | 178 MB/s | 189 MB/s |
-| Deep (2K chains, 5 levels) | **1.65 GB/s** | 1.33 GB/s | 977 MB/s | 792 MB/s | 1.05 GB/s | 101 MB/s | 124 MB/s |
-| Attributes (2K items, 10 attrs) | **1.08 GB/s** | 762 MB/s | 417 MB/s | 719 MB/s | 886 MB/s | 34 MB/s | 101 MB/s |
-| Small (1 element) | **1.51 GB/s** | 1.39 GB/s | 823 MB/s | 886 MB/s | 1.13 GB/s | 68 MB/s | 76 MB/s |
-| Large (10K users) | **2.59 GB/s** | 2.36 GB/s | 311 MB/s | 194 MB/s | 340 MB/s | 60 MB/s | 172 MB/s |
-| Org (nested, ~400 members) | **1.55 GB/s** | 1.45 GB/s | 785 MB/s | 821 MB/s | 966 MB/s | 135 MB/s | 158 MB/s |
-| Tree (depth 14, binary) | **548 MB/s** | 545 MB/s | 145 MB/s | 106 MB/s | 108 MB/s | 113 MB/s | 116 MB/s |
-| Comment-heavy (skipped bytes) | **10.67 GB/s** | 10.00 GB/s | 2.87 GB/s | 2.58 GB/s | 3.25 GB/s | 506 MB/s | 590 MB/s |
-| Catalog (12 books, owning strings) | **2.52 GB/s** | 1.63 GB/s | 1.33 GB/s | 1.15 GB/s | 1.54 GB/s | 190 MB/s | 215 MB/s |
+| Flat (2K items, 4 fields + attr) | **3.05 GB/s** | 2.43 GB/s | 1.46 GB/s | 199 MB/s | 1.58 GB/s | 178 MB/s | 189 MB/s |
+| Deep (2K chains, 5 levels) | **1.53 GB/s** | 1.48 GB/s | 977 MB/s | 792 MB/s | 1.05 GB/s | 101 MB/s | 124 MB/s |
+| Attributes (2K items, 10 attrs) | **1.33 GB/s** | 1.01 GB/s | 417 MB/s | 719 MB/s | 886 MB/s | 34 MB/s | 101 MB/s |
+| Small (1 element) | **1.58 GB/s** | 1.57 GB/s | 823 MB/s | 886 MB/s | 1.13 GB/s | 68 MB/s | 76 MB/s |
+| Large (10K users) | **2.77 GB/s** | 2.28 GB/s | 311 MB/s | 194 MB/s | 340 MB/s | 60 MB/s | 172 MB/s |
+| Org (nested, ~400 members) | **1.58 GB/s** | 1.42 GB/s | 785 MB/s | 821 MB/s | 966 MB/s | 135 MB/s | 158 MB/s |
+| Tree (depth 14, binary) | **737 MB/s** | 736 MB/s | 300 MB/s | 113 MB/s | 112 MB/s | 115 MB/s | 118 MB/s |
+| Comment-heavy (skipped bytes) | **10.95 GB/s** | 9.46 GB/s | 2.87 GB/s | 2.58 GB/s | 3.25 GB/s | 506 MB/s | 590 MB/s |
+| Catalog (12 books, owning strings) | **2.22 GB/s** | 1.84 GB/s | 1.33 GB/s | 1.15 GB/s | 1.54 GB/s | 190 MB/s | 215 MB/s |
 
-Column drscriptions, ordered from lower to higher feature sets:
+Column descriptions, ordered from lower to higher feature sets:
 
 - **LightningXML** - zero-copy, non-normalizing, non-validating. `string_view` fields point straight into the source; no DOM, no entity decoding, no allocation for string fields.
 - **LightningXML Strict** - `xmlight::StrictParser`: same extraction, but adds the three well-formedness scans (`]]>` in content, `<` in attribute values, duplicate attributes) and normalizes owning `std::string` fields. A fully-conforming configuration; the delta is the cost of validation.
@@ -32,7 +32,7 @@ Column drscriptions, ordered from lower to higher feature sets:
 - **libxml2 DOM** - `xmlReadMemory`: copies every string into the tree, decodes entities, fully validates.
 - **libxml2 reader** - `xmlTextReader` streaming pull parser. A streaming parser can't hand back views that outlive the cursor, so it copies each field into owning storage as it streams - the streaming-vs-DOM trade-off.
 
-LightningXML leads on every workload (1.7–8× over pugixml; the Tree case is a near-tie with its own strict mode). The depth-14 Tree row is allocation-bound and high-variance for the DOM parsers (pugixml/RapidXML), so treat those cells as approximate. All comparison benchmarks are opt-in CMake options and live in [test/bench_LightningXML.cc](test/bench_LightningXML.cc); see the per-section comments there for the exact fairness choices.
+LightningXML leads on every workload (1.6–9× over pugixml; the Tree case is a near-tie with its own strict mode). The depth-14 Tree row is allocation-bound and high-variance for the DOM parsers (pugixml/RapidXML), so treat those cells as approximate. All comparison benchmarks are opt-in CMake options and live in [test/bench_LightningXML.cc](test/bench_LightningXML.cc); see the per-section comments there for the exact fairness choices.
 
 ## Features
 
@@ -295,6 +295,8 @@ s.write("root_tag", object);
 
 Attribute values and text content are escaped (`&amp;`, `&lt;`, `&gt;`, `&quot;`). Types whose fields are all attributes serialize as self-closing tags.
 
+An enum value with no entry in its `XmlEnumTraits` table serializes as empty text; keep the table exhaustive (xsdgen always emits every `xs:enumeration` facet).
+
 ### Metadata Declaration
 
 Specialize `xmlight::XmlMetadata<T>` for each type. Field order in the tuple does not need to match the XML element order.
@@ -354,6 +356,7 @@ For XML-conformant text, use `xmlight::NormalizingParser` (an alias for `xmlight
 - Line endings (`\r\n`, `\r`) are normalized to `\n`.
 - Attribute whitespace (literal tab/newline) is normalized to spaces (XML §3.3.3); whitespace introduced via a reference is preserved.
 - CDATA content is copied literally (never reference-expanded) and concatenated with surrounding text.
+- `xs:list` values (list elements and list-valued attributes) are reference-expanded before whitespace splitting, except into `std::string_view` items, which stay raw.
 - An undefined entity (none of the five predefined; no DTD is processed) fails with `ErrorCode::UndefinedEntity`; a malformed or out-of-range character reference fails with `ErrorCode::InvalidCharRef`.
 
 ```cpp
@@ -408,7 +411,7 @@ Supported XSD constructs:
 
 Unsupported constructs are reported as notes on `stderr` rather than causing a failure; the generator produces the best output it can for the rest of the schema.
 
-**Not supported (out of scope, possible for 2.0):**
+**Not supported (out of scope):**
 - `xs:union` - no C++ type mapping without boxing
 - `xs:import` - cross-namespace schema merging requires a resolver not in scope
 - `xs:complexContent restriction` - high complexity, rare in practice
@@ -416,6 +419,22 @@ Unsupported constructs are reported as notes on `stderr` rather than causing a f
 - External entity resolution - requires file I/O, incompatible with the zero-copy design
 
 Built with `LIGHTNINGXML_BUILD_CODEGEN` (on by default).
+
+### Constraint Validation
+
+When types carry XSD constraints, `xsdgen` emits `xmlight::XmlConstraints<T>` specializations alongside the metadata. Call `xmlight::validate()` after deserialization:
+
+```cpp
+MyType obj;
+xmlight::deserialize(parser, "root", obj);
+if (auto err = xmlight::validate(obj)) {
+  std::cerr << "constraint violation: " << err->message << '\n';
+}
+```
+
+`xmlight::validate()` returns `std::optional<xmlight::ValidationError>` - empty when all constraints pass, or the first violation in `err->message`. Validation is **deep**: after checking the object's own `XmlConstraints`, it recurses through the declared fields into nested objects and the contents of containers, optionals, `unique_ptr`s, and variants, so validating the root covers the whole tree. This is intentionally distinct from `xmlight::ErrorCode` (parser errors) so the two failure modes can be handled independently. Types with no constraints use the default no-op specialization, which compiles away entirely.
+
+Facets on an `xs:choice` branch cannot be checked per-member (the branch lives in a `std::variant`); the generator reports these as notes instead of emitting checks.
 
 ## Building
 
@@ -446,11 +465,26 @@ Copy `include/LightningXML.hh` into your project. No build step required.
 | `LIGHTNINGXML_WITH_PUGIXML` | `OFF` | Build pugixml comparison benchmarks (fetches pugixml if not found) |
 | `LIGHTNINGXML_WITH_RAPIDXML` | `OFF` | Build RapidXML comparison benchmarks (fetches Boost, uses its bundled RapidXML) |
 | `LIGHTNINGXML_WITH_LIBXML2` | `OFF` | Build libxml2 comparison benchmarks (fetches libxml2 if not found) |
+| `LIGHTNINGXML_ENABLE_SANITIZERS` | `OFF` | Enable AddressSanitizer and UndefinedBehaviorSanitizer |
+| `LIGHTNINGXML_ENABLE_UNITY_BUILD` | `ON` | Compile executables as unity builds |
+| `LIGHTNINGXML_ENABLE_LTO` | `ON` | Enable link-time optimization (IPO) for executables |
+
 
 ### As a CMake Subdirectory
 
 ```cmake
 add_subdirectory(LightningXML)
+target_link_libraries(my_target PRIVATE LightningXML::lightningxml)
+```
+
+### As an Installed Package
+
+```bash
+cmake --install build --prefix /your/prefix   # header, xsdgen, CMake package config
+```
+
+```cmake
+find_package(LightningXML 1.0 REQUIRED)
 target_link_libraries(my_target PRIVATE LightningXML::lightningxml)
 ```
 

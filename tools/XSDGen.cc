@@ -62,7 +62,7 @@ auto main(int argc, char** argv) -> int {
 
   const std::string base_dir = dirOf(input);
   xsd::Options opts;
-  opts.loader = [&](std::string_view loc) -> std::optional<std::string> {
+  opts.loader = [&base_dir](std::string_view loc) -> std::optional<std::string> {
     const std::string path = base_dir + "/" + std::string{loc};
     std::string content;
     if (!readFile(path, content)) {

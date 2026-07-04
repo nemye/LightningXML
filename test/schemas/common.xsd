@@ -1,0 +1,38 @@
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:include schemaLocation="base.xsd"/>
+  <xs:simpleType name="Color">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="red"/>
+      <xs:enumeration value="green"/>
+      <xs:enumeration value="blue"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="Sku">
+    <xs:restriction base="xs:string">
+      <xs:minLength value="3"/>
+      <xs:maxLength value="8"/>
+      <xs:pattern value="[A-Z0-9]+"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:attributeGroup name="Audited">
+    <xs:attribute name="rev" type="xs:string" default="r1"/>
+    <xs:attribute name="state">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="draft"/>
+          <xs:enumeration value="released"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:attributeGroup>
+  <xs:group name="MetaGroup">
+    <xs:sequence>
+      <xs:element name="note" type="xs:string" minOccurs="0"/>
+      <xs:element name="audit">
+        <xs:complexType>
+          <xs:sequence><xs:element name="who" type="xs:string"/></xs:sequence>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:group>
+</xs:schema>
