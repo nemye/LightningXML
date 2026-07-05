@@ -19,10 +19,17 @@
 ///     - "]]>" rejection in character data (sec 2.4)
 ///     - '<' rejection in attribute values (sec 3.1 WFC)
 ///     - Duplicate-attribute detection (sec 3.1 WFC)
+///     - Forbidden control bytes (sec 2.2, Production [2]) rejected in
+///       character data, CDATA, attribute values, comments, and PIs
 ///
 /// Deliberately not implemented (design trade-offs):
 ///   - DTD processing (sec 2.8, 3.2-3.4) -- DOCTYPE is skipped, not interpreted
 ///   - External entity resolution (sec 4.4) -- requires file I/O
+///   - Encoding-level validation (sec 2.2, 4.3.3) -- multi-byte UTF-8 passes
+///     through unchecked on every parser; the basic and normalizing parsers
+///     also pass raw control bytes through (character references are always
+///     validated). Skipped constructs (DOCTYPE, unmapped subtrees) are
+///     scanned structurally, not validated.
 /// @link https://www.w3.org/TR/2008/REC-xml-20081126/
 
 #include <gtest/gtest.h>
@@ -185,18 +192,77 @@ TEST_F(Sec22Characters, LegalWhitespaceInContent) {
   EXPECT_FALSE(leaf.text.empty());
 }
 
-/// NUL byte (#x0) is illegal in XML content. The parser should either
-/// reject it or stop before it. (Char production excludes #x0.)
-TEST_F(Sec22Characters, NulByteInContent) {
+/// NUL (#x0) is outside the Char production. On the basic and normalizing
+/// parsers raw byte validation is a documented design trade-off (see file
+/// header): text passes through unchecked, so the document is accepted and
+/// the NUL preserved. StrictParser rejects it (see
+/// StrictRejectsForbiddenControlBytes).
+TEST_F(Sec22Characters, NulByteInContentPassedThrough) {
   std::string src = "<r><v>ab";
   src.push_back('\0');
   src += "cd</v></r>";
-  xmlight::Parser p{src};
-  Leaf leaf;
-  // The parser may accept the doc but truncate at the NUL (memchr-based
-  // scanning), or it may reject it. Either behaviour should not crash.
-  std::ignore = xmlight::deserialize(p, "r", leaf);
-  // No crash is the assertion.
+  {
+    xmlight::Parser p{src};
+    Leaf leaf;
+    ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+    EXPECT_EQ(leaf.text.size(), 5U);  // "ab\0cd", NUL included
+  }
+  {
+    xmlight::NormalizingParser p{src};
+    OwnedLeaf leaf;
+    ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+    EXPECT_EQ(leaf.text.size(), 5U);
+  }
+}
+
+/// Production [2] Char excludes controls below #x20 other than tab, LF, and
+/// CR. StrictParser reports them as fatal in every tokenized context:
+/// character data (both the close-tag fast path and mixed content), CDATA,
+/// attribute values, comments, and PI data.
+TEST_F(Sec22Characters, StrictRejectsForbiddenControlBytes) {
+  const std::vector<std::string> bad = {
+      std::string("<r><v>a\x01"
+                  "b</v></r>"),                         // text, fast path
+      std::string("<r><v>a") + '\0' + "b</v></r>",      // NUL in text
+      std::string("<r><v>a\x02y<!-- c --></v></r>"),    // text, tokenized run
+      std::string("<r><v><![CDATA[a\x03z]]></v></r>"),  // CDATA content
+      std::string("<r x=\"a\x04\"><v>t</v></r>"),       // attribute value
+      std::string("<r><!-- bad \x05 --><v>t</v></r>"),  // comment content
+      std::string("<r><?pi bad \x06 ?><v>t</v></r>"),   // PI data
+      // Long run: the control byte sits inside a 16-byte word-scan chunk.
+      "<r><v>" + std::string(20, 'a') + '\x07' + std::string(20, 'b') + "</v></r>",
+      // 8..15-byte run with the control byte inside the single-word step.
+      std::string("<r><v>ab\x0B"
+                  "cdefghij</v></r>"),
+  };
+  for (const std::string& src : bad) {
+    xmlight::StrictParser sp{src};
+    OwnedLeaf leaf;
+    EXPECT_FALSE(xmlight::deserialize(sp, "r", leaf)) << src;
+    EXPECT_EQ(sp.errorCode(), xmlight::ErrorCode::ForbiddenControlChar) << src;
+  }
+}
+
+/// Tab, LF, and CR are the legal sub-#x20 characters, and DEL (#x7F) is
+/// within the Char range; none of them trip the strict scan.
+TEST_F(Sec22Characters, StrictAllowsLegalControlCharacters) {
+  {
+    const std::string src = "<r x=\"a\tb\"><v>l1\r\nl2\x7F</v><!-- \t\r\n --><?pi \t?></r>";
+    xmlight::StrictParser sp{src};
+    OwnedLeaf leaf;
+    ASSERT_TRUE(xmlight::deserialize(sp, "r", leaf));
+    EXPECT_EQ(leaf.text, "l1\nl2\x7F");
+  }
+  {
+    // A clean run past the 16-byte word-scan chunks, with legal tab/LF mixed
+    // in past the first chunk.
+    const std::string text = std::string(20, 'a') + "\t" + std::string(20, 'b') + "\n";
+    const std::string src = "<r><v>" + text + "</v></r>";
+    xmlight::StrictParser sp{src};
+    OwnedLeaf leaf;
+    ASSERT_TRUE(xmlight::deserialize(sp, "r", leaf));
+    EXPECT_EQ(leaf.text, text);
+  }
 }
 
 /// Valid multi-byte UTF-8 characters in element names and content.
@@ -293,7 +359,7 @@ class Sec24CharData : public ::testing::Test {};
 ///
 /// StrictParser enforces this; the default Parser opts out of the extra text
 /// scan for speed and accepts it.
-TEST_F(Sec24CharData, CDataEndDelimiterInTextShouldFail) {
+TEST_F(Sec24CharData, CDataEndDelimiterInTextStrictFails) {
   const std::string_view src = R"(<r><v>bad ]]> text</v></r>)";
 
   xmlight::StrictParser sp{src};
@@ -382,7 +448,7 @@ TEST_F(Sec25Comments, EmptyComment) {
 ///
 /// LightningXML enforces this WFC: the comment scan rejects any interior "--"
 /// (the first "--" must begin the "-->" terminator).
-TEST_F(Sec25Comments, DoubleHyphenInsideCommentShouldFail) {
+TEST_F(Sec25Comments, DoubleHyphenInsideCommentFails) {
   const std::string_view src = R"(<!-- bad -- comment --><r><v>ok</v></r>)";
   xmlight::Parser p{src};
   Leaf leaf;
@@ -392,7 +458,7 @@ TEST_F(Sec25Comments, DoubleHyphenInsideCommentShouldFail) {
 
 /// Comment ending with "--->" is ill-formed: the content's trailing '-' is
 /// adjacent to the terminator's leading '-', forming a forbidden "--".
-TEST_F(Sec25Comments, CommentEndingWithTripleHyphenShouldFail) {
+TEST_F(Sec25Comments, CommentEndingWithTripleHyphenFails) {
   const std::string_view src = R"(<!--- bad ---><r><v>ok</v></r>)";
   xmlight::Parser p{src};
   Leaf leaf;
@@ -462,6 +528,15 @@ TEST_F(Sec26Pi, PIInProlog) {
 /// A PI between child elements is skipped.
 TEST_F(Sec26Pi, PIBetweenElements) {
   const std::string_view src = R"(<r><?proc data?><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Production [16]: the data part is optional -- "<?target?>" is legal.
+TEST_F(Sec26Pi, PIWithNoData) {
+  const std::string_view src = R"(<?proc?><r><?p2?><v>ok</v></r>)";
   xmlight::Parser p{src};
   Leaf leaf;
   ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
@@ -576,6 +651,16 @@ TEST_F(Sec28Prolog, XmlDeclarationBeforeRoot) {
 /// XML declaration with standalone="yes".
 TEST_F(Sec28Prolog, XmlDeclarationStandalone) {
   const std::string_view src = R"(<?xml version="1.0" standalone="yes"?><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Productions [24]-[26] and [32] allow single-quoted values in the XML
+/// declaration.
+TEST_F(Sec28Prolog, XmlDeclarationSingleQuotes) {
+  const std::string_view src = R"(<?xml version='1.0' encoding='UTF-8'?><r><v>ok</v></r>)";
   xmlight::Parser p{src};
   Leaf leaf;
   ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
@@ -776,6 +861,17 @@ TEST_F(Sec31Tags, EmptyElementTagWithAttrs) {
 /// Production [25]: Eq ::= S? '=' S?
 TEST_F(Sec31Tags, WhitespaceAroundEquals) {
   const std::string_view src = R"(<r x = "hello" y= "world" />)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "hello");
+  EXPECT_EQ(ao.y, "world");
+}
+
+/// Production [3]: S is any mix of #x20, #x9, #xD, #xA -- all four forms are
+/// legal between attributes, around '=', and before the tag close.
+TEST_F(Sec31Tags, WhitespaceVariantsInsideTags) {
+  const std::string src = "<r\tx\n=\r\"hello\"\r\ny\t=\t\"world\"\n/>";
   xmlight::Parser p{src};
   AttrOnly ao;
   ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
@@ -1219,17 +1315,14 @@ TEST_F(Sec5Conformance, FatalError_MissingEndTag) {
   EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedEof);
 }
 
-/// Bare '<' in text content. Per spec, '<' may only appear as part
-/// of markup. In practice LightningXML's next_from_source treats '<' as
-/// the start of markup and will attempt to parse what follows.
+/// Production [14]: '<' may only appear in content as the start of markup.
+/// A char that cannot begin markup after '<' (here a space) is a fatal error.
 TEST_F(Sec5Conformance, FatalError_BareLtInContent) {
-  // "< " is not valid markup start - is_name_start(' ') is false.
   const std::string_view src = R"(<r><v>a < b</v></r>)";
   xmlight::Parser p{src};
   Leaf leaf;
-  // The parser should either fail or produce garbled output.
-  // The key assertion is no crash.
-  std::ignore = xmlight::deserialize(p, "r", leaf);
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedCharAfterLt);
 }
 
 /// Bare '&' that doesn't form a valid entity reference.
@@ -1535,15 +1628,15 @@ TEST_F(Robustness, GarbageAfterDocument) {
   EXPECT_EQ(leaf.text, "ok");
 }
 
-// Tests for features that require the NormalizingParser opt-in:
-// entity/char-ref expansion and attribute-value normalization.
-class ConformanceGaps : public ::testing::Test {};
+// Conformance areas closed by the NormalizingParser opt-in: entity/char-ref
+// expansion and attribute-value normalization (secs 3.3.3, 4.1, 4.6).
+class OptInConformance : public ::testing::Test {};
 
 /// sec 3.3.3 - Attribute-value normalization. For CDATA-typed attributes
 /// (the default without a DTD), processors replace character/entity references,
 /// then normalize whitespace. Supported on the normalizing parser for owning
 /// std::string fields (a zero-copy std::string_view cannot hold the result).
-TEST_F(ConformanceGaps, AttrValueNormalization) {
+TEST_F(OptInConformance, AttrValueNormalization) {
   const std::string_view src = R"(<r x="a&#x20;&#x20;b"/>)";
   xmlight::NormalizingParser p{src};
   OwnedAttr ao;
@@ -1551,9 +1644,18 @@ TEST_F(ConformanceGaps, AttrValueNormalization) {
   EXPECT_EQ(ao.x, "a  b");
 }
 
+/// sec 4.6 - The predefined entities also expand inside attribute values.
+TEST_F(OptInConformance, PredefinedEntitiesInAttributeValue) {
+  const std::string_view src = R"(<r x="a&amp;b &quot;c&quot; &lt;d&gt; &apos;e&apos;"/>)";
+  xmlight::NormalizingParser p{src};
+  OwnedAttr ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, R"(a&b "c" <d> 'e')");
+}
+
 /// sec 4.6 - Predefined entity expansion. A conforming processor MUST
 /// recognize &lt; &gt; &amp; &apos; &quot; and expand them.
-TEST_F(ConformanceGaps, PredefinedEntityExpansion) {
+TEST_F(OptInConformance, PredefinedEntityExpansion) {
   const std::string_view src = R"(<r><v>&lt;hello&gt;</v></r>)";
   xmlight::NormalizingParser p{src};
   OwnedLeaf leaf;
@@ -1562,7 +1664,7 @@ TEST_F(ConformanceGaps, PredefinedEntityExpansion) {
 }
 
 /// sec 4.1 - Character reference expansion (&#nnn; / &#xhh;).
-TEST_F(ConformanceGaps, CharRefExpansion) {
+TEST_F(OptInConformance, CharRefExpansion) {
   const std::string_view src = R"(<r><v>&#65;</v></r>)";
   xmlight::NormalizingParser p{src};
   OwnedLeaf leaf;
@@ -1590,7 +1692,7 @@ struct xmlight::XmlMetadata<RawViewList> {
 
 /// sec 4.4/3.3.3 - References inside an xs:list element value are expanded
 /// before whitespace splitting on the normalizing parser.
-TEST_F(ConformanceGaps, ListElementValueIsNormalized) {
+TEST_F(OptInConformance, ListElementValueIsNormalized) {
   const std::string_view src = "<r nums='1 2'><words>&#65;B c&amp;d</words></r>";
   xmlight::NormalizingParser p{src};
   NormList list;
@@ -1602,7 +1704,7 @@ TEST_F(ConformanceGaps, ListElementValueIsNormalized) {
 
 /// sec 3.3.3 - References inside a list-valued attribute are expanded before
 /// splitting; character references can even form the list items.
-TEST_F(ConformanceGaps, ListAttributeValueIsNormalized) {
+TEST_F(OptInConformance, ListAttributeValueIsNormalized) {
   const std::string_view src = "<r nums='1 &#50; 3'><words>x</words></r>";
   xmlight::NormalizingParser p{src};
   NormList list;
@@ -1613,7 +1715,7 @@ TEST_F(ConformanceGaps, ListAttributeValueIsNormalized) {
 
 /// string_view list items stay raw zero-copy even on the normalizing parser,
 /// matching the string-field contract (a view cannot hold transformed bytes).
-TEST_F(ConformanceGaps, ListOfViewsStaysRaw) {
+TEST_F(OptInConformance, ListOfViewsStaysRaw) {
   const std::string_view src = "<r><words>a&amp;b c</words></r>";
   xmlight::NormalizingParser p{src};
   RawViewList list;
@@ -1624,7 +1726,7 @@ TEST_F(ConformanceGaps, ListOfViewsStaysRaw) {
 
 /// A bad reference inside a list value is a fatal error on the normalizing
 /// parser, consistent with string-field normalization.
-TEST_F(ConformanceGaps, ListValueBadReferenceFails) {
+TEST_F(OptInConformance, ListValueBadReferenceFails) {
   const std::string_view src = "<r><words>a &undefined; b</words></r>";
   xmlight::NormalizingParser p{src};
   NormList list;

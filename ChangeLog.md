@@ -11,6 +11,7 @@
 - date/dateTime year with 19+ digits overflowed a signed accumulator (undefined behavior)
 
 ### Added
+- `StrictParser` rejects control bytes outside the XML `Char` production in character data, CDATA, attribute values, comments, and PIs (`ErrorCode::ForbiddenControlChar`)
 - gcov coverage CI with 80% line floor
 - Tests for parser guard paths, serializer escaping, multi-byte character references, and date/time
 

@@ -82,6 +82,7 @@ enum class ErrorCode : uint8_t {
   CDataEndInContent,           ///< "]]>" appears in character data (Production [14]).
   LtInAttributeValue,          ///< '<' appears in an attribute value (Production [10]).
   DuplicateAttribute,          ///< Two attributes share a name (WFC: Unique Att Spec).
+  ForbiddenControlChar,        ///< Control byte outside the Char production [2] (strict).
 };
 
 /// @brief Returned by xmlight::validate() when an XmlConstraints check fails.
@@ -1937,6 +1938,53 @@ class BasicParser {
     return hit != nullptr ? hit : end_;
   }
 
+  // Whether [p, e) contains a control byte outside the Char production [2]
+  // (below 0x20 and not tab/LF/CR). Used only by the strict path. UTF-8 lead
+  // and continuation bytes are >= 0x80, so the byte scan cannot misfire inside
+  // a multi-byte sequence; branchless accumulation keeps it vectorizable.
+  [[nodiscard]] static auto containsForbiddenControl(const char* p,
+                                                     const char* e) noexcept -> bool {
+    static constexpr std::array<bool, 256> kForbidden = [] {
+      std::array<bool, 256> t{};
+      for (int c = 0; c < 0x20; ++c) {
+        t[static_cast<size_t>(c)] = c != '\t' && c != '\n' && c != '\r';
+      }
+      return t;
+    }();
+    const auto scan = [](const char* q, const char* qe) noexcept {
+      bool bad = false;
+      for (; q < qe; ++q) {
+        bad |= kForbidden[static_cast<unsigned char>(*q)];
+      }
+      return bad;
+    };
+    // Long runs: detect any sub-0x20 byte two words at a time and consult the
+    // table only for chunks that contain one (in real documents that is the
+    // occasional legal tab/LF/CR). Short runs and tails use the table loop,
+    // mirroring the findSpecial short/long split.
+    constexpr uint64_t SPACES = 0x2020202020202020ULL;
+    constexpr uint64_t HIGH_BITS = 0x8080808080808080ULL;
+    for (; e - p >= 16; p += 16) {
+      uint64_t lo = 0;
+      uint64_t hi = 0;
+      std::memcpy(&lo, p, sizeof(lo));
+      std::memcpy(&hi, p + 8, sizeof(hi));
+      const uint64_t flags = ((lo - SPACES) & ~lo) | ((hi - SPACES) & ~hi);
+      if ((flags & HIGH_BITS) != 0 && scan(p, p + 16)) {
+        return true;
+      }
+    }
+    if (e - p >= 8) {
+      uint64_t v = 0;
+      std::memcpy(&v, p, sizeof(v));
+      if (((v - SPACES) & ~v & HIGH_BITS) != 0 && scan(p, p + 8)) {
+        return true;
+      }
+      p += 8;
+    }
+    return scan(p, e);
+  }
+
   // Whether [p, e) contains the CDATA-close delimiter "]]>". Used only by the
   // strict path (Production [14] forbids it in character data); memchr-driven
   // so the scan is fast when the parser opts into the check.
@@ -2007,6 +2055,11 @@ class BasicParser {
         break;  // "--" at end of input: unterminated
       }
       if (hit[2] == '>') {
+        if constexpr (STRICT) {
+          if (containsForbiddenControl(start, hit)) {
+            return makeError(token, ErrorCode::ForbiddenControlChar);
+          }
+        }
         token.data = {start, static_cast<size_t>(hit - start)};
         cur_ = hit + 3;
         return true;
@@ -2019,7 +2072,15 @@ class BasicParser {
 
   auto parseCdata(Token& token) -> bool {
     token.type = TokenType::CData;
-    return scanToDelimiter(token, "]]>", ErrorCode::UnterminatedCData);
+    if (!scanToDelimiter(token, "]]>", ErrorCode::UnterminatedCData)) {
+      return false;
+    }
+    if constexpr (STRICT) {
+      if (containsForbiddenControl(token.data.data(), token.data.data() + token.data.size())) {
+        return makeError(token, ErrorCode::ForbiddenControlChar);
+      }
+    }
+    return true;
   }
 
   auto parsePi(Token& token) -> bool {
@@ -2040,7 +2101,15 @@ class BasicParser {
       token.type = TokenType::ProcessingInstruction;
     }
     skipWhitespace();
-    return scanToDelimiter(token, "?>", ErrorCode::UnterminatedPi);
+    if (!scanToDelimiter(token, "?>", ErrorCode::UnterminatedPi)) {
+      return false;
+    }
+    if constexpr (STRICT) {
+      if (containsForbiddenControl(token.data.data(), token.data.data() + token.data.size())) {
+        return makeError(token, ErrorCode::ForbiddenControlChar);
+      }
+    }
+    return true;
   }
 
   // True for a case-insensitive but not-exactly-lowercase match of "xml".
@@ -2316,6 +2385,9 @@ inline auto BasicParser<Opts>::nextFromSource(Token& token) -> bool {
     if (containsCdataEnd(start, cur_)) {
       return makeError(token, ErrorCode::CDataEndInContent);
     }
+    if (containsForbiddenControl(start, cur_)) {
+      return makeError(token, ErrorCode::ForbiddenControlChar);
+    }
   }
   token.type = TokenType::Text;
   token.data = {start, static_cast<size_t>(cur_ - start)};
@@ -2438,6 +2510,9 @@ inline auto BasicParser<Opts>::parseAttributes(bool& self_closing) -> bool {
       // over the value; a '<' beyond val_end belongs to later markup.
       if (findByte(val_start, '<') < val_end) {
         return fail(ErrorCode::LtInAttributeValue);
+      }
+      if (containsForbiddenControl(val_start, val_end)) {
+        return fail(ErrorCode::ForbiddenControlChar);
       }
     }
     a.value = {val_start, static_cast<size_t>(val_end - val_start)};
@@ -2712,6 +2787,9 @@ inline auto BasicParser<Opts>::readElement(std::string_view expected_name, T& ou
         if constexpr (STRICT) {
           if (containsCdataEnd(cur_, found)) {
             return fail(ErrorCode::CDataEndInContent);
+          }
+          if (containsForbiddenControl(cur_, found)) {
+            return fail(ErrorCode::ForbiddenControlChar);
           }
         }
         cur_ = past_close;

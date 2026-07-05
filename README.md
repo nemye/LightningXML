@@ -19,7 +19,7 @@ Benchmarked against [pugixml](https://pugixml.org/), [RapidXML](https://rapidxml
 | Large (10K users) | **2.77 GB/s** | 2.28 GB/s | 311 MB/s | 194 MB/s | 340 MB/s | 60 MB/s | 172 MB/s |
 | Org (nested, ~400 members) | **1.58 GB/s** | 1.42 GB/s | 785 MB/s | 821 MB/s | 966 MB/s | 135 MB/s | 158 MB/s |
 | Tree (depth 14, binary) | **737 MB/s** | 736 MB/s | 300 MB/s | 113 MB/s | 112 MB/s | 115 MB/s | 118 MB/s |
-| Comment-heavy (skipped bytes) | **10.95 GB/s** | 9.46 GB/s | 2.87 GB/s | 2.58 GB/s | 3.25 GB/s | 506 MB/s | 590 MB/s |
+| Comment-heavy (skipped bytes) | **10.95 GB/s** | 7.25 GB/s | 2.87 GB/s | 2.58 GB/s | 3.25 GB/s | 506 MB/s | 590 MB/s |
 | Catalog (12 books, owning strings) | **2.22 GB/s** | 1.84 GB/s | 1.33 GB/s | 1.15 GB/s | 1.54 GB/s | 190 MB/s | 215 MB/s |
 
 Column descriptions, ordered from lower to higher feature sets:

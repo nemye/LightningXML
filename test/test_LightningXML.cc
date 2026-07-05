@@ -274,8 +274,8 @@ TEST_F(LightningBasicTests, SelfClosingTagWithAttributes) {
   EXPECT_TRUE(users.items[0].name.empty());
 }
 
-/// @brief Unbound content between mapped fields — stray text, comments, and
-/// CDATA — is ignored without disrupting deserialization.
+/// @brief Unbound content between mapped fields - stray text, comments, and
+/// CDATA - is ignored without disrupting deserialization.
 TEST_F(LightningBasicTests, IgnoresUnmappedInterleavedContent) {
   struct Case {
     std::string_view src;
@@ -440,9 +440,9 @@ TEST_F(LightningBasicTests, IgnoresTrailingDocumentContent) {
   EXPECT_EQ(person.name, "Alice");
 }
 
-/// @brief Unknown subtrees — deep nesting, and content with quoted '>' and
+/// @brief Unknown subtrees - deep nesting, and content with quoted '>' and
 /// "/>" in attribute values, comments and CDATA with markup-like content,
-/// PIs, and self-closing tags — must be skipped without desyncing the parse.
+/// PIs, and self-closing tags - must be skipped without desyncing the parse.
 TEST_F(LightningBasicTests, SkipsUnknownSubtrees) {
   for (const std::string_view xml_src :
        {std::string_view("<person>\n  <name>Alice</name>\n  <unknown>\n    <a>\n      <b>\n"
