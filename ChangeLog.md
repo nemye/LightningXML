@@ -10,6 +10,10 @@
 ### Fixed
 - date/dateTime year with 19+ digits overflowed a signed accumulator (undefined behavior)
 
+### Added
+- gcov coverage CI with 80% line floor
+- Tests for parser guard paths, serializer escaping, multi-byte character references, and date/time
+
 ## 1.1.0 - 2026-07-02
 
 ### Changed

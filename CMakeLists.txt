@@ -18,8 +18,25 @@ option(LIGHTNINGXML_WITH_PUGIXML       "Build pugixml comparison benchmarks"    
 option(LIGHTNINGXML_WITH_RAPIDXML      "Build RapidXML comparison benchmarks (via Boost)"       OFF)
 option(LIGHTNINGXML_WITH_LIBXML2       "Build libxml2 comparison benchmarks"                    OFF)
 option(LIGHTNINGXML_ENABLE_SANITIZERS  "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(LIGHTNINGXML_ENABLE_COVERAGE    "Enable gcov coverage instrumentation"                   OFF)
 option(LIGHTNINGXML_ENABLE_UNITY_BUILD "Compile executables as unity builds"                    ON)
 option(LIGHTNINGXML_ENABLE_LTO         "Enable link-time optimization (IPO) for executables"    ON)
+
+# Coverage wants unoptimized, non-LTO
+if(LIGHTNINGXML_ENABLE_COVERAGE)
+    message(STATUS "LightningXML: coverage instrumentation enabled")
+    set(LIGHTNINGXML_ENABLE_UNITY_BUILD OFF)
+    set(LIGHTNINGXML_ENABLE_LTO OFF)
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        add_compile_options(--coverage)
+        add_link_options(--coverage)
+    else()
+        message(FATAL_ERROR
+            "Coverage is only supported for GCC/Clang"
+        )
+    endif()
+endif()
 
 if(LIGHTNINGXML_ENABLE_LTO)
     include(CheckIPOSupported)

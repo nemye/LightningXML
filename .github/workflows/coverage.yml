@@ -1,0 +1,95 @@
+name: Coverage
+
+on:
+  push:
+    branches:
+      - "**"
+
+  pull_request:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+jobs:
+
+  gcov:
+    name: gcov
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            g++ \
+            ninja-build
+          pipx install gcovr
+
+      # The compiler is pinned to g++ so the .gcno/.gcda data matches the
+      # GNU gcov that gcovr invokes (a Clang default would emit LLVM's format).
+      - name: Configure coverage build
+        run: |
+          cmake \
+            -S . \
+            -B build-coverage \
+            -G Ninja \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DLIGHTNINGXML_BUILD_TESTS=ON \
+            -DLIGHTNINGXML_BUILD_BENCHMARKS=OFF \
+            -DLIGHTNINGXML_BUILD_CODEGEN=ON \
+            -DLIGHTNINGXML_ENABLE_COVERAGE=ON \
+            -DLIGHTNINGXML_ENABLE_UNITY_BUILD=OFF \
+            -DLIGHTNINGXML_ENABLE_LTO=OFF
+
+      - name: Build tests
+        run: |
+          cmake --build build-coverage
+
+      # xsdgen runs during the build to generate the kitchensink test header
+      # and would otherwise count toward coverage; only the tests should.
+      - name: Zero coverage counters
+        run: |
+          find build-coverage -name '*.gcda' -delete
+
+      - name: Run tests
+        run: |
+          ctest \
+            --test-dir build-coverage \
+            --output-on-failure
+
+      # XSDGen.cc is the xsdgen CLI entry point; unit tests never execute it,
+      # so it would only dilute the metric. --merge-lines folds template
+      # instantiations together: a line counts as covered when any
+      # instantiation executes it (without it, every XmlMetadata type
+      # re-counts the whole parser).
+      - name: Report coverage
+        run: |
+          mkdir -p coverage
+          gcovr \
+            --root . \
+            --filter include/ \
+            --filter tools/ \
+            --exclude tools/XSDGen.cc \
+            --exclude-throw-branches \
+            --merge-lines \
+            --fail-under-line 80 \
+            --print-summary \
+            --txt coverage/coverage.txt \
+            --xml coverage/coverage.xml \
+            --html-details coverage/coverage.html \
+            --markdown coverage/coverage.md \
+            build-coverage
+          cat coverage/coverage.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/

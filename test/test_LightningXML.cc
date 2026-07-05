@@ -2835,3 +2835,277 @@ TEST_F(LightningBasicTests, ValidatePassesWhenAllNestedValid) {
   o.parent = std::make_unique<ValOrder>();
   EXPECT_FALSE(xmlight::validate(o).has_value());
 }
+
+// Date/time lexical forms (XSD 3.2.9-3.2.11 reject cases)
+
+TEST_F(LightningBasicTests, DateLexicalRejects) {
+  xmlight::Date d{};
+  for (const std::string_view bad :
+       {"2026-06-1", "2026-0a-01", "202-01-01", "111111111111111111111-01-01", "2026-06",
+        "2026-00-01", "2026-06-00", "2026-06-32", "2026-06x18", "99999", "2026-06-18x",
+        "2026-06-18Zx", "2026-06-18+5:00", "2026-06-18+15:00", "2026-06-18-"}) {
+    EXPECT_FALSE(xmlight::XmlValueTraits<xmlight::Date>::parse(bad, d)) << bad;
+  }
+}
+
+TEST_F(LightningBasicTests, DateNegativeYearRoundTrip) {
+  xmlight::Date d{};
+  ASSERT_TRUE(xmlight::XmlValueTraits<xmlight::Date>::parse("-0044-03-15", d));
+  EXPECT_EQ(d, (xmlight::Date{-44, 3, 15}));
+  std::string out;
+  xmlight::XmlValueTraits<xmlight::Date>::format(out, d);
+  EXPECT_EQ(out, "-0044-03-15");
+}
+
+TEST_F(LightningBasicTests, TimeLexicalRejects) {
+  xmlight::Time t{};
+  for (const std::string_view bad : {"25:00:00", "24:00:01", "24:01:00", "24:00:00.5", "12:60:00",
+                                     "12:00:61", "12:00", "12x00:00", "12:0a:00", "12:00x00",
+                                     "12:00:0a", "12:00:00.", "12:00:00+05:60", "12:00:00+0500"}) {
+    EXPECT_FALSE(xmlight::XmlValueTraits<xmlight::Time>::parse(bad, t)) << bad;
+  }
+  // 24:00:00 is the one legal hour-24 form.
+  EXPECT_TRUE(xmlight::XmlValueTraits<xmlight::Time>::parse("24:00:00", t));
+}
+
+TEST_F(LightningBasicTests, TimeFractionTruncatesBeyondNanoseconds) {
+  xmlight::Time t{};
+  ASSERT_TRUE(xmlight::XmlValueTraits<xmlight::Time>::parse("12:00:00.1234567890123", t));
+  EXPECT_EQ(t.nanosecond, 123456789U);
+}
+
+TEST_F(LightningBasicTests, TimeNegativeTimezoneRoundTrip) {
+  xmlight::Time t{};
+  ASSERT_TRUE(xmlight::XmlValueTraits<xmlight::Time>::parse("23:30:00-05:30", t));
+  EXPECT_EQ(t.tz, std::chrono::minutes{-330});
+  std::string out;
+  xmlight::XmlValueTraits<xmlight::Time>::format(out, t);
+  EXPECT_EQ(out, "23:30:00-05:30");
+}
+
+TEST_F(LightningBasicTests, DateTimeLexicalRejects) {
+  xmlight::DateTime dt{};
+  for (const std::string_view bad : {"2026-06-18 09:30:00", "2026-06-18T09:30:00+15:00"}) {
+    EXPECT_FALSE(xmlight::XmlValueTraits<xmlight::DateTime>::parse(bad, dt)) << bad;
+  }
+}
+
+TEST_F(LightningBasicTests, DateTimeWithoutTimezoneTreatedAsUtc) {
+  xmlight::DateTime dt{};
+  ASSERT_TRUE(xmlight::XmlValueTraits<xmlight::DateTime>::parse("2026-06-18T09:30:00", dt));
+  EXPECT_FALSE(dt.time.tz.has_value());
+  EXPECT_EQ(dt.toSysTime(), std::chrono::sys_days{std::chrono::year{2026} / 6 / 18} +
+                                std::chrono::hours{9} + std::chrono::minutes{30});
+}
+
+// Serializer escaping
+
+TEST_F(LightningBasicTests, SerializerEscapesAngleBracketsAndQuotes) {
+  OwnedUser u;
+  u.id = 7;
+  u.role = R"(a"b<c&d)";
+  u.name = R"(w<x>y&z"q)";
+  const std::string out = xmlight::serialize<false>("U", u);
+  EXPECT_EQ(out, R"(<U id="7" role="a&quot;b&lt;c&amp;d"><Name>w&lt;x&gt;y&amp;z"q</Name></U>)");
+}
+
+TEST_F(LightningBasicTests, SerializerEscapesLongRuns) {
+  OwnedUser u;
+  u.id = 1;
+  u.role = std::string(40, 'a') + '"' + std::string(10, 'b');
+  u.name = std::string(40, 'A') + "<mid>" + std::string(40, 'B');
+  const std::string out = xmlight::serialize<false>("U", u);
+  EXPECT_EQ(out, R"(<U id="1" role=")" + std::string(40, 'a') + "&quot;" + std::string(10, 'b') +
+                     R"("><Name>)" + std::string(40, 'A') + "&lt;mid&gt;" + std::string(40, 'B') +
+                     "</Name></U>");
+}
+
+TEST_F(LightningBasicTests, SerializerLongTagNameRoundTrip) {
+  const std::string tag(70, 'T');
+  Person person;
+  person.name = "n";
+  person.age = 1;
+  const std::string out = xmlight::serialize<false>(tag, person);
+  EXPECT_TRUE(out.starts_with("<" + tag + ">"));
+  EXPECT_TRUE(out.ends_with("</" + tag + ">"));
+  xmlight::Parser p{out};
+  Person back;
+  ASSERT_TRUE(xmlight::deserialize(p, tag, back));
+  EXPECT_EQ(back.name, "n");
+}
+
+// Parser guard paths
+
+TEST_F(LightningBasicTests, SelfClosingNumericLeafFails) {
+  const std::string_view src =
+      R"(<Toggle enabled="true"><active/><verbose>true</verbose></Toggle>)";
+  xmlight::Parser p{src};
+  Toggle t;
+  EXPECT_FALSE(xmlight::deserialize(p, "Toggle", t));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::InvalidNumericValue);
+}
+
+TEST_F(LightningBasicTests, ValueFieldSelfClosingNumericFails) {
+  const std::string_view src = R"(<Invoice><total currency="USD"/></Invoice>)";
+  xmlight::Parser p{src};
+  Invoice inv;
+  EXPECT_FALSE(xmlight::deserialize(p, "Invoice", inv));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::InvalidNumericValue);
+}
+
+TEST_F(LightningBasicTests, ValueFieldLonePlusSignFails) {
+  const std::string_view src = R"(<Invoice><total currency="USD">+</total></Invoice>)";
+  xmlight::Parser p{src};
+  Invoice inv;
+  EXPECT_FALSE(xmlight::deserialize(p, "Invoice", inv));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::InvalidNumericValue);
+}
+
+TEST_F(LightningBasicTests, FixedContainerBadItemFails) {
+  const std::string_view src =
+      R"(<MixedRecord id="1"><Name>n</Name><Score>oops</Score></MixedRecord>)";
+  xmlight::Parser p{src};
+  MixedRecord r;
+  EXPECT_FALSE(xmlight::deserialize(p, "MixedRecord", r));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::InvalidNumericValue);
+}
+
+TEST_F(LightningBasicTests, VariantAlternativeBadValueFails) {
+  const std::string_view src = R"(<Shape><circle r="x"/></Shape>)";
+  xmlight::Parser p{src};
+  Shape sh;
+  EXPECT_FALSE(xmlight::deserialize(p, "Shape", sh));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::InvalidNumericValue);
+}
+
+TEST_F(LightningBasicTests, StrayTextBetweenChildrenIgnored) {
+  const std::string_view src = "<person><name>n</name> stray <age>3</age> tail </person>";
+  xmlight::Parser p{src};
+  Person person;
+  ASSERT_TRUE(xmlight::deserialize(p, "person", person));
+  EXPECT_EQ(person.name, "n");
+  EXPECT_EQ(person.age, 3);
+}
+
+TEST_F(LightningBasicTests, ListAttributeBadReferenceFails) {
+  const std::string_view src = R"(<ListRec tags="a &bogus; b"/>)";
+  xmlight::NormalizingParser p{src};
+  ListRec r;
+  EXPECT_FALSE(xmlight::deserialize(p, "ListRec", r));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UndefinedEntity);
+}
+
+// skipElement: unknown subtrees with declarations, truncation, or bad markup
+
+TEST_F(LightningBasicTests, SkipsUnknownSubtreeWithMarkupDecl) {
+  const std::string_view src = R"(<person><unknown><!ENTITY e "v"><a/></unknown>)"
+                               R"(<name>n</name><age>1</age></person>)";
+  xmlight::Parser p{src};
+  Person person;
+  ASSERT_TRUE(xmlight::deserialize(p, "person", person));
+  EXPECT_EQ(person.name, "n");
+}
+
+TEST_F(LightningBasicTests, TruncatedUnknownSubtreeVariantsFail) {
+  for (const std::string_view src :
+       {std::string_view(R"(<person><unknown><a></a)"),   // cut inside an end-tag
+        std::string_view(R"(<person><unknown><a b="c)"),  // cut inside a quoted value
+        std::string_view(R"(<person><unknown><a b)"),     // cut inside a start-tag
+        std::string_view(R"(<person><unknown>x<)")}) {    // cut right after '<'
+    xmlight::Parser p{src};
+    Person person;
+    EXPECT_FALSE(xmlight::deserialize(p, "person", person)) << src;
+  }
+}
+
+TEST_F(LightningBasicTests, MalformedMarkupInUnknownSubtreeFails) {
+  const std::string_view src = R"(<person><unknown><$oops/></unknown><name>n</name></person>)";
+  xmlight::Parser p{src};
+  Person person;
+  EXPECT_FALSE(xmlight::deserialize(p, "person", person));
+}
+
+TEST_F(LightningBasicTests, TruncatedOrMalformedAtHintedElementFails) {
+  for (const std::string_view src :
+       {std::string_view(R"(<person><name)"),      // too short for the fast-path match
+        std::string_view(R"(<person><name/x)"),    // '/' not followed by '>'
+        std::string_view(R"(<person><name/)")}) {  // '/' at end of input
+    xmlight::Parser p{src};
+    Person person;
+    EXPECT_FALSE(xmlight::deserialize(p, "person", person)) << src;
+  }
+}
+
+TEST_F(LightningBasicTests, SiblingNameSharingMappedPrefixSkipped) {
+  const std::string_view src = R"(<person><namex>j</namex><name>n</name><age>2</age></person>)";
+  xmlight::Parser p{src};
+  Person person;
+  ASSERT_TRUE(xmlight::deserialize(p, "person", person));
+  EXPECT_EQ(person.name, "n");
+  EXPECT_EQ(person.age, 2);
+}
+
+TEST_F(LightningBasicTests, NestedObjectCloseMismatchFails) {
+  const std::string_view src =
+      R"(<person><name>n</name><age>1</age><address><street>s</street></wrong></person>)";
+  xmlight::Parser p{src};
+  Person person;
+  EXPECT_FALSE(xmlight::deserialize(p, "person", person));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ElementMismatch);
+}
+
+TEST_F(LightningBasicTests, SerializerOptionalAttributePresentAndAbsent) {
+  RobOptAttr o{};
+  EXPECT_EQ(xmlight::serialize<false>("RobOptAttr", o), "<RobOptAttr/>");
+  o.n = 42;
+  EXPECT_EQ(xmlight::serialize<false>("RobOptAttr", o), R"(<RobOptAttr n="42"/>)");
+}
+
+TEST_F(LightningBasicTests, ListElementNormalizedReferences) {
+  {
+    xmlight::NormalizingParser p{R"(<ListRec tags="a&amp;b c"><dims>1 2</dims></ListRec>)"};
+    ListRec r;
+    ASSERT_TRUE(xmlight::deserialize(p, "ListRec", r));
+    EXPECT_EQ(r.tags, (std::vector<std::string>{"a&b", "c"}));
+    EXPECT_EQ(r.dims, (std::vector<int>{1, 2}));
+  }
+  {
+    xmlight::NormalizingParser p{R"(<ListRec><dims>1&bogus;2</dims></ListRec>)"};
+    ListRec r;
+    EXPECT_FALSE(xmlight::deserialize(p, "ListRec", r));
+    EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UndefinedEntity);
+  }
+}
+
+// Non-required value field: empty text leaves the member empty and the
+// element still parses.
+struct NoteVal {
+  std::string text;
+};
+template<>
+struct xmlight::XmlMetadata<NoteVal> {
+  static constexpr auto fields = std::make_tuple(xmlight::valueField(&NoteVal::text));
+};
+
+TEST_F(LightningBasicTests, ValueFieldOptionalEmptyText) {
+  xmlight::Parser p{"<note></note>"};
+  NoteVal note;
+  ASSERT_TRUE(xmlight::deserialize(p, "note", note));
+  EXPECT_TRUE(note.text.empty());
+}
+
+TEST_F(LightningBasicTests, SerializerUnmappedEnumEmitsEmptyText) {
+  // Documented XmlEnumTraits contract: an enumerator with no table entry
+  // serializes as empty text.
+  ListRec r;
+  r.grades = {static_cast<Grade>(9)};
+  EXPECT_EQ(xmlight::serialize<false>("ListRec", r),
+            R"(<ListRec tags=""><dims></dims><fixed>0 0 0</fixed><grades></grades></ListRec>)");
+}
+
+TEST_F(LightningBasicTests, TruncatedListElementFails) {
+  xmlight::Parser p{R"(<ListRec><dims>1)"};
+  ListRec r;
+  EXPECT_FALSE(xmlight::deserialize(p, "ListRec", r));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedEof);
+}
