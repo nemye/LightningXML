@@ -1,6 +1,5 @@
 /bin
-/build
-/build-coverage
+/build*
 /coverage
 /.vscode
 /install

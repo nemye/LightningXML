@@ -733,7 +733,7 @@ TEST_F(Sec28Prolog, DoctypeEdgeCases) {
 /// A partial BOM is not stripped; the bytes are treated as (skippable, since
 /// they precede the root) character data.
 TEST_F(Sec28Prolog, PartialBomNotStripped) {
-  for (const std::string src :
+  for (const std::string& src :
        {std::string("\xEF\xBBx<r><v>ok</v></r>"), std::string("\xEFx<r><v>ok</v></r>")}) {
     xmlight::Parser p{src};
     Leaf leaf;

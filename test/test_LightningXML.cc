@@ -76,7 +76,7 @@ TEST_F(LightningBasicTests, MissingFieldsRetainDefaults) {
 /// @brief Malformed, truncated, or mismatched documents fail cleanly with the
 /// error code specific to the defect.
 TEST_F(LightningBasicTests, MalformedDocumentsFail) {
-  constexpr std::pair<std::string_view, xmlight::ErrorCode> CASES[] = {
+  constexpr auto CASES = std::to_array<std::pair<std::string_view, xmlight::ErrorCode>>({
       {R"(<person><name>Dave</name>)", xmlight::ErrorCode::UnexpectedEof},
       {"", xmlight::ErrorCode::RootElementNotFound},
       {R"(<alien><name>Zorg</name></alien>)", xmlight::ErrorCode::RootElementNotFound},
@@ -95,7 +95,7 @@ TEST_F(LightningBasicTests, MalformedDocumentsFail) {
        xmlight::ErrorCode::ExpectedAttributeName},
       // Truncated close tag on the primitive fast path: `</name` with no `>`.
       {"<person><name>Alice</name", xmlight::ErrorCode::ExpectedCloseTagEnd},
-  };
+  });
   for (const auto& [src, code] : CASES) {
     xmlight::Parser parser{src};
     Person person;
@@ -282,7 +282,7 @@ TEST_F(LightningBasicTests, IgnoresUnmappedInterleavedContent) {
     std::string_view name;
     int age;
   };
-  constexpr Case CASES[] = {
+  constexpr auto CASES = std::to_array<Case>({
       {"<person>\n  Some raw text that shouldn't break the parser.\n  <name>Mixer</name>\n"
        "  More random text.\n  <age>45</age>\n</person>",
        "Mixer", 45},
@@ -290,7 +290,7 @@ TEST_F(LightningBasicTests, IgnoresUnmappedInterleavedContent) {
        " because it's not in a mapped field ]]>\n  <age>50</age>\n  </person>",
        "Frank", 50},
       {"<person><name>n</name> stray <age>3</age> tail </person>", "n", 3},
-  };
+  });
   for (const auto& [src, name, age] : CASES) {
     xmlight::Parser parser{src};
     Person person;
@@ -474,11 +474,11 @@ TEST_F(LightningBasicTests, SkipsUnknownSubtrees) {
 /// duplicates (XML 1.0 forbids duplicate attributes, but detecting them is a
 /// documented limitation -- the document-order first match wins).
 TEST_F(LightningBasicTests, AttributeFormVariants) {
-  constexpr std::pair<std::string_view, int> CASES[] = {
+  constexpr auto CASES = std::to_array<std::pair<std::string_view, int>>({
       {R"(<Users><User id='123'></User></Users>)", 123},
       {R"(<Users><User ns:id="55"></User></Users>)", 55},
       {R"(<Users><User id="1" id="2"><Name>Bob</Name></User></Users>)", 1},
-  };
+  });
   for (const auto& [src, id] : CASES) {
     xmlight::Parser parser{src};
     Users users;
@@ -490,22 +490,22 @@ TEST_F(LightningBasicTests, AttributeFormVariants) {
 
 /// @brief Unterminated markup constructs fail with their specific error codes.
 TEST_F(LightningBasicTests, UnterminatedMarkupFails) {
-  constexpr std::pair<std::string_view, xmlight::ErrorCode> ATTR_CASES[] = {
+  constexpr auto ATTR_CASES = std::to_array<std::pair<std::string_view, xmlight::ErrorCode>>({
       {R"(<Users><User id=123></User></Users>)", xmlight::ErrorCode::ExpectedQuotedValue},
       {R"(<Users><User id="123></User></Users>)", xmlight::ErrorCode::UnterminatedAttributeValue},
-  };
+  });
   for (const auto& [src, code] : ATTR_CASES) {
     xmlight::Parser parser{src};
     Users users;
     EXPECT_FALSE(xmlight::deserialize(parser, "Users", users)) << src;
     EXPECT_EQ(parser.errorCode(), code) << src;
   }
-  constexpr std::pair<std::string_view, xmlight::ErrorCode> DECL_CASES[] = {
+  constexpr auto DECL_CASES = std::to_array<std::pair<std::string_view, xmlight::ErrorCode>>({
       {"<person>\n  <!-- broken\n  <name>Alice</name>\n</person>",
        xmlight::ErrorCode::UnterminatedComment},
       {"<person>\n  <![CDATA[broken\n</person>", xmlight::ErrorCode::UnterminatedCData},
       {R"(<?xml-stylesheet type="text/xsl"<person></person>)", xmlight::ErrorCode::UnterminatedPi},
-  };
+  });
   for (const auto& [src, code] : DECL_CASES) {
     xmlight::Parser parser{src};
     Person person;
@@ -1485,7 +1485,7 @@ TEST_F(LightningBasicTests, MissingRequiredFieldVariantsFail) {
 /// @brief Exactly kMaxAttributesPerElement attributes is accepted; one past
 /// the cap is rejected with TooManyAttributes.
 TEST_F(LightningBasicTests, MaxAttributesBoundary) {
-  const auto makeXml = [](const size_t count) {
+  const auto make_xml = [](const size_t count) {
     std::string xml = "<User";
     xml.reserve(count * 5 + 16);
     for (size_t i = 0; i < count; ++i) {
@@ -1495,13 +1495,13 @@ TEST_F(LightningBasicTests, MaxAttributesBoundary) {
     return xml;
   };
   {
-    const std::string xml = makeXml(xmlight::Parser::MAX_ATTRIBUTES_PER_ELEMENT);
+    const std::string xml = make_xml(xmlight::Parser::MAX_ATTRIBUTES_PER_ELEMENT);
     xmlight::Parser parser{xml};
     User user;
     EXPECT_TRUE(xmlight::deserialize(parser, "User", user));
   }
   {
-    const std::string xml = makeXml(xmlight::Parser::MAX_ATTRIBUTES_PER_ELEMENT + 1);
+    const std::string xml = make_xml(xmlight::Parser::MAX_ATTRIBUTES_PER_ELEMENT + 1);
     xmlight::Parser parser{xml};
     User user;
     EXPECT_FALSE(xmlight::deserialize(parser, "User", user));
@@ -1614,11 +1614,11 @@ TEST_F(LightningBasicTests, NormalizationScopeOptIn) {
 /// entities (text and attribute), malformed character references, and code
 /// points outside the XML Char production.
 TEST_F(LightningBasicTests, NormalizeBadReferencesFail) {
-  constexpr std::pair<std::string_view, xmlight::ErrorCode> TEXT_CASES[] = {
+  constexpr auto TEXT_CASES = std::to_array<std::pair<std::string_view, xmlight::ErrorCode>>({
       {R"(<NormText><v>a &bogus; b</v></NormText>)", xmlight::ErrorCode::UndefinedEntity},
       {R"(<NormText><v>&#xZZ;</v></NormText>)", xmlight::ErrorCode::InvalidCharRef},
       {R"(<NormText><v>&#0;</v></NormText>)", xmlight::ErrorCode::InvalidCharRef},
-  };
+  });
   for (const auto& [src, code] : TEXT_CASES) {
     xmlight::NormalizingParser p{src};
     NormText t;
@@ -1644,10 +1644,10 @@ TEST_F(LightningBasicTests, NormalizeBadReferencesFail) {
 /// own terminator is fine (the check runs on text, not CDATA content), and
 /// "]]" without a following '>' is well-formed.
 TEST_F(LightningBasicTests, StrictAcceptsCDataEdges) {
-  constexpr std::pair<std::string_view, std::string_view> CASES[] = {
+  constexpr auto CASES = std::to_array<std::pair<std::string_view, std::string_view>>({
       {R"(<NormText><v><![CDATA[x]]></v></NormText>)", "x"},
       {R"(<NormText><v>a ]] b</v></NormText>)", "a ]] b"},
-  };
+  });
   for (const auto& [src, want] : CASES) {
     xmlight::StrictParser p{src};
     NormText t;
@@ -2596,12 +2596,12 @@ TEST_F(LightningBasicTests, UnknownSubtreeFailureModes) {
     Person person;
     EXPECT_FALSE(xmlight::deserialize(p, "person", person)) << src;
   }
-  constexpr std::pair<std::string_view, xmlight::ErrorCode> EOF_CASES[] = {
+  constexpr auto EOF_CASES = std::to_array<std::pair<std::string_view, xmlight::ErrorCode>>({
       {R"(<person><unknown><a><b>deep)", xmlight::ErrorCode::UnexpectedEof},
       // An unterminated quote must not scan past the document end.
       {R"(<person><unknown><a attr="broken></a></unknown><name>X</name></person>)",
        xmlight::ErrorCode::UnexpectedEof},
-  };
+  });
   for (const auto& [src, code] : EOF_CASES) {
     xmlight::Parser p{src};
     Person person;
@@ -2670,6 +2670,9 @@ TEST_F(LightningBasicTests, SerializerUnmappedEnumEmitsEmptyText) {
   // Documented XmlEnumTraits contract: an enumerator with no table entry
   // serializes as empty text.
   ListRec r;
+  // The cast is intentionally out of range: an enumerator with no
+  // XmlEnumTraits entry is exactly the contract this test exercises.
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
   r.grades = {static_cast<Grade>(9)};
   EXPECT_EQ(xmlight::serialize<false>("ListRec", r),
             R"(<ListRec tags=""><dims></dims><fixed>0 0 0</fixed><grades></grades></ListRec>)");
