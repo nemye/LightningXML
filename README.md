@@ -12,11 +12,11 @@ Benchmarked against [pugixml](https://pugixml.org/), [RapidXML](https://rapidxml
 
 | Workload | LightningXML | LightningXML Strict | pugixml | RapidXML | RapidXML fast | libxml2 DOM | libxml2 reader |
 |---|---|---|---|---|---|---|---|
-| Flat (2K items, 4 fields + attr) | **3.05 GB/s** | 2.43 GB/s | 1.46 GB/s | 199 MB/s | 1.58 GB/s | 178 MB/s | 189 MB/s |
+| Flat (2K items, 4 fields + attr) | **3.05 GB/s** | 2.11 GB/s | 1.46 GB/s | 199 MB/s | 1.58 GB/s | 178 MB/s | 189 MB/s |
 | Deep (2K chains, 5 levels) | **1.53 GB/s** | 1.48 GB/s | 977 MB/s | 792 MB/s | 1.05 GB/s | 101 MB/s | 124 MB/s |
-| Attributes (2K items, 10 attrs) | **1.33 GB/s** | 1.01 GB/s | 417 MB/s | 719 MB/s | 886 MB/s | 34 MB/s | 101 MB/s |
-| Small (1 element) | **1.58 GB/s** | 1.57 GB/s | 823 MB/s | 886 MB/s | 1.13 GB/s | 68 MB/s | 76 MB/s |
-| Large (10K users) | **2.77 GB/s** | 2.28 GB/s | 311 MB/s | 194 MB/s | 340 MB/s | 60 MB/s | 172 MB/s |
+| Attributes (2K items, 10 attrs) | **1.33 GB/s** | 860 MB/s | 417 MB/s | 719 MB/s | 886 MB/s | 34 MB/s | 101 MB/s |
+| Small (1 element) | **1.58 GB/s** | 1.35 GB/s | 823 MB/s | 886 MB/s | 1.13 GB/s | 68 MB/s | 76 MB/s |
+| Large (10K users) | **2.77 GB/s** | 2.02 GB/s | 311 MB/s | 194 MB/s | 340 MB/s | 60 MB/s | 172 MB/s |
 | Org (nested, ~400 members) | **1.58 GB/s** | 1.42 GB/s | 785 MB/s | 821 MB/s | 966 MB/s | 135 MB/s | 158 MB/s |
 | Tree (depth 14, binary) | **737 MB/s** | 736 MB/s | 300 MB/s | 113 MB/s | 112 MB/s | 115 MB/s | 118 MB/s |
 | Comment-heavy (skipped bytes) | **10.95 GB/s** | 7.25 GB/s | 2.87 GB/s | 2.58 GB/s | 3.25 GB/s | 506 MB/s | 590 MB/s |
