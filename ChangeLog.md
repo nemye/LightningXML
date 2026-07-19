@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.1 - 2026-07-07
+
+### Changed
+- Public entry points (`deserialize`, `serialize`, `Serializer::write`, `valueField`, `Parser::pull`) constrained with C++20 concepts
+- Compile-time field-kind queries consolidated into variable templates (matching `FIELD_COUNT`/`FIELD_SEQ`); `optionalsNotRequired` reuses `anyFieldSatisfies`.
+- Serializer escape scanning
+
+### Fixed
+- date/dateTime year with 19+ digits overflowed a signed accumulator (undefined behavior)
+
+### Added
+- `StrictParser` rejects control bytes outside the XML `Char` production in character data, CDATA, attribute values, comments, and PIs (`ErrorCode::ForbiddenControlChar`)
+- gcov coverage CI with 80% line floor
+- Tests for parser guard paths, serializer escaping, multi-byte character references, and date/time
+
 ## 1.1.0 - 2026-07-02
 
 ### Changed

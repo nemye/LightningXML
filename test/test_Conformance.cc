@@ -19,10 +19,17 @@
 ///     - "]]>" rejection in character data (sec 2.4)
 ///     - '<' rejection in attribute values (sec 3.1 WFC)
 ///     - Duplicate-attribute detection (sec 3.1 WFC)
+///     - Forbidden control bytes (sec 2.2, Production [2]) rejected in
+///       character data, CDATA, attribute values, comments, and PIs
 ///
 /// Deliberately not implemented (design trade-offs):
 ///   - DTD processing (sec 2.8, 3.2-3.4) -- DOCTYPE is skipped, not interpreted
 ///   - External entity resolution (sec 4.4) -- requires file I/O
+///   - Encoding-level validation (sec 2.2, 4.3.3) -- multi-byte UTF-8 passes
+///     through unchecked on every parser; the basic and normalizing parsers
+///     also pass raw control bytes through (character references are always
+///     validated). Skipped constructs (DOCTYPE, unmapped subtrees) are
+///     scanned structurally, not validated.
 /// @link https://www.w3.org/TR/2008/REC-xml-20081126/
 
 #include <gtest/gtest.h>
@@ -185,18 +192,77 @@ TEST_F(Sec22Characters, LegalWhitespaceInContent) {
   EXPECT_FALSE(leaf.text.empty());
 }
 
-/// NUL byte (#x0) is illegal in XML content. The parser should either
-/// reject it or stop before it. (Char production excludes #x0.)
-TEST_F(Sec22Characters, NulByteInContent) {
+/// NUL (#x0) is outside the Char production. On the basic and normalizing
+/// parsers raw byte validation is a documented design trade-off (see file
+/// header): text passes through unchecked, so the document is accepted and
+/// the NUL preserved. StrictParser rejects it (see
+/// StrictRejectsForbiddenControlBytes).
+TEST_F(Sec22Characters, NulByteInContentPassedThrough) {
   std::string src = "<r><v>ab";
   src.push_back('\0');
   src += "cd</v></r>";
-  xmlight::Parser p{src};
-  Leaf leaf;
-  // The parser may accept the doc but truncate at the NUL (memchr-based
-  // scanning), or it may reject it. Either behaviour should not crash.
-  std::ignore = xmlight::deserialize(p, "r", leaf);
-  // No crash is the assertion.
+  {
+    xmlight::Parser p{src};
+    Leaf leaf;
+    ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+    EXPECT_EQ(leaf.text.size(), 5U);  // "ab\0cd", NUL included
+  }
+  {
+    xmlight::NormalizingParser p{src};
+    OwnedLeaf leaf;
+    ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+    EXPECT_EQ(leaf.text.size(), 5U);
+  }
+}
+
+/// Production [2] Char excludes controls below #x20 other than tab, LF, and
+/// CR. StrictParser reports them as fatal in every tokenized context:
+/// character data (both the close-tag fast path and mixed content), CDATA,
+/// attribute values, comments, and PI data.
+TEST_F(Sec22Characters, StrictRejectsForbiddenControlBytes) {
+  const std::vector<std::string> bad = {
+      std::string("<r><v>a\x01"
+                  "b</v></r>"),                         // text, fast path
+      std::string("<r><v>a") + '\0' + "b</v></r>",      // NUL in text
+      std::string("<r><v>a\x02y<!-- c --></v></r>"),    // text, tokenized run
+      std::string("<r><v><![CDATA[a\x03z]]></v></r>"),  // CDATA content
+      std::string("<r x=\"a\x04\"><v>t</v></r>"),       // attribute value
+      std::string("<r><!-- bad \x05 --><v>t</v></r>"),  // comment content
+      std::string("<r><?pi bad \x06 ?><v>t</v></r>"),   // PI data
+      // Long run: the control byte sits inside a 16-byte word-scan chunk.
+      "<r><v>" + std::string(20, 'a') + '\x07' + std::string(20, 'b') + "</v></r>",
+      // 8..15-byte run with the control byte inside the single-word step.
+      std::string("<r><v>ab\x0B"
+                  "cdefghij</v></r>"),
+  };
+  for (const std::string& src : bad) {
+    xmlight::StrictParser sp{src};
+    OwnedLeaf leaf;
+    EXPECT_FALSE(xmlight::deserialize(sp, "r", leaf)) << src;
+    EXPECT_EQ(sp.errorCode(), xmlight::ErrorCode::ForbiddenControlChar) << src;
+  }
+}
+
+/// Tab, LF, and CR are the legal sub-#x20 characters, and DEL (#x7F) is
+/// within the Char range; none of them trip the strict scan.
+TEST_F(Sec22Characters, StrictAllowsLegalControlCharacters) {
+  {
+    const std::string src = "<r x=\"a\tb\"><v>l1\r\nl2\x7F</v><!-- \t\r\n --><?pi \t?></r>";
+    xmlight::StrictParser sp{src};
+    OwnedLeaf leaf;
+    ASSERT_TRUE(xmlight::deserialize(sp, "r", leaf));
+    EXPECT_EQ(leaf.text, "l1\nl2\x7F");
+  }
+  {
+    // A clean run past the 16-byte word-scan chunks, with legal tab/LF mixed
+    // in past the first chunk.
+    const std::string text = std::string(20, 'a') + "\t" + std::string(20, 'b') + "\n";
+    const std::string src = "<r><v>" + text + "</v></r>";
+    xmlight::StrictParser sp{src};
+    OwnedLeaf leaf;
+    ASSERT_TRUE(xmlight::deserialize(sp, "r", leaf));
+    EXPECT_EQ(leaf.text, text);
+  }
 }
 
 /// Valid multi-byte UTF-8 characters in element names and content.
@@ -293,7 +359,7 @@ class Sec24CharData : public ::testing::Test {};
 ///
 /// StrictParser enforces this; the default Parser opts out of the extra text
 /// scan for speed and accepts it.
-TEST_F(Sec24CharData, CDataEndDelimiterInTextShouldFail) {
+TEST_F(Sec24CharData, CDataEndDelimiterInTextStrictFails) {
   const std::string_view src = R"(<r><v>bad ]]> text</v></r>)";
 
   xmlight::StrictParser sp{src};
@@ -304,6 +370,37 @@ TEST_F(Sec24CharData, CDataEndDelimiterInTextShouldFail) {
   xmlight::Parser p{src};
   Leaf leaf;
   EXPECT_TRUE(xmlight::deserialize(p, "r", leaf));  // accepted by the fast path
+}
+
+/// Production [14] again, but through the tokenizer: the comment after the
+/// text defeats the close-tag fast path the test above exercises.
+TEST_F(Sec24CharData, StrictCDataEndInMixedContentFails) {
+  const std::string_view src = R"(<r><v>bad ]]> text<!-- c --></v></r>)";
+  xmlight::StrictParser sp{src};
+  OwnedLeaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(sp, "r", leaf));
+  EXPECT_EQ(sp.errorCode(), xmlight::ErrorCode::CDataEndInContent);
+}
+
+/// "]]" or "]" without a closing '>' is ordinary character data; the strict
+/// scan must keep looking rather than reject the bare prefix, including a
+/// trailing "]]" cut short by the end of the run.
+TEST_F(Sec24CharData, StrictLoneBracketsAllowed) {
+  const std::string_view src = R"(<r><v>a ] b ]]</v></r>)";
+  xmlight::StrictParser sp{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(sp, "r", leaf));
+  EXPECT_EQ(leaf.text, "a ] b ]]");
+}
+
+/// A child element interrupting a scalar leaf's text is rejected at its end
+/// tag: the leaf expects its own close next (WFC: Element Type Match).
+TEST_F(Sec24CharData, TextInterruptedByChildElementFails) {
+  const std::string_view src = R"(<r><v>x<b>y</b>z</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ElementMismatch);
 }
 
 // sec 2.5 - Comments [Production 15]
@@ -351,7 +448,7 @@ TEST_F(Sec25Comments, EmptyComment) {
 ///
 /// LightningXML enforces this WFC: the comment scan rejects any interior "--"
 /// (the first "--" must begin the "-->" terminator).
-TEST_F(Sec25Comments, DoubleHyphenInsideCommentShouldFail) {
+TEST_F(Sec25Comments, DoubleHyphenInsideCommentFails) {
   const std::string_view src = R"(<!-- bad -- comment --><r><v>ok</v></r>)";
   xmlight::Parser p{src};
   Leaf leaf;
@@ -361,7 +458,7 @@ TEST_F(Sec25Comments, DoubleHyphenInsideCommentShouldFail) {
 
 /// Comment ending with "--->" is ill-formed: the content's trailing '-' is
 /// adjacent to the terminator's leading '-', forming a forbidden "--".
-TEST_F(Sec25Comments, CommentEndingWithTripleHyphenShouldFail) {
+TEST_F(Sec25Comments, CommentEndingWithTripleHyphenFails) {
   const std::string_view src = R"(<!--- bad ---><r><v>ok</v></r>)";
   xmlight::Parser p{src};
   Leaf leaf;
@@ -378,8 +475,46 @@ TEST_F(Sec25Comments, UnterminatedComment) {
   EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnterminatedComment);
 }
 
+/// A comment whose "--" sits at the very end of input is unterminated, not
+/// malformed: the "--" must begin a complete "-->".
+TEST_F(Sec25Comments, CommentDoubleHyphenAtEndOfInput) {
+  const std::string_view src = R"(<r><v>ok</v><!-- trailing --)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnterminatedComment);
+}
+
+/// A lone '-' at the very end of input is likewise unterminated.
+TEST_F(Sec25Comments, CommentLoneHyphenAtEndOfInput) {
+  const std::string_view src = R"(<r><v>ok</v><!-- trailing -)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnterminatedComment);
+}
+
+/// Input ending immediately after "<!--".
+TEST_F(Sec25Comments, TruncatedCommentStart) {
+  const std::string_view src = R"(<r><!--)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnterminatedComment);
+}
+
 // sec 2.6 - Processing Instructions [Production 16-17]
 class Sec26Pi : public ::testing::Test {};
+
+/// Production [17]: only case variants of exactly "xml" are reserved; shorter
+/// or longer targets that merely start the same are ordinary PIs.
+TEST_F(Sec26Pi, PITargetNearXmlNamesAllowed) {
+  const std::string_view src = R"(<?xm d?><?xmz d?><?xql d?><?xmll d?><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
 
 /// A well-formed PI before the root is skipped.
 TEST_F(Sec26Pi, PIInProlog) {
@@ -393,6 +528,15 @@ TEST_F(Sec26Pi, PIInProlog) {
 /// A PI between child elements is skipped.
 TEST_F(Sec26Pi, PIBetweenElements) {
   const std::string_view src = R"(<r><?proc data?><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Production [16]: the data part is optional -- "<?target?>" is legal.
+TEST_F(Sec26Pi, PIWithNoData) {
+  const std::string_view src = R"(<?proc?><r><?p2?><v>ok</v></r>)";
   xmlight::Parser p{src};
   Leaf leaf;
   ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
@@ -451,6 +595,15 @@ TEST_F(Sec26Pi, UnterminatedPI) {
 // sec 2.7 - CDATA Sections [Production 18-21]
 class Sec27Cdata : public ::testing::Test {};
 
+/// Input ending immediately after "<![CDATA[" is unterminated.
+TEST_F(Sec27Cdata, TruncatedCDataStart) {
+  const std::string_view src = R"(<r><![CDATA[)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnterminatedCData);
+}
+
 /// Well-formed CDATA between elements is skipped during struct
 /// deserialization (it's not bound to a field in pull()).
 TEST_F(Sec27Cdata, CDataBetweenElements) {
@@ -504,6 +657,16 @@ TEST_F(Sec28Prolog, XmlDeclarationStandalone) {
   EXPECT_EQ(leaf.text, "ok");
 }
 
+/// Productions [24]-[26] and [32] allow single-quoted values in the XML
+/// declaration.
+TEST_F(Sec28Prolog, XmlDeclarationSingleQuotes) {
+  const std::string_view src = R"(<?xml version='1.0' encoding='UTF-8'?><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
 /// DOCTYPE declaration should be skipped (non-validating parser).
 /// LightningXML handles "<!...>" by scanning for '>' and moving on.
 TEST_F(Sec28Prolog, DoctypeSkipped) {
@@ -536,6 +699,47 @@ TEST_F(Sec28Prolog, DoctypeEntityWithGtInLiteral) {
   Leaf leaf;
   ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
   EXPECT_EQ(leaf.text, "ok");
+}
+
+/// Comments and PIs inside the internal subset may contain '>' without
+/// terminating the DOCTYPE scan (sec 2.8, Production [28b] intSubset).
+TEST_F(Sec28Prolog, DoctypeWithNestedCommentAndPi) {
+  const std::string_view src =
+      R"(<!DOCTYPE r [ <!-- a > inside --> <?pi with > inside ?> ]><r><v>ok</v></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "ok");
+}
+
+/// DOCTYPE scan edge cases: a stray ']' outside any subset is ignored, while
+/// input truncated inside a literal, a nested "<!-", or right after '<' fails.
+TEST_F(Sec28Prolog, DoctypeEdgeCases) {
+  {
+    xmlight::Parser p{R"(<!DOCTYPE r ]junk><r><v>ok</v></r>)"};
+    Leaf leaf;
+    ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+    EXPECT_EQ(leaf.text, "ok");
+  }
+  for (const std::string_view bad :
+       {std::string_view(R"(<!DOCTYPE r "unterminated)"), std::string_view(R"(<!DOCTYPE r [ <!-)"),
+        std::string_view(R"(<!DOCTYPE r [ <)")}) {
+    xmlight::Parser p{bad};
+    Leaf leaf;
+    EXPECT_FALSE(xmlight::deserialize(p, "r", leaf)) << bad;
+  }
+}
+
+/// A partial BOM is not stripped; the bytes are treated as (skippable, since
+/// they precede the root) character data.
+TEST_F(Sec28Prolog, PartialBomNotStripped) {
+  for (const std::string& src :
+       {std::string("\xEF\xBBx<r><v>ok</v></r>"), std::string("\xEFx<r><v>ok</v></r>")}) {
+    xmlight::Parser p{src};
+    Leaf leaf;
+    ASSERT_TRUE(xmlight::deserialize(p, "r", leaf)) << src;
+    EXPECT_EQ(leaf.text, "ok");
+  }
 }
 
 /// UTF-8 BOM (\xEF\xBB\xBF) at the start of the document must be stripped
@@ -662,6 +866,105 @@ TEST_F(Sec31Tags, WhitespaceAroundEquals) {
   ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
   EXPECT_EQ(ao.x, "hello");
   EXPECT_EQ(ao.y, "world");
+}
+
+/// Production [3]: S is any mix of #x20, #x9, #xD, #xA -- all four forms are
+/// legal between attributes, around '=', and before the tag close.
+TEST_F(Sec31Tags, WhitespaceVariantsInsideTags) {
+  const std::string src = "<r\tx\n=\r\"hello\"\r\ny\t=\t\"world\"\n/>";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "hello");
+  EXPECT_EQ(ao.y, "world");
+}
+
+/// Production [42]: only whitespace may separate an end-tag's name from '>'.
+TEST_F(Sec31Tags, CloseTagJunkAfterNameFails) {
+  const std::string_view src = R"(<r><v>x</v y></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedCloseTagEnd);
+}
+
+/// Input truncated inside an end-tag.
+TEST_F(Sec31Tags, TruncatedInsideCloseTagFails) {
+  const std::string_view src = R"(<r><v>x</v)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedCloseTagEnd);
+}
+
+/// Production [40]: a start-tag needs a non-empty name; a lone ':' leaves the
+/// local part empty.
+TEST_F(Sec31Tags, EmptyLocalNameFails) {
+  const std::string_view src = R"(<r><:>x</:></r>)";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedElementName);
+}
+
+/// Production [42]: whitespace before the end-tag's '>' is legal.
+TEST_F(Sec31Tags, CloseTagTrailingWhitespace) {
+  const std::string_view src = "<r><v>x</v  ></r>";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "x");
+}
+
+/// Input truncated inside an end-tag's trailing whitespace.
+TEST_F(Sec31Tags, TruncatedInCloseTagWhitespaceFails) {
+  const std::string_view src = "<r><v>x</v  ";
+  xmlight::Parser p{src};
+  Leaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedCloseTagEnd);
+}
+
+/// Production [10]: single-quoted values (with and without whitespace around
+/// '='); the 16-byte value probe hands off to the memchr scan for longer
+/// values.
+TEST_F(Sec31Tags, SingleQuotedAndProbeLengthAttrValues) {
+  const std::string_view src = R"(<r x = 'hello' y="0123456789ABCDEF"/>)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, "hello");
+  EXPECT_EQ(ao.y, "0123456789ABCDEF");
+}
+
+/// Input truncated right after '=' (no value at all).
+TEST_F(Sec31Tags, TruncatedAfterEqualsFails) {
+  const std::string_view src = R"(<r x=)";
+  xmlight::Parser p{src};
+  AttrOnly ao;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedQuotedValue);
+}
+
+/// Production [44]: '/' in a start-tag must be immediately followed by '>'.
+TEST_F(Sec31Tags, SlashNotFollowedByGtFails) {
+  for (const std::string_view src :
+       {std::string_view(R"(<r x="1"/ >)"), std::string_view(R"(<r x="1"/)")}) {
+    xmlight::Parser p{src};
+    AttrOnly ao;
+    EXPECT_FALSE(xmlight::deserialize(p, "r", ao)) << src;
+    EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::ExpectedAttributeName) << src;
+  }
+}
+
+/// WFC: Unique Att Spec compares prefix and local name; "a" and "p:a" share a
+/// local name (and its hash) but are distinct attributes.
+TEST_F(Sec31Tags, StrictPrefixedAttrSameLocalNameAllowed) {
+  const std::string_view src = R"(<r a="1" p:a="2"><v>x</v></r>)";
+  xmlight::StrictParser sp{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(sp, "r", leaf));
+  EXPECT_EQ(leaf.text, "x");
 }
 
 /// Whitespace before '/>' is legal.
@@ -864,6 +1167,138 @@ TEST_F(Sec41References, OwnedStringPreservesEntities) {
   EXPECT_EQ(leaf.text, "hello &amp; world");
 }
 
+/// sec 4.1 - NormalizingParser expands character references to UTF-8,
+/// including two-byte (U+00E9) and four-byte (U+1F600) encodings.
+TEST_F(Sec41References, CharRefMultiByteUtf8Expanded) {
+  const std::string_view src = R"(<r><v>caf&#xE9; &#128512;</v></r>)";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "caf\xC3\xA9 \xF0\x9F\x98\x80");
+}
+
+/// Production [68]: a reference needs a terminating ';'.
+TEST_F(Sec41References, UnterminatedReferenceFails) {
+  const std::string_view src = R"(<r><v>a &amp b</v></r>)";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::InvalidCharRef);
+}
+
+/// "&;" names no entity.
+TEST_F(Sec41References, EmptyReferenceFails) {
+  const std::string_view src = R"(<r><v>a&;b</v></r>)";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UndefinedEntity);
+}
+
+/// A bad reference in a typed leaf surfaces the reference error, not a
+/// numeric-parse error: the text is normalized before conversion.
+TEST_F(Sec41References, BadReferenceInTypedLeafFails) {
+  const std::string_view src = R"(<r><v>1&bogus;2</v></r>)";
+  xmlight::NormalizingParser p{src};
+  LeafInt leaf;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UndefinedEntity);
+}
+
+/// Runs past the 32-byte memchr gate still get CR/CRLF folded in text and
+/// whitespace collapsed in attribute values.
+TEST_F(Sec41References, LongRunNormalization) {
+  const std::string text_run = std::string(40, 'a') + "\r\n" + std::string(20, 'b') + "\rz";
+  const std::string src = "<r><v>" + text_run + "</v></r>";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, std::string(40, 'a') + "\n" + std::string(20, 'b') + "\nz");
+
+  const std::string attr_run =
+      std::string(25, 'q') + "\t" + std::string(9, 'r') + "\n" + std::string(6, 's');
+  const std::string src2 = R"(<r x=")" + attr_run + R"("/>)";
+  xmlight::NormalizingParser p2{src2};
+  OwnedAttr oa;
+  ASSERT_TRUE(xmlight::deserialize(p2, "r", oa));
+  EXPECT_EQ(oa.x, std::string(25, 'q') + " " + std::string(9, 'r') + " " + std::string(6, 's'));
+
+  // A long ordinary run (no special byte at all), and a long run whose only
+  // special is a CR/CRLF pair: attribute mode folds both to single spaces.
+  const std::string src3 = R"(<r x=")" + std::string(40, 'c') + R"("/>)";
+  xmlight::NormalizingParser p3{src3};
+  OwnedAttr ob;
+  ASSERT_TRUE(xmlight::deserialize(p3, "r", ob));
+  EXPECT_EQ(ob.x, std::string(40, 'c'));
+
+  const std::string src4 = R"(<r x=")" + std::string(40, 'd') + "\r\ne\r" + R"("/>)";
+  xmlight::NormalizingParser p4{src4};
+  OwnedAttr oc;
+  ASSERT_TRUE(xmlight::deserialize(p4, "r", oc));
+  EXPECT_EQ(oc.x, std::string(40, 'd') + " e ");
+}
+
+/// sec 2.7 + 3.3.3: CDATA content under the normalizing parser keeps '&'
+/// literal (no reference expansion) but still folds line endings.
+TEST_F(Sec41References, NormalizedCDataKeepsAmpFoldsEol) {
+  const std::string src =
+      "<r><v><![CDATA[" + std::string(30, 'a') + "&amp; stays\r\nliteral]]></v></r>";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, std::string(30, 'a') + "&amp; stays\nliteral");
+}
+
+/// Character references for whitespace controls expand to the literal bytes;
+/// the expansion result is not re-normalized (a &#13; stays a carriage
+/// return).
+TEST_F(Sec41References, CharRefWhitespaceControls) {
+  const std::string_view src = R"(<r><v>&#9;&#10;&#13;</v></r>)";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "\t\n\r");
+}
+
+/// Uppercase 'X' hex prefix is accepted alongside lowercase.
+TEST_F(Sec41References, CharRefUppercaseHexPrefix) {
+  const std::string_view src = R"(<r><v>&#X41;&#x42;</v></r>)";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "AB");
+}
+
+/// Production [2] Char: surrogates, out-of-range code points, forbidden
+/// controls, and malformed digit strings are all fatal.
+TEST_F(Sec41References, CharRefInvalidCodePointsFail) {
+  for (const std::string_view bad : {"&#xD800;", "&#x110000;", "&#8;", "&#;", "&#x;", "&#12a4;"}) {
+    const std::string src = "<r><v>" + std::string(bad) + "</v></r>";
+    xmlight::NormalizingParser p{src};
+    OwnedLeaf leaf;
+    EXPECT_FALSE(xmlight::deserialize(p, "r", leaf)) << bad;
+    EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::InvalidCharRef) << bad;
+  }
+}
+
+/// U+10FFFF is the last legal code point.
+TEST_F(Sec41References, CharRefMaxCodePoint) {
+  const std::string_view src = R"(<r><v>&#x10FFFF;</v></r>)";
+  xmlight::NormalizingParser p{src};
+  OwnedLeaf leaf;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(leaf.text, "\xF4\x8F\xBF\xBF");
+}
+
+/// A bad reference inside an attribute value of an owning field.
+TEST_F(Sec41References, AttrOwnedBadReferenceFails) {
+  const std::string_view src = R"(<r x="&bogus;"/>)";
+  xmlight::NormalizingParser p{src};
+  OwnedAttr oa;
+  EXPECT_FALSE(xmlight::deserialize(p, "r", oa));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UndefinedEntity);
+}
+
 // sec 5 - Conformance / sec 5.1 - Processor Classification
 class Sec5Conformance : public ::testing::Test {};
 
@@ -880,17 +1315,14 @@ TEST_F(Sec5Conformance, FatalError_MissingEndTag) {
   EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedEof);
 }
 
-/// Bare '<' in text content. Per spec, '<' may only appear as part
-/// of markup. In practice LightningXML's next_from_source treats '<' as
-/// the start of markup and will attempt to parse what follows.
+/// Production [14]: '<' may only appear in content as the start of markup.
+/// A char that cannot begin markup after '<' (here a space) is a fatal error.
 TEST_F(Sec5Conformance, FatalError_BareLtInContent) {
-  // "< " is not valid markup start - is_name_start(' ') is false.
   const std::string_view src = R"(<r><v>a < b</v></r>)";
   xmlight::Parser p{src};
   Leaf leaf;
-  // The parser should either fail or produce garbled output.
-  // The key assertion is no crash.
-  std::ignore = xmlight::deserialize(p, "r", leaf);
+  EXPECT_FALSE(xmlight::deserialize(p, "r", leaf));
+  EXPECT_EQ(p.errorCode(), xmlight::ErrorCode::UnexpectedCharAfterLt);
 }
 
 /// Bare '&' that doesn't form a valid entity reference.
@@ -1196,15 +1628,15 @@ TEST_F(Robustness, GarbageAfterDocument) {
   EXPECT_EQ(leaf.text, "ok");
 }
 
-// Tests for features that require the NormalizingParser opt-in:
-// entity/char-ref expansion and attribute-value normalization.
-class ConformanceGaps : public ::testing::Test {};
+// Conformance areas closed by the NormalizingParser opt-in: entity/char-ref
+// expansion and attribute-value normalization (secs 3.3.3, 4.1, 4.6).
+class OptInConformance : public ::testing::Test {};
 
 /// sec 3.3.3 - Attribute-value normalization. For CDATA-typed attributes
 /// (the default without a DTD), processors replace character/entity references,
 /// then normalize whitespace. Supported on the normalizing parser for owning
 /// std::string fields (a zero-copy std::string_view cannot hold the result).
-TEST_F(ConformanceGaps, AttrValueNormalization) {
+TEST_F(OptInConformance, AttrValueNormalization) {
   const std::string_view src = R"(<r x="a&#x20;&#x20;b"/>)";
   xmlight::NormalizingParser p{src};
   OwnedAttr ao;
@@ -1212,9 +1644,18 @@ TEST_F(ConformanceGaps, AttrValueNormalization) {
   EXPECT_EQ(ao.x, "a  b");
 }
 
+/// sec 4.6 - The predefined entities also expand inside attribute values.
+TEST_F(OptInConformance, PredefinedEntitiesInAttributeValue) {
+  const std::string_view src = R"(<r x="a&amp;b &quot;c&quot; &lt;d&gt; &apos;e&apos;"/>)";
+  xmlight::NormalizingParser p{src};
+  OwnedAttr ao;
+  ASSERT_TRUE(xmlight::deserialize(p, "r", ao));
+  EXPECT_EQ(ao.x, R"(a&b "c" <d> 'e')");
+}
+
 /// sec 4.6 - Predefined entity expansion. A conforming processor MUST
 /// recognize &lt; &gt; &amp; &apos; &quot; and expand them.
-TEST_F(ConformanceGaps, PredefinedEntityExpansion) {
+TEST_F(OptInConformance, PredefinedEntityExpansion) {
   const std::string_view src = R"(<r><v>&lt;hello&gt;</v></r>)";
   xmlight::NormalizingParser p{src};
   OwnedLeaf leaf;
@@ -1223,7 +1664,7 @@ TEST_F(ConformanceGaps, PredefinedEntityExpansion) {
 }
 
 /// sec 4.1 - Character reference expansion (&#nnn; / &#xhh;).
-TEST_F(ConformanceGaps, CharRefExpansion) {
+TEST_F(OptInConformance, CharRefExpansion) {
   const std::string_view src = R"(<r><v>&#65;</v></r>)";
   xmlight::NormalizingParser p{src};
   OwnedLeaf leaf;
@@ -1251,7 +1692,7 @@ struct xmlight::XmlMetadata<RawViewList> {
 
 /// sec 4.4/3.3.3 - References inside an xs:list element value are expanded
 /// before whitespace splitting on the normalizing parser.
-TEST_F(ConformanceGaps, ListElementValueIsNormalized) {
+TEST_F(OptInConformance, ListElementValueIsNormalized) {
   const std::string_view src = "<r nums='1 2'><words>&#65;B c&amp;d</words></r>";
   xmlight::NormalizingParser p{src};
   NormList list;
@@ -1263,7 +1704,7 @@ TEST_F(ConformanceGaps, ListElementValueIsNormalized) {
 
 /// sec 3.3.3 - References inside a list-valued attribute are expanded before
 /// splitting; character references can even form the list items.
-TEST_F(ConformanceGaps, ListAttributeValueIsNormalized) {
+TEST_F(OptInConformance, ListAttributeValueIsNormalized) {
   const std::string_view src = "<r nums='1 &#50; 3'><words>x</words></r>";
   xmlight::NormalizingParser p{src};
   NormList list;
@@ -1274,7 +1715,7 @@ TEST_F(ConformanceGaps, ListAttributeValueIsNormalized) {
 
 /// string_view list items stay raw zero-copy even on the normalizing parser,
 /// matching the string-field contract (a view cannot hold transformed bytes).
-TEST_F(ConformanceGaps, ListOfViewsStaysRaw) {
+TEST_F(OptInConformance, ListOfViewsStaysRaw) {
   const std::string_view src = "<r><words>a&amp;b c</words></r>";
   xmlight::NormalizingParser p{src};
   RawViewList list;
@@ -1285,7 +1726,7 @@ TEST_F(ConformanceGaps, ListOfViewsStaysRaw) {
 
 /// A bad reference inside a list value is a fatal error on the normalizing
 /// parser, consistent with string-field normalization.
-TEST_F(ConformanceGaps, ListValueBadReferenceFails) {
+TEST_F(OptInConformance, ListValueBadReferenceFails) {
   const std::string_view src = "<r><words>a &undefined; b</words></r>";
   xmlight::NormalizingParser p{src};
   NormList list;
