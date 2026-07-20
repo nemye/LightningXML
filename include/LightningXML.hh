@@ -1067,11 +1067,13 @@ inline constexpr auto ATTR_PATTERN = [] {
 
 /// @brief Whether attributes of an element deserializing into E take the
 /// streamed typed capture path (single pass, no attributes_ materialization)
-/// instead of the vector + dispatch pass. Strict mode keeps the vector path:
-/// its duplicate/value well-formedness checks live in parseAttributes.
+/// instead of the vector + dispatch pass. Strict mode streams too: its value
+/// checks run inline per ordinal, and any list that deviates from the
+/// schema-ordered shape rewinds to parseAttributes, where the duplicate and
+/// well-formedness semantics live.
 template<typename E, bool STRICT_MODE>
 constexpr auto streamsAttrs() noexcept -> bool {
-  if constexpr (STRICT_MODE || !XmlObject<E>) {
+  if constexpr (!XmlObject<E>) {
     return false;
   } else {
     return HAS_ATTR_FIELDS<E> && N_ATTR_FIELDS<E> <= 32;
@@ -1893,7 +1895,7 @@ class BasicParser {
       });
     } else {
       return each_token([this, &out](std::string_view tok) {
-        return detail::readIntoNew(out, [this, tok](auto& slot) {
+        return detail::readIntoNew(out, [this, tok](typename Traits::value_type& slot) {
           return assignToken<Normalized>(slot, tok);
         });
       });
@@ -2404,6 +2406,18 @@ class BasicParser {
     if (val_end == nullptr) {
       return -1;
     }
+    if constexpr (STRICT) {
+      // Same checks and order as parseAttributes; phase 1 visits attributes in
+      // document order, so the recorded error code matches the vector path.
+      if (findByte(val_start, '<') < val_end) {
+        fail(ErrorCode::LtInAttributeValue);
+        return -1;
+      }
+      if (containsForbiddenControl(val_start, val_end)) {
+        fail(ErrorCode::ForbiddenControlChar);
+        return -1;
+      }
+    }
     attr_vals_[K] = {val_start, static_cast<size_t>(val_end - val_start)};
     attr_have_ |= uint32_t{1} << K;
     cur_ = val_end + 1;
@@ -2416,10 +2430,14 @@ class BasicParser {
   // miss the ordered pattern (out-of-order, prefixed, whitespace around '=',
   // unknown) take the generic arm, which resyncs the ordinal cursor exactly
   // like attr()'s document-order fallback. First match wins, matching the
-  // vector path's first-match scan. cur_ must be just past the element name.
+  // vector path's first-match scan. Strict mode has no generic arm: any
+  // deviation rewinds and re-parses through parseAttributes so its duplicate
+  // and well-formedness semantics apply verbatim. cur_ must be just past the
+  // element name.
   template<typename E>
   [[nodiscard]] [[gnu::noinline]] auto streamAttrs(bool& self_closing) -> bool {
     constexpr size_t NA = detail::N_ATTR_FIELDS<E>;
+    [[maybe_unused]] const char* const attrs_start = cur_;  // strict rewind point
     attr_have_ = 0;
     size_t count = 0;  // parsed attributes, for the element-wide bound
 
@@ -2428,7 +2446,7 @@ class BasicParser {
     // straight through with no runtime ordinal dispatch.
     int st = 0;
     [&]<size_t... K>(std::index_sequence<K...>) {
-      ((st = streamAttrOrdinal<E, K>(self_closing, count), st == 0) && ...);
+      std::ignore = ((st = streamAttrOrdinal<E, K>(self_closing, count), st == 0) && ...);
     }(std::make_index_sequence<NA>{});
     if (st == 1) {
       attr_streamed_ = true;
@@ -2438,71 +2456,97 @@ class BasicParser {
       return false;
     }
 
-    // Phase 2: generic loop for whatever remains — out-of-order, prefixed,
-    // whitespace-shaped, or unknown attributes (and any extras after all
-    // ordinals matched). Matches by local-name hash; first match wins.
-    while (true) {
+    if constexpr (STRICT) {
+      // All ordinals matched (each fold step checks the terminator before its
+      // pattern, so a fully-populated in-order list leaves '>' unconsumed):
+      // consume the terminator and finish streamed.
       skipWhitespace();
-      if (atEnd()) {
-        return fail(ErrorCode::UnclosedTag);
-      }
-      const char c = *cur_;
-      if (c == '>') {
+      if (cur_ < end_ && *cur_ == '>') {
         ++cur_;
         attr_streamed_ = true;
         return true;
       }
-      if (c == '/' && cur_ + 1 < end_ && *(cur_ + 1) == '>') {
+      if (end_ - cur_ >= 2 && cur_[0] == '/' && cur_[1] == '>') {
         cur_ += 2;
         self_closing = true;
         attr_streamed_ = true;
         return true;
       }
-      if (!detail::isNameStart(c)) {
-        return fail(ErrorCode::ExpectedAttributeName);
-      }
-      if (++count > MAX_ATTRIBUTES_PER_ELEMENT) [[unlikely]] {
-        return fail(ErrorCode::TooManyAttributes);
-      }
-      std::string_view prefix;
-      std::string_view name;
-      FieldHash hash{};
-      parseName(prefix, name, hash);
-      char quote = 0;
-      if (end_ - cur_ >= 2 && cur_[0] == '=' && (cur_[1] == '"' || cur_[1] == '\'')) {
-        // Common shape: name="value" with no whitespace around '='.
-        quote = cur_[1];
-        cur_ += 2;
-      } else {
+      // The list deviates from the schema-ordered shape (out-of-order,
+      // unknown, prefixed, whitespace around '=', duplicate): re-parse it
+      // through parseAttributes, where strict's duplicate and well-formedness
+      // checks live. Error codes match the vector path by construction.
+      cur_ = attrs_start;
+      attr_have_ = 0;
+      attributes_.clear();
+      return parseAttributes(self_closing);
+    } else {
+      // Phase 2: generic loop for whatever remains — out-of-order, prefixed,
+      // whitespace-shaped, or unknown attributes (and any extras after all
+      // ordinals matched). Matches by local-name hash; first match wins.
+      while (true) {
         skipWhitespace();
-        if (!expect('=')) {
-          return fail(ErrorCode::ExpectedEquals);
+        if (atEnd()) {
+          return fail(ErrorCode::UnclosedTag);
         }
-        skipWhitespace();
-        quote = peekChar();
-        if (quote != '"' && quote != '\'') {
-          return fail(ErrorCode::ExpectedQuotedValue);
+        const char c = *cur_;
+        if (c == '>') {
+          ++cur_;
+          attr_streamed_ = true;
+          return true;
         }
-        ++cur_;
-      }
-      const char* const val_start = cur_;
-      const char* const val_end = scanAttrValue(quote);
-      if (val_end == nullptr) {
-        return false;
-      }
-      cur_ = val_end + 1;
-      static constexpr auto ATTR_HASHES = detail::makeAttrHashesByOrdinal<E>();
-      for (size_t j = 0; j < NA; ++j) {
-        if (ATTR_HASHES[j] == hash) {
-          const auto bit = uint32_t{1} << j;
-          if ((attr_have_ & bit) == 0) {
-            attr_vals_[j] = {val_start, static_cast<size_t>(val_end - val_start)};
-            attr_have_ |= bit;
+        if (c == '/' && cur_ + 1 < end_ && *(cur_ + 1) == '>') {
+          cur_ += 2;
+          self_closing = true;
+          attr_streamed_ = true;
+          return true;
+        }
+        if (!detail::isNameStart(c)) {
+          return fail(ErrorCode::ExpectedAttributeName);
+        }
+        if (++count > MAX_ATTRIBUTES_PER_ELEMENT) [[unlikely]] {
+          return fail(ErrorCode::TooManyAttributes);
+        }
+        std::string_view prefix;
+        std::string_view name;
+        FieldHash hash{};
+        parseName(prefix, name, hash);
+        char quote = 0;
+        if (end_ - cur_ >= 2 && cur_[0] == '=' && (cur_[1] == '"' || cur_[1] == '\'')) {
+          // Common shape: name="value" with no whitespace around '='.
+          quote = cur_[1];
+          cur_ += 2;
+        } else {
+          skipWhitespace();
+          if (!expect('=')) {
+            return fail(ErrorCode::ExpectedEquals);
           }
-          break;
+          skipWhitespace();
+          quote = peekChar();
+          if (quote != '"' && quote != '\'') {
+            return fail(ErrorCode::ExpectedQuotedValue);
+          }
+          ++cur_;
         }
+        const char* const val_start = cur_;
+        const char* const val_end = scanAttrValue(quote);
+        if (val_end == nullptr) {
+          return false;
+        }
+        cur_ = val_end + 1;
+        static constexpr auto ATTR_HASHES = detail::makeAttrHashesByOrdinal<E>();
+        for (size_t j = 0; j < NA; ++j) {
+          if (ATTR_HASHES[j] == hash) {
+            const auto bit = uint32_t{1} << j;
+            if ((attr_have_ & bit) == 0) {
+              attr_vals_[j] = {val_start, static_cast<size_t>(val_end - val_start)};
+              attr_have_ |= bit;
+            }
+            break;
+          }
+        }
+        // Unknown attribute: value already consumed, nothing stored.
       }
-      // Unknown attribute: value already consumed, nothing stored.
     }
   }
 
@@ -3189,7 +3233,11 @@ inline auto BasicParser<Opts>::readElement(std::string_view expected_name, T& ou
       const std::string_view text{cur_, static_cast<size_t>(found - cur_)};
       bool fast = true;  // NOLINT(misc-const-correctness): mutable only when normalizing
       if constexpr (NORMALIZE && !XmlStringLike<T>) {
-        fast = text.find_first_of("&\r") == std::string_view::npos;
+        // Numeric/enum leaves are a handful of bytes: the branchless loop
+        // beats the find_first_of libcall on the no-reference common case.
+        for (const char ch : text) {
+          fast &= ch != '&' && ch != '\r';
+        }
       }
       if (fast) {
         if constexpr (STRICT) {
@@ -3245,10 +3293,10 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
   static constexpr auto REQUIRED_MASK = detail::makeRequiredMask<T>();
   constexpr bool HAS_REQUIRED = detail::HAS_REQUIRED_FIELDS<T>;
   [[maybe_unused]] detail::RequiredMaskT<T> parsed{};  // NOLINT(misc-const-correctness)
-  const auto check_required = [this, &parsed]() -> bool {
+  const auto check_required = [](BasicParser& self, const detail::RequiredMaskT<T>& have) -> bool {
     if constexpr (HAS_REQUIRED) {
-      if (!parsed.containsAll(REQUIRED_MASK)) {
-        return fail(ErrorCode::MissingRequiredField);
+      if (!have.containsAll(REQUIRED_MASK)) {
+        return self.fail(ErrorCode::MissingRequiredField);
       }
     }
     return true;
@@ -3307,9 +3355,9 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
     if (present) {
       parsed.set(VALUE_IDX);
     }
-    return check_required();
+    return check_required(*this, parsed);
   } else if (last_self_closing_) {
-    return check_required();
+    return check_required(*this, parsed);
   }
 
   // Document-order hint: index of the field expected next. Schema-ordered
@@ -3327,7 +3375,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
         return fail(ErrorCode::UnexpectedEof);
       }
       if (cur_[0] == '<' && cur_ + 1 < end_ && cur_[1] == '/') {
-        return check_required();
+        return check_required(*this, parsed);
       }
 
       // Fast path: match the hinted open tag, bypassing full tokenisation
@@ -3353,7 +3401,7 @@ inline auto BasicParser<Opts>::pull(T& object, const uint16_t depth) -> bool {
       return false;
     }
     if (token->type == TokenType::ElementClose) {
-      return check_required();
+      return check_required(*this, parsed);
     }
     if (token->type != TokenType::ElementOpen) {
       consume();
@@ -3602,9 +3650,13 @@ class Serializer {
   // Writes the active alternative of a variant under its bound element name.
   template<typename FieldT, typename Var>
   auto writeVariantActive(const FieldT& f, const Var& var, int depth) -> void {
-    [this, &f, &var, depth]<size_t... J>(std::index_sequence<J...>) {
-      (..., (var.index() == J ? writeFieldValue(f.names[J], std::get<J>(var), depth) : void()));
-    }(std::make_index_sequence<std::variant_size_v<Var>>{});
+    writeVariantAlt(f, var, depth, std::make_index_sequence<std::variant_size_v<Var>>{});
+  }
+
+  template<typename FieldT, typename Var, size_t... J>
+  auto writeVariantAlt(const FieldT& f, const Var& var, int depth,
+                       std::index_sequence<J...>) -> void {
+    (..., (var.index() == J ? writeFieldValue(f.names[J], std::get<J>(var), depth) : void()));
   }
 
   template<typename T, size_t I>
@@ -3630,7 +3682,9 @@ class Serializer {
         }
       }
     } else if constexpr (f.kind == FieldKind::Container) {
-      detail::forEachItem(obj.*(f.member), [this, depth](const auto& item) {
+      using M = std::decay_t<decltype(obj.*(f.member))>;
+      detail::forEachItem(obj.*(f.member),
+                          [this, depth](const typename XmlContainerTraits<M>::value_type& item) {
         writeFieldValue(std::get<I>(XmlMetadata<T>::fields).xml_name, item, depth);
       });
     } else {
